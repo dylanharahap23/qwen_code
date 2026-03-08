@@ -79,6 +79,38 @@ import math
 # Nonaktifkan SSL warning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ================= CONFIG V83 (THE LIQUIDITY SNIPER) =================
+# 🔥 V83 NEW MODULES - MICROSECOND LIQUIDITY RADAR
+
+# V83 - LIQUIDATION HEAT GRADIENT (LHG) - BARU!
+LHG_GRADIENT_THRESHOLD = 10.0              # Threshold untuk gradient comparison
+LHG_CASCADE_MULTIPLIER = 5.0               # Multiplier untuk cascade detection
+
+# V83 - ORDERBOOK VACUUM SPEED (OVS) - BARU!
+OVS_VACUUM_THRESHOLD = 0.3                 # Threshold vacuum speed (>0.3 = fast vacuum)
+OVS_TIME_WINDOW_MS = 100                   # Time window dalam milliseconds
+
+# V83 - AGGRESSION VELOCITY (ADV) - BARU!
+ADV_SPIKE_THRESHOLD = 2.0                  # Velocity spike threshold (>2x = whale attack)
+ADV_HISTORY_SIZE = 10                      # History size untuk velocity calculation
+
+# V83 - TRADE BURST DETECTOR (TBD) - BARU!
+TBD_BURST_COUNT_MIN = 40                   # Minimal trades untuk burst detection
+TBD_TIME_WINDOW_MS = 200                   # Time window dalam milliseconds
+TBD_RETAIL_MIN = 10                        # Minimal trades untuk retail
+TBD_NOISE_MAX = 9                          # Maksimal trades untuk noise
+
+# V83 - OI ACCELERATION (OIA) - BARU!
+OIA_ACCEL_THRESHOLD = 1.0                  # Threshold untuk OI acceleration
+OIA_TIME_WINDOW_MS = 1000                  # Time window dalam milliseconds
+
+# V83 - LIQUIDITY SWEEP PROBABILITY (LSP) - BARU!
+LSP_SWEEP_THRESHOLD = 0.7                  # Threshold untuk sweep probability (>0.7 = sweep likely)
+
+# V83 - LIQUIDITY SNIPER SCORE - BARU!
+V83_LONG_SCORE_THRESHOLD = 65              # Threshold untuk LONG sniper score
+V83_SHORT_SCORE_THRESHOLD = 65             # Threshold untuk SHORT sniper score
+
 # ================= CONFIG V82 (THE LIQUIDITY GHOST) =================
 # V82 - ABSORPTION PRESSURE INDEX (API) - BARU!
 API_AGGRESSION_MIN = 5.0                     # Minimal Aggressive Ratio untuk deteksi Absorpsi
@@ -511,6 +543,453 @@ class LiquidityMirrorGuardV82:
         return {
             "is_death_magnet": is_death_magnet,
             "bias": bias,
+            "reason": reason
+        }
+
+# ================= V83: LIQUIDATION HEAT GRADIENT (LHG) - BARU! =================
+class LiquidationHeatGradientV83:
+    """
+    🔥 V83: LIQUIDATION HEAT GRADIENT - THE MICROSECOND SNIPER
+    
+    Masalah umum: Bot hanya lihat distance liquidation.
+    Padahal HFT lihat: gradient = liquidity_size / distance
+    
+    Formula:
+        long_gradient = long_liq_size / long_distance
+        short_gradient = short_liq_size / short_distance
+    
+    Decision:
+        if short_gradient > long_gradient:
+            target = SHORT_LIQ (Short lebih mudah ditembak)
+        else:
+            target = LONG_LIQ
+    
+    Contoh:
+        Short liq: +1.72%, Size: 20M → gradient = 20 / 1.72 = 11.6
+        Long liq: -0.48%, Size: 5M → gradient = 5 / 0.48 = 10.4
+        ➡ Short lebih mudah ditembak (gradient lebih tinggi)
+    
+    Cascade Detection:
+        cascade = liq_size / liquidity_depth
+        Jika cascade > 5 → domino liquidation
+    """
+    @staticmethod
+    def analyze(long_dist: float, short_dist: float, 
+                long_liq_size: float, short_liq_size: float,
+                bid_depth: float = 1.0, ask_depth: float = 1.0) -> Dict:
+        
+        # Avoid division by zero
+        long_dist_abs = abs(long_dist) if long_dist != 0 else 0.01
+        short_dist_abs = abs(short_dist) if short_dist != 0 else 0.01
+        
+        # Calculate gradients (size per percentage distance)
+        long_gradient = long_liq_size / long_dist_abs if long_dist_abs > 0 else 0
+        short_gradient = short_liq_size / short_dist_abs if short_dist_abs > 0 else 0
+        
+        # Calculate cascade potential
+        long_cascade = long_liq_size / bid_depth if bid_depth > 0 else 0
+        short_cascade = short_liq_size / ask_depth if ask_depth > 0 else 0
+        
+        # Determine which side is easier to hit
+        target = "LONG_LIQ" if long_gradient >= short_gradient else "SHORT_LIQ"
+        
+        # Check for cascade potential
+        cascade_risk = "NONE"
+        if long_cascade > LHG_CASCADE_MULTIPLIER:
+            cascade_risk = "LONG_CASCADE"
+        elif short_cascade > LHG_CASCADE_MULTIPLIER:
+            cascade_risk = "SHORT_CASCADE"
+        
+        # Build reason string
+        reason = (f"LHG_GRADIENT: Long={long_gradient:.2f} | Short={short_gradient:.2f} | "
+                  f"Target={target} | Cascade={cascade_risk}")
+        
+        bias = "SHORT" if target == "SHORT_LIQ" else "LONG"
+        
+        return {
+            "long_gradient": round(long_gradient, 2),
+            "short_gradient": round(short_gradient, 2),
+            "target": target,
+            "bias": bias,
+            "cascade_risk": cascade_risk,
+            "long_cascade": round(long_cascade, 2),
+            "short_cascade": round(short_cascade, 2),
+            "reason": reason
+        }
+
+# ================= V83: ORDERBOOK VACUUM SPEED (OVS) - BARU! =================
+class OrderbookVacuumSpeedV83:
+    """
+    🔥 V83: ORDERBOOK VACUUM SPEED - MICROSECOND LIQUIDITY RADAR
+    
+    Ini super penting untuk microseconds.
+    
+    Formula:
+        vacuum_speed = (bid_volume_now - bid_volume_100ms_ago) / time
+    
+    Decision:
+        if bid_vacuum > ask_vacuum → DUMP (Bid disappearing fast)
+        if ask_vacuum > bid_vacuum → PUMP (Ask disappearing fast)
+    """
+    @staticmethod
+    def analyze(current_bids: List, current_asks: List,
+                prev_bids: List = None, prev_asks: List = None,
+                time_delta_ms: float = OVS_TIME_WINDOW_MS) -> Dict:
+        
+        # Calculate current volumes (top 5 levels)
+        current_bid_vol = sum(q for _, q in current_bids[:5]) if current_bids else 0
+        current_ask_vol = sum(q for _, q in current_asks[:5]) if current_asks else 0
+        
+        # Calculate previous volumes if available
+        if prev_bids and prev_asks:
+            prev_bid_vol = sum(q for _, q in prev_bids[:5]) if prev_bids else 0
+            prev_ask_vol = sum(q for _, q in prev_asks[:5]) if prev_asks else 0
+            
+            # Calculate vacuum speed (volume change per ms)
+            bid_vacuum_speed = (prev_bid_vol - current_bid_vol) / time_delta_ms if time_delta_ms > 0 else 0
+            ask_vacuum_speed = (prev_ask_vol - current_ask_vol) / time_delta_ms if time_delta_ms > 0 else 0
+        else:
+            # Fallback: use volume ratio as proxy
+            bid_vacuum_speed = 0
+            ask_vacuum_speed = 0
+        
+        # Determine direction
+        if bid_vacuum_speed > ask_vacuum_speed and bid_vacuum_speed > OVS_VACUUM_THRESHOLD:
+            direction = "DUMP"
+            reason = f"OVS_DUMP: Bid vacuum {bid_vacuum_speed:.2f} > Ask vacuum {ask_vacuum_speed:.2f}"
+            bias = "SHORT"
+        elif ask_vacuum_speed > bid_vacuum_speed and ask_vacuum_speed > OVS_VACUUM_THRESHOLD:
+            direction = "PUMP"
+            reason = f"OVS_PUMP: Ask vacuum {ask_vacuum_speed:.2f} > Bid vacuum {bid_vacuum_speed:.2f}"
+            bias = "LONG"
+        else:
+            direction = "NEUTRAL"
+            reason = f"OVS_NEUTRAL: No significant vacuum detected"
+            bias = "NEUTRAL"
+        
+        return {
+            "bid_vacuum_speed": round(bid_vacuum_speed, 4),
+            "ask_vacuum_speed": round(ask_vacuum_speed, 4),
+            "direction": direction,
+            "bias": bias,
+            "current_bid_vol": round(current_bid_vol, 2),
+            "current_ask_vol": round(current_ask_vol, 2),
+            "reason": reason
+        }
+
+# ================= V83: AGGRESSION VELOCITY (ADV) - BARU! =================
+class AggressionVelocityV83:
+    """
+    🔥 V83: AGGRESSION VELOCITY - WHALE ATTACK DETECTOR
+    
+    Yang dipakai sekarang: Agg Ratio (statik)
+    Yang penting sebenarnya: dAgg / dt (velocity)
+    
+    Formula:
+        agg_velocity = (agg_now - agg_1s_ago) / time
+    
+    Interpretasi:
+        Velocity > 2x spike → whale attack
+        slow increase → retail
+        flat → spoof
+    """
+    @staticmethod
+    def analyze(current_agg: float, prev_agg: float = None,
+                time_delta_s: float = 1.0, agg_history: deque = None) -> Dict:
+        
+        if prev_agg is not None:
+            # Calculate velocity from previous value
+            agg_velocity = (current_agg - prev_agg) / time_delta_s if time_delta_s > 0 else 0
+        elif agg_history and len(agg_history) >= 2:
+            # Calculate velocity from history
+            recent_avg = np.mean(list(agg_history)[-3:]) if len(agg_history) >= 3 else agg_history[-1]
+            older_avg = np.mean(list(agg_history)[:3]) if len(agg_history) >= 3 else agg_history[0]
+            agg_velocity = (recent_avg - older_avg) / len(agg_history)
+        else:
+            agg_velocity = 0
+        
+        # Determine signal type
+        velocity_ratio = abs(agg_velocity) / max(current_agg, 0.01)
+        
+        if velocity_ratio > ADV_SPIKE_THRESHOLD:
+            signal_type = "WHALE_ATTACK"
+            reason = f"ADV_WHALE_ATTACK: Velocity spike {velocity_ratio:.2f}x (Agg: {current_agg:.2f})"
+            bias = "LONG" if agg_velocity > 0 else "SHORT"
+        elif velocity_ratio > 0.5:
+            signal_type = "RETAIL_FLOW"
+            reason = f"ADV_RETAIL: Slow increase {velocity_ratio:.2f}x"
+            bias = "LONG" if agg_velocity > 0 else "SHORT"
+        else:
+            signal_type = "SPOOF"
+            reason = f"ADV_SPOOF: Flat velocity {velocity_ratio:.2f}x"
+            bias = "NEUTRAL"
+        
+        return {
+            "agg_velocity": round(agg_velocity, 4),
+            "velocity_ratio": round(velocity_ratio, 2),
+            "signal_type": signal_type,
+            "bias": bias,
+            "current_agg": round(current_agg, 2),
+            "reason": reason
+        }
+
+# ================= V83: TRADE BURST DETECTOR (TBD) - BARU! =================
+class TradeBurstDetectorV83:
+    """
+    🔥 V83: TRADE BURST DETECTOR - HFT ENTRY SIGNAL
+    
+    HFT entry biasanya: 50 trades dalam <200ms
+    
+    Formula:
+        burst = trades_last_200ms
+    
+    Interpretasi:
+        Burst > 40 → whale entry
+        Burst 10-30 → retail
+        Burst < 10 → noise
+    """
+    @staticmethod
+    def analyze(trade_count: int, time_window_ms: float = TBD_TIME_WINDOW_MS) -> Dict:
+        
+        # Determine burst category
+        if trade_count >= TBD_BURST_COUNT_MIN:
+            category = "WHALE_ENTRY"
+            reason = f"TBD_WHALE: {trade_count} trades in {time_window_ms}ms (>40)"
+            bias = "FOLLOW_BURST"  # Will be refined by other signals
+            confidence = "HIGH"
+        elif trade_count >= TBD_RETAIL_MIN:
+            category = "RETAIL_FLOW"
+            reason = f"TBD_RETAIL: {trade_count} trades in {time_window_ms}ms (10-30)"
+            bias = "NEUTRAL"
+            confidence = "LOW"
+        else:
+            category = "NOISE"
+            reason = f"TBD_NOISE: {trade_count} trades in {time_window_ms}ms (<10)"
+            bias = "NEUTRAL"
+            confidence = "VERY_LOW"
+        
+        # Calculate burst intensity
+        burst_intensity = trade_count / TBD_BURST_COUNT_MIN if TBD_BURST_COUNT_MIN > 0 else 0
+        
+        return {
+            "trade_count": trade_count,
+            "category": category,
+            "bias": bias,
+            "confidence": confidence,
+            "burst_intensity": round(burst_intensity, 2),
+            "time_window_ms": time_window_ms,
+            "reason": reason
+        }
+
+# ================= V83: OI ACCELERATION (OIA) - BARU! =================
+class OIAccelerationV83:
+    """
+    🔥 V83: OI ACCELERATION - POSITION BUILDING DETECTOR
+    
+    Yang dipakai: OI Δ5m
+    Tapi HFT lihat: OI Δ1s, OI Δ500ms
+    
+    Formula:
+        oi_acceleration = (oi_now - oi_1s_ago)
+    
+    Interpretasi:
+        OI ↑ + price flat → absorption
+        OI ↓ + price move → liquidation
+        OI ↑ + price ↑ → squeeze
+    """
+    @staticmethod
+    def analyze(oi_now: float, oi_prev: float, 
+                price_change: float, time_delta_s: float = 1.0) -> Dict:
+        
+        # Calculate OI acceleration
+        oi_accel = oi_now - oi_prev if oi_now and oi_prev else 0
+        oi_accel_pct = (oi_accel / oi_prev * 100) if oi_prev and oi_prev > 0 else 0
+        
+        # Determine market phase
+        if oi_accel > 0 and abs(price_change) < 0.1:
+            phase = "ABSORPTION"
+            reason = f"OIA_ABSORPTION: OI ↑ ({oi_accel_pct:+.2f}%) + Price flat ({price_change:.2f}%)"
+            bias = "FOLLOW_OI"  # Wait for breakout
+        elif oi_accel < 0 and abs(price_change) > 0.2:
+            phase = "LIQUIDATION"
+            reason = f"OIA_LIQUIDATION: OI ↓ ({oi_accel_pct:+.2f}%) + Price move ({price_change:.2f}%)"
+            bias = "FOLLOW_PRICE"
+        elif oi_accel > 0 and price_change > 0.2:
+            phase = "SQUEEZE"
+            reason = f"OIA_SQUEEZE: OI ↑ ({oi_accel_pct:+.2f}%) + Price ↑ ({price_change:.2f}%)"
+            bias = "LONG"
+        elif oi_accel > 0 and price_change < -0.2:
+            phase = "DIVERGENCE"
+            reason = f"OIA_DIVERGENCE: OI ↑ ({oi_accel_pct:+.2f}%) + Price ↓ ({price_change:.2f}%)"
+            bias = "REVERSAL_LONG"
+        else:
+            phase = "NEUTRAL"
+            reason = f"OIA_NEUTRAL: OI ({oi_accel_pct:+.2f}%) + Price ({price_change:.2f}%)"
+            bias = "NEUTRAL"
+        
+        return {
+            "oi_acceleration": round(oi_accel, 2),
+            "oi_acceleration_pct": round(oi_accel_pct, 2),
+            "phase": phase,
+            "bias": bias,
+            "oi_now": round(oi_now, 2) if oi_now else 0,
+            "oi_prev": round(oi_prev, 2) if oi_prev else 0,
+            "reason": reason
+        }
+
+# ================= V83: LIQUIDITY SWEEP PROBABILITY (LSP) - BARU! =================
+class LiquiditySweepProbabilityV83:
+    """
+    🔥 V83: LIQUIDITY SWEEP PROBABILITY - MARKET MAKER TRACKER
+    
+    Dipakai banyak HFT market makers.
+    
+    Formula:
+        probability = liquidity_target / total_liquidity
+    
+    Decision:
+        if short_liq / total_liq > 0.7 → sweep short
+        if long_liq / total_liq > 0.7 → sweep long
+    """
+    @staticmethod
+    def analyze(long_liq_size: float, short_liq_size: float,
+                total_liquidity: float = None) -> Dict:
+        
+        # Calculate total if not provided
+        if total_liquidity is None or total_liquidity == 0:
+            total_liquidity = long_liq_size + short_liq_size
+        
+        # Avoid division by zero
+        if total_liquidity == 0:
+            total_liquidity = 1
+        
+        # Calculate probabilities
+        long_prob = long_liq_size / total_liquidity
+        short_prob = short_liq_size / total_liquidity
+        
+        # Determine sweep target
+        if short_prob > LSP_SWEEP_THRESHOLD:
+            sweep_target = "SHORT_LIQUIDITY"
+            reason = f"LSP_SWEEP_SHORT: Probability {short_prob:.1%} > {LSP_SWEEP_THRESHOLD:.0%}"
+            bias = "LONG"  # Price will go up to sweep shorts
+        elif long_prob > LSP_SWEEP_THRESHOLD:
+            sweep_target = "LONG_LIQUIDITY"
+            reason = f"LSP_SWEEP_LONG: Probability {long_prob:.1%} > {LSP_SWEEP_THRESHOLD:.0%}"
+            bias = "SHORT"  # Price will go down to sweep longs
+        else:
+            sweep_target = "NONE"
+            reason = f"LSP_BALANCED: Long={long_prob:.1%}, Short={short_prob:.1%}"
+            bias = "NEUTRAL"
+        
+        return {
+            "long_probability": round(long_prob, 4),
+            "short_probability": round(short_prob, 4),
+            "sweep_target": sweep_target,
+            "bias": bias,
+            "total_liquidity": round(total_liquidity, 2),
+            "reason": reason
+        }
+
+# ================= V83: LIQUIDITY SNIPER SCORE - BARU! =================
+class LiquiditySniperScoreV83:
+    """
+    🔥 V83: LIQUIDITY SNIPER SCORE - COMPOSITE DECISION ENGINE
+    
+    Cara Simple Menebak +6% Direction
+    
+    Rule cepat:
+        score_long = ask_vacuum + agg_velocity + oi_acceleration + short_liq_gradient
+        score_short = bid_vacuum + negative_agg_velocity + negative_oi_acceleration + long_liq_gradient
+    
+    Decision:
+        if score_long > score_short:
+            target = short_liq (Price goes UP to hit shorts)
+        else:
+            target = long_liq (Price goes DOWN to hit longs)
+    """
+    @staticmethod
+    def calculate(ovs_result: Dict, adv_result: Dict, oia_result: Dict, 
+                  lhg_result: Dict, lsp_result: Dict) -> Dict:
+        
+        # Initialize scores
+        score_long = 0
+        score_short = 0
+        
+        # 1. Orderbook Vacuum Speed component
+        if ovs_result:
+            if ovs_result.get('direction') == 'PUMP':
+                score_long += 25
+            elif ovs_result.get('direction') == 'DUMP':
+                score_short += 25
+        
+        # 2. Aggression Velocity component
+        if adv_result:
+            vel_ratio = adv_result.get('velocity_ratio', 0)
+            if adv_result.get('bias') == 'LONG':
+                score_long += min(vel_ratio * 10, 25)
+            elif adv_result.get('bias') == 'SHORT':
+                score_short += min(vel_ratio * 10, 25)
+        
+        # 3. OI Acceleration component
+        if oia_result:
+            if oia_result.get('bias') == 'LONG':
+                score_long += 25
+            elif oia_result.get('bias') == 'SHORT':
+                score_short += 25
+        
+        # 4. Liquidation Heat Gradient component
+        if lhg_result:
+            long_grad = lhg_result.get('long_gradient', 0)
+            short_grad = lhg_result.get('short_gradient', 0)
+            total_grad = long_grad + short_grad if (long_grad + short_grad) > 0 else 1
+            
+            # Higher gradient = easier to hit
+            score_short += (long_grad / total_grad) * 25  # Long gradient attracts price DOWN
+            score_long += (short_grad / total_grad) * 25  # Short gradient attracts price UP
+        
+        # 5. Liquidity Sweep Probability component
+        if lsp_result:
+            if lsp_result.get('bias') == 'LONG':
+                score_long += 25 * lsp_result.get('short_probability', 0)
+            elif lsp_result.get('bias') == 'SHORT':
+                score_short += 25 * lsp_result.get('long_probability', 0)
+        
+        # Determine final decision
+        total_score = score_long + score_short
+        if total_score == 0:
+            total_score = 1
+        
+        long_confidence = (score_long / total_score) * 100
+        short_confidence = (score_short / total_score) * 100
+        
+        if score_long > score_short and score_long >= V83_LONG_SCORE_THRESHOLD:
+            target = "SHORT_LIQUIDITY"
+            direction = "UP"
+            bias = "LONG"
+            reason = f"V83_SNIPER_LONG: Score {score_long:.1f} > {score_short:.1f} → Target Short Liq (+6% potential)"
+            confidence = "HIGH"
+        elif score_short > score_long and score_short >= V83_SHORT_SCORE_THRESHOLD:
+            target = "LONG_LIQUIDITY"
+            direction = "DOWN"
+            bias = "SHORT"
+            reason = f"V83_SNIPER_SHORT: Score {score_short:.1f} > {score_long:.1f} → Target Long Liq (-6% potential)"
+            confidence = "HIGH"
+        else:
+            target = "NONE"
+            direction = "NEUTRAL"
+            bias = "NEUTRAL"
+            reason = f"V83_NEUTRAL: Score {score_long:.1f} vs {score_short:.1f} (No clear edge)"
+            confidence = "LOW"
+        
+        return {
+            "score_long": round(score_long, 2),
+            "score_short": round(score_short, 2),
+            "long_confidence": round(long_confidence, 1),
+            "short_confidence": round(short_confidence, 1),
+            "target": target,
+            "direction": direction,
+            "bias": bias,
+            "confidence": confidence,
             "reason": reason
         }
 
@@ -3421,9 +3900,12 @@ class StateManagerV82:
         self.accumulation_flow_threshold = ATI_FLOW_MIN
         self.accumulation_duration_minutes = 0
 
-        # Bid/Ask history untuk ODD
+        # Bid/Ask history untuk ODD dan V83 OVS
         self.bid_history = deque(maxlen=10)
         self.ask_history = deque(maxlen=10)
+        
+        # V83: Aggression history untuk Velocity calculation
+        self.aggression_history = deque(maxlen=ADV_HISTORY_SIZE)
 
         # Time persistence tracking
         self.gravity_first_seen = {}
@@ -5339,7 +5821,25 @@ class ConflictResolverV82:
                 fmv_result: Dict = None,
                 ltg_result: Dict = None, icd_result: Dict = None,
                 api_result: Dict = None, lmg_result: Dict = None,
-                fid_result: Dict = None):  # V82 NEW: Fuel Ignition Detector!
+                fid_result: Dict = None,
+                # V83 NEW MODULES
+                lhg_result: Dict = None, ovs_result: Dict = None,
+                adv_result: Dict = None, tbd_result: Dict = None,
+                oia_result: Dict = None, lsp_result: Dict = None,
+                sniper_result: Dict = None):
+        # ============================================
+        # PRIORITAS -1 (TERTINGGI): V83 LIQUIDITY SNIPER SCORE
+        # ============================================
+        if sniper_result and sniper_result.get('confidence') == 'HIGH':
+            return {
+                "bias": sniper_result['bias'],
+                "confidence": sniper_result['confidence'],
+                "reason": f"V83_SNIPER: {sniper_result['reason']} | LHG={lhg_result.get('target', 'N/A') if lhg_result else 'N/A'}",
+                "phase": "LIQUIDITY_SNIPER_TARGET",
+                "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"},
+                "v83_details": sniper_result
+            }
+        
         # ============================================
         # PRIORITAS 0 (TERTINGGI): LIQUIDITY MIRROR GUARD (V82) - ANTI-DEATH MAGNET
         # ============================================
@@ -6124,6 +6624,15 @@ class BinanceAnalyzerV82:
         self.api = AbsorptionPressureV82()      # V82 baru!
         self.lmg = LiquidityMirrorGuardV82()    # V82 baru!
         self.fid = FuelIgnitionDetectorV82()    # V82 baru!
+
+        # V83: NEW MODULES - THE LIQUIDITY SNIPER
+        self.lhg = LiquidationHeatGradientV83()         # V83 baru!
+        self.ovs = OrderbookVacuumSpeedV83()            # V83 baru!
+        self.adv = AggressionVelocityV83()              # V83 baru!
+        self.tbd = TradeBurstDetectorV83()              # V83 baru!
+        self.oia = OIAccelerationV83()                  # V83 baru!
+        self.lsp = LiquiditySweepProbabilityV83()       # V83 baru!
+        self.sniper_score = LiquiditySniperScoreV83()   # V83 baru!
 
         # V80: New modules
         self.ier = InstitutionalExitRadarV80()  # V80 baru!
