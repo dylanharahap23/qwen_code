@@ -6201,6 +6201,7 @@ class BinanceAnalyzerV80:
                 oi_delta_5m
             )
             
+            # ===== V82: ANALISIS API DAN LMG =====
             # V82: Absorption Pressure Index (API)
             api_result = self.api.analyze(
                 trades['aggressive_ratio'],
@@ -6208,10 +6209,10 @@ class BinanceAnalyzerV80:
                 change_5m
             )
             
-            # V82: Liquidity Mirror Guard (LMG)
+            # V82: Liquidity Mirror Guard (LMG) - FIXED: menggunakan 'liq' bukan 'liq_data'
             lmg_result = self.lmg.analyze(
-                liq_data['long_dist'],
-                liq_data['short_dist'],
+                liq['long_dist'],    # Fixed: from liq_data to liq
+                liq['short_dist'],   # Fixed: from liq_data to liq
                 rsi6
             )
 
@@ -6224,7 +6225,7 @@ class BinanceAnalyzerV80:
             # Track persistence V82
             api_key = f"API_{trades['aggressive_ratio']:.2f}_{rsi6:.1f}"
             api_duration = self.state_mgr.track_api_persistence(api_key, time.time())
-            lmg_key = f"LMG_{liq_data['long_dist']:.2f}_{liq_data['short_dist']:.2f}_{rsi6:.1f}"
+            lmg_key = f"LMG_{liq['long_dist']:.2f}_{liq['short_dist']:.2f}_{rsi6:.1f}"
             lmg_duration = self.state_mgr.track_lmg_persistence(lmg_key, time.time())
             # ====================================
 
@@ -6557,7 +6558,7 @@ class BinanceAnalyzerV80:
                 mdd_result, cfk_result, pab_result, mdv_result, amv_result, lgo_result,
                 psr_result, off_result, aef_result, ezh_result, psv_result,
                 wtd_result, ier_result, rmg_result, fmv_result,
-                ltg_result, icd_result, api_result, lmg_result  # V82 baru!
+                ltg_result, icd_result  # V81 modules
             )
 
             liquidity_data = {
@@ -6643,7 +6644,7 @@ class BinanceAnalyzerV80:
                 "funding": funding['funding'],
                 "change_24h": round(change_24h, 2),
                 "change_5m": round(change_5m, 2),
-                "oi_current": round(oi_now, 2),
+                "oi_current": round(oi_now, 2) if oi_now else 0,
                 # V69: MA Data
                 "ma10": round(ma10, 4),
                 "ma20": round(ma20, 4),
@@ -6663,7 +6664,7 @@ class BinanceAnalyzerV80:
                 "long_liq": liq['long_dist'],
                 "nearest_liquidity": liquidity_data['nearest'],
                 "double_sweep": double_sweep,
-                # V81 New Modules (PRIORITAS TERTINGGI!)
+                # V81 New Modules
                 "ltg": {
                     "is_vacuum": ltg_result['is_vacuum'],
                     "bias": ltg_result['bias'],
@@ -6676,7 +6677,20 @@ class BinanceAnalyzerV80:
                     "reason": icd_result['reason'],
                     "icd_duration_minutes": round(icd_duration, 1)
                 },
-                # V80 New Modules (PRIORITAS TERTINGGI 3-5)
+                # V82 New Modules
+                "api": {
+                    "is_absorbing": api_result['is_absorbing'],
+                    "bias": api_result['bias'],
+                    "reason": api_result['reason'],
+                    "api_duration_minutes": round(api_duration, 1)
+                },
+                "lmg": {
+                    "is_death_magnet": lmg_result['is_death_magnet'],
+                    "bias": lmg_result['bias'],
+                    "reason": lmg_result['reason'],
+                    "lmg_duration_minutes": round(lmg_duration, 1)
+                },
+                # V80 New Modules
                 "ier": {
                     "is_exit": ier_result['is_exit'],
                     "exit_type": ier_result['exit_type'],
@@ -6751,7 +6765,7 @@ class BinanceAnalyzerV80:
                     "bias": psr_result['bias'],
                     "reason": psr_result['reason'],
                     "confidence": psr_result['confidence'],
-                    "price_ma_diff": psr_result['price_ma_diff'],
+                    "price_ma_diff": psr_result.get('price_ma_diff', 0),
                     "panic_duration_minutes": round(panic_duration, 1)
                 },
                 # V75 Modules
