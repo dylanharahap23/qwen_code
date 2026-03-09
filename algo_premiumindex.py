@@ -6384,7 +6384,10 @@ class ConflictResolverV82:
                 lhg_result: Dict = None, ovs_result: Dict = None,
                 adv_result: Dict = None, tbd_result: Dict = None,
                 oia_result: Dict = None, lsp_result: Dict = None,
-                sniper_result: Dict = None):
+                sniper_result: Dict = None,
+                # V85 NEW MODULES - ANTI-LIQUIDITY TRAP (UAI & DEGO CASES)
+                otf_result: Dict = None, aaf_result: Dict = None,
+                fed_result: Dict = None):
         # ============================================
         # PRIORITAS -1 (TERTINGGI): V83 LIQUIDITY SNIPER SCORE
         # ============================================
