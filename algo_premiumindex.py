@@ -8202,6 +8202,53 @@ class BinanceAnalyzerV85:
                 oi_delta_5m,
                 wmi_data.get('wmi_ratio', 0) if wmi_data else 0
             )
+            
+            # ================= V83 MODULES - THE LIQUIDITY SNIPER =================
+            # LHG: Liquidation Heat Gradient
+            lhg_result = self.lhg.analyze(
+                liq['long_dist'],
+                liq['short_dist'],
+                liq['long_vol'],
+                liq['short_vol']
+            )
+            
+            # OVS: Orderbook Vacuum Speed
+            ovs_result = self.ovs.analyze(
+                ob_data.get('bids', []),
+                ob_data.get('asks', [])
+            )
+            
+            # ADV: Aggression Velocity
+            adv_result = self.adv.analyze(
+                trades['aggressive_ratio']
+            )
+            
+            # TBD: Trade Burst Detector (using volume_ratio as proxy for trade count)
+            tbd_result = self.tbd.analyze(
+                int(trades['volume_ratio'] * 20)
+            )
+            
+            # OIA: OI Acceleration
+            oia_result = self.oia.analyze(
+                oi_delta_5m,
+                change_5m
+            )
+            
+            # LSP: Liquidity Sweep Probability
+            lsp_result = self.lsp.analyze(
+                liq['long_vol'],
+                liq['short_vol']
+            )
+            
+            # Sniper Score: Composite Decision Engine
+            sniper_result = self.sniper_score.calculate(
+                ovs_result,
+                adv_result,
+                oia_result,
+                lhg_result,
+                lsp_result
+            )
+            # ======================================================================
 
             # V80: FAKE MAGNET VACUUM (FMV)
             fmv_result = self.fmv.analyze(
