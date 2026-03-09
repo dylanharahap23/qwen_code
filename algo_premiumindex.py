@@ -278,6 +278,25 @@ OTF_AGG_MIN = 1.0                              # Agg > 1.0 = ada agresi beli di 
 OTF_OI_DELTA_MAX = 0                           # OI Delta harus negatif (< 0) untuk trap detection
 OTF_FLOW_MAX = 1.0                             # Flow < 1.0 = tidak ada volume confirmation
 
+# V85 - NEUTRAL ZONE SHIELD (NZS) - BARU! (Patch Kasus STABLEUSDT - Anti-STABLE Trap)
+NZS_RSI_MIN = 40                               # RSI neutral zone bawah
+NZS_RSI_MAX = 65                               # RSI neutral zone atas
+NZS_WMI_THRESHOLD = -80                        # WMI < -80 = Whale protect downside (Long Liquidity Shield)
+NZS_IER_ACTIVE_CHECK = True                    # Cek apakah IER aktif untuk trigger shield
+
+# V85 - POSITION FLIP DETECTOR (PFD) - BARU! (Patch Kasus STABLEUSDT - Internal Flow Illusion)
+PFD_FLOW_MIN = 2.0                             # Flow > 2 = high flow
+PFD_AGG_MAX = 1.0                              # Agg < 1 = low aggression (internal matching)
+PFD_OI_DROP_MIN = -0.5                         # OI drop < -0.5% = position reload signal
+
+# V85 - FAKE EXIT DETECTOR (FED_V85) - BARU! (Patch Kasus STABLEUSDT)
+FED_V85_FLOW_MIN = 2.0                         # Flow > 2 = suspicious high flow
+FED_V85_AGG_MAX = 1.0                          # Agg < 1 = fake exit (no real selling)
+
+# V85 - LIQUIDITY RELOAD DETECTOR (LRD) - BARU! (Patch Kasus STABLEUSDT)
+LRD_OI_DROP_MIN = 0                            # OI drop (negatif) = liquidity reset
+LRD_WMI_THRESHOLD = -70                        # WMI < -70 = long liquidation pool besar
+
 # V85 - AGGRESSION ABSORPTION FILTER (AAF) - BARU! (Patch Kasus UAIUSDT)
 AAF_AGG_MIN = 3.0                              # Agg > 3x = aggressive buyers
 AAF_FLOW_MAX = 1.0                             # Flow < 1.0 = volume tidak naik (buyers trapped)
@@ -2330,6 +2349,262 @@ class AggressionAbsorptionFilterV85:
         
         return {
             "is_absorbed": is_absorbed,
+            "bias": bias,
+            "reason": reason,
+            "confidence": confidence
+        }
+
+# ================= V85: NEUTRAL ZONE SHIELD (NZS) - ANTI-STABLE TRAP =================
+class NeutralZoneShieldV85:
+    """
+    V85: Mendeteksi jebakan di area RSI Neutral (40-65).
+    
+    KASUS STABLEUSDT (The Neutral Zone Trap):
+        Data: Price pump, RSI 58.8 (neutral), Flow 2.57x (tinggi), Agg 0.67x (rendah), 
+              OI Δ -1.10% (turun), WMI -83.9 (ekstrim negatif)
+        
+        Bot membaca: IER_WARNING (Flow tinggi + OI turun = Whale exit) → SHORT
+        Tapi market: PUMP!
+        
+        🧠 Error Utama: IER terlalu dominan tanpa filter WMI + RSI neutral
+        Masalahnya: WMI -83.9x artinya Long Liquidation Pool besar di atas - itu "bernutrisi" buat MM!
+        
+        🔬 Clue yang Bot Lewatkan:
+        - RSI 58.8 di zona neutral (40-65)
+        - WMI -83.9 < -80 = massive long liquidation cluster above price
+        - Flow 2.57x tinggi TAPI Agg 0.67x rendah = Internal Flow Illusion
+        - OI turun = Whale narik order untuk position flip, bukan exit
+        
+        Interpretasi sebenarnya:
+        - Market maker menutup posisi lama + membuka posisi baru (position flip)
+        - Mengurangi OI sementara agar terlihat seperti exit
+        - Ini adalah "Liquidity Reload" - Whale sedang reload posisi untuk pump!
+        - NZS Logic: "Heh, lo mau SHORT di RSI 58 sementara WMI -83? Itu namanya lo nyodorin leher ke MM."
+    
+    Prinsip NZS V85:
+        "Jika IER terdeteksi TAPI WMI < -80 (Whale Protect Downside) di RSI Neutral,
+        maka sinyal SHORT dibatalkan. MM cuma spoofing OI buat mancing Short Seller."
+        
+        SCENARIO: NZS_SHIELD
+            Jika RSI 40-65 AND IER_active AND WMI < -80 → bias = LONG (DILARANG SHORT!)
+            (Ini Short Trap - Whale sedang mancing short seller sebelum pump!)
+    """
+    @staticmethod
+    def analyze(rsi6: float, wmi_ratio: float, ier_active: bool) -> Dict:
+        """
+        Args:
+            rsi6: RSI 6 period (40-65 = neutral zone)
+            wmi_ratio: WMI Ratio (< -80 = whale protect downside)
+            ier_active: Apakah IER_EXIT aktif
+        Returns:
+            Dict dengan is_shielded, bias, reason
+        """
+        is_shielded = False
+        bias = "NEUTRAL"
+        reason = ""
+        
+        # ============================================
+        # 🛡️ SCENARIO: NZS_SHIELD (Anti-STABLE Trap)
+        # Jika RSI neutral + IER aktif TAPI WMI ekstrim negatif = SHORT TRAP!
+        # ============================================
+        if NZS_RSI_MIN < rsi6 < NZS_RSI_MAX and ier_active:
+            if wmi_ratio < NZS_WMI_THRESHOLD:  # WMI < -80
+                is_shielded = True
+                bias = "LONG"  # DILARANG SHORT! Ini Short Trap!
+                reason = (f"NZS_SHIELD: RSI {rsi6:.1f} Neutral ({NZS_RSI_MIN}-{NZS_RSI_MAX}) + "
+                         f"WMI {wmi_ratio:.1f}x < {NZS_WMI_THRESHOLD} (Ekstrim!). "
+                         f"Whale naruh jaring raksasa di bawah (Anti-Dump)! "
+                         f"IER_EXIT adalah False Signal untuk mancing Short Trap. MM bakal PUMP!")
+        
+        return {
+            "is_shielded": is_shielded,
+            "bias": bias,
+            "reason": reason
+        }
+
+# ================= V85: POSITION FLIP DETECTOR (PFD) - ANTI-INTERNAL FLOW ILLUSION =================
+class PositionFlipDetectorV85:
+    """
+    V85: Mendeteksi 'Position Flip' - Whale menutup posisi lama dan buka posisi baru.
+    
+    KASUS STABLEUSDT (The Position Flip):
+        Data: Flow 2.57x (tinggi), Agg 0.67x (rendah), OI Δ -1.10% (turun)
+        
+        🧠 Error Utama: Bot menganggap ini exit distribution
+        Masalahnya: Flow tinggi + Agg rendah = Internal Matching, bukan real selling
+        
+        🔬 Clue yang Bot Lewatkan:
+        - Flow > 2 = high flow (suspicious)
+        - Agg < 1 = low aggression (tidak ada real selling pressure)
+        - OI drop < -0.5% = position reload signal (bukan exit)
+        
+        Interpretasi sebenarnya:
+        - Market maker melakukan internal matching (wash trade internal)
+        - Menutup posisi lama + membuka posisi baru
+        - Mengurangi OI sementara untuk menciptakan liquidity vacuum
+        - Pattern: OI drop → flow spike → aggression low → orderbook thin → PUMP
+    
+    Prinsip PFD V85:
+        "Jika Flow > 2 AND Agg < 1 AND OI drop < -0.5%, ini bukan exit.
+        Ini adalah Position Flip - Whale sedang reload posisi!"
+        
+        SCENARIO: POSITION_FLIP
+            Jika Flow > 2 AND Agg < 1 AND OI drop < -0.5% → bias = LONG
+    """
+    @staticmethod
+    def analyze(trade_flow: float, agg_ratio: float, oi_delta: float) -> Dict:
+        """
+        Args:
+            trade_flow: Rasio volume beli/jual (> 2.0 = high flow)
+            agg_ratio: Aggressive Ratio (< 1.0 = low aggression)
+            oi_delta: OI Delta 5 menit (< -0.5% = position reload signal)
+        Returns:
+            Dict dengan is_flip, bias, reason, confidence
+        """
+        is_flip = False
+        bias = "NEUTRAL"
+        reason = "No position flip detected"
+        confidence = "LOW"
+        
+        # ============================================
+        # 🔄 SCENARIO: POSITION_FLIP (Internal Flow Illusion)
+        # Flow tinggi + Agg rendah + OI drop = Whale reload posisi!
+        # ============================================
+        if trade_flow > PFD_FLOW_MIN and agg_ratio < PFD_AGG_MAX and oi_delta < PFD_OI_DROP_MIN:
+            is_flip = True
+            bias = "LONG"  # DILARANG SHORT! Ini reload posisi!
+            confidence = "SUPREME"
+            reason = (f"PFD_POSITION_FLIP: Flow {trade_flow:.1f}x > {PFD_FLOW_MIN} (tinggi) TAPI "
+                     f"Agg {agg_ratio:.2f}x < {PFD_AGG_MAX} (rendah - internal matching) DAN "
+                     f"OI Δ {oi_delta:.2f}% < {PFD_OI_DROP_MIN}% (position reload). "
+                     f"Whale nutup posisi lama + buka posisi baru (reload)! "
+                     f"Liquidity Vacuum Pump incoming!")
+        
+        return {
+            "is_flip": is_flip,
+            "bias": bias,
+            "reason": reason,
+            "confidence": confidence
+        }
+
+# ================= V85: FAKE EXIT DETECTOR (FED_V85) - ANTI-LIQUIDITY BUILDING =================
+class FakeExitDetectorV85:
+    """
+    V85: Mendeteksi 'Fake Exit' - Flow tinggi tanpa agresi market.
+    
+    KASUS STABLEUSDT (The Fake Exit):
+        Data: Flow 2.57x (tinggi), Agg 0.67x (rendah)
+        
+        🧠 Error Utama: Bot melihat Flow tinggi = distribution
+        Masalahnya: Jika whale benar exit, biasanya Agg sell > 2
+        
+        🔬 Clue yang Bot Lewatkan:
+        - Flow > 2 = suspicious high flow
+        - Agg < 1 = no real selling (fake exit)
+        
+        Interpretasi sebenarnya:
+        - Exchange bisa membuat flow tinggi tanpa agresi market
+        - Ini adalah Limit Absorption, bukan market sell
+        - Market maker menarik orderbook untuk menciptakan liquidity vacuum
+        
+    Prinsip FED_V85:
+        "Jika Flow > 2 AND Aggression < 1, ignore IER.
+        Ini adalah Liquidity Building, bukan Distribution."
+        
+        SCENARIO: FAKE_EXIT
+            Jika Flow > 2 AND Agg < 1 → Ignore IER (bias LONG)
+    """
+    @staticmethod
+    def analyze(trade_flow: float, agg_ratio: float) -> Dict:
+        """
+        Args:
+            trade_flow: Rasio volume beli/jual (> 2.0 = high flow)
+            agg_ratio: Aggressive Ratio (< 1.0 = no real selling)
+        Returns:
+            Dict dengan is_fake_exit, bias, reason, confidence
+        """
+        is_fake_exit = False
+        bias = "NEUTRAL"
+        reason = "No fake exit detected"
+        confidence = "LOW"
+        
+        # ============================================
+        # 🎭 SCENARIO: FAKE_EXIT (Liquidity Building)
+        # Flow tinggi + Agg rendah = Fake distribution!
+        # ============================================
+        if trade_flow > FED_V85_FLOW_MIN and agg_ratio < FED_V85_AGG_MAX:
+            is_fake_exit = True
+            bias = "LONG"  # Ignore IER! Ini fake exit!
+            confidence = "HIGH"
+            reason = (f"FED_FAKE_EXIT: Flow {trade_flow:.1f}x > {FED_V85_FLOW_MIN} (tinggi) TAPI "
+                     f"Agg {agg_ratio:.2f}x < {FED_V85_AGG_MAX} (tidak ada real selling). "
+                     f"Market maker tarik orderbook buat Liquidity Vacuum! "
+                     f"IER_EXIT adalah FALSE SIGNAL!")
+        
+        return {
+            "is_fake_exit": is_fake_exit,
+            "bias": bias,
+            "reason": reason,
+            "confidence": confidence
+        }
+
+# ================= V85: LIQUIDITY RELOAD DETECTOR (LRD) - ANTI-OI MANIPULATION =================
+class LiquidityReloadDetectorV85:
+    """
+    V85: Mendeteksi 'Liquidity Reload' - OI turun untuk liquidity reset.
+    
+    KASUS STABLEUSDT (The Liquidity Reload):
+        Data: OI Δ -1.10% (turun), WMI -83.9 (ekstrim negatif)
+        
+        🧠 Error Utama: Bot menganggap OI turun = exit distribution
+        Masalahnya: OI turun bisa berarti liquidity reset, bukan exit
+        
+        🔬 Clue yang Bot Lewatkan:
+        - OI drop (negatif) = liquidity reset signal
+        - WMI < -70 = long liquidation pool besar di atas
+        
+        Interpretasi sebenarnya:
+        - Market maker mengurangi OI untuk membersihkan orderbook
+        - Menciptakan liquidity vacuum untuk pump lebih mudah
+        - WMI negatif ekstrim = whale protect downside (short probability rendah)
+    
+    Prinsip LRD V85:
+        "OI turun ≠ selalu bearish.
+        Sering kali berarti liquidity reset.
+        Jika WMI < -70, ini adalah LONG bias."
+        
+        SCENARIO: LIQUIDITY_RELOAD
+            Jika OI drop (negatif) AND WMI < -70 → bias = LONG
+    """
+    @staticmethod
+    def analyze(oi_delta: float, wmi_ratio: float) -> Dict:
+        """
+        Args:
+            oi_delta: OI Delta 5 menit (negatif = drop)
+            wmi_ratio: WMI Ratio (< -70 = long liquidation pool besar)
+        Returns:
+            Dict dengan is_reload, bias, reason, confidence
+        """
+        is_reload = False
+        bias = "NEUTRAL"
+        reason = "No liquidity reload detected"
+        confidence = "LOW"
+        
+        # ============================================
+        # 🔁 SCENARIO: LIQUIDITY_RELOAD (OI Manipulation)
+        # OI drop + WMI ekstrim negatif = Whale reload untuk pump!
+        # ============================================
+        if oi_delta < -LRD_OI_DROP_MIN and wmi_ratio < LRD_WMI_THRESHOLD:
+            is_reload = True
+            bias = "LONG"  # DILARANG SHORT! Ini reload!
+            confidence = "SUPREME"
+            reason = (f"LRD_LIQUIDITY_RELOAD: OI Δ {oi_delta:.2f}% (drop/liquidity reset) + "
+                     f"WMI {wmi_ratio:.1f}x < {LRD_WMI_THRESHOLD} (long liq pool besar). "
+                     f"MM reducing OI to clear orderbook for PUMP! "
+                     f"Institutional Reload, BUKAN Institutional Exit!")
+        
+        return {
+            "is_reload": is_reload,
             "bias": bias,
             "reason": reason,
             "confidence": confidence
@@ -6471,7 +6746,10 @@ class ConflictResolverV82:
                 sniper_result: Dict = None,
                 # V85 NEW MODULES - ANTI-LIQUIDITY TRAP (UAI & DEGO CASES)
                 otf_result: Dict = None, aaf_result: Dict = None,
-                fed_result: Dict = None):
+                fed_result: Dict = None,
+                # V85 NEW MODULES - ANTI-STABLE TRAP (Neutral Zone Shield)
+                nzs_result: Dict = None, pfd_result: Dict = None,
+                fed_v85_result: Dict = None, lrd_result: Dict = None):
         # ============================================
         # 🟢 PRIORITAS 0 (TERTINGGI): V85 OVERSOLD TRAP FILTER - LIQUIDITY VACUUM REBOUND
         # ANTI-CHECKMATE! Mencegah Short Trap saat WMI ekstrim negatif + RSI rendah
@@ -6483,6 +6761,63 @@ class ConflictResolverV82:
                     "confidence": "ABSOLUTE",
                     "reason": f"V85_OTF_LIQUIDITY_VACUUM: {otf_result['reason']}",
                     "phase": "ANTI_LIQUIDITY_TRAP",
+                    "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"}
+                }
+        
+        # ============================================
+        # 🛡️ PRIORITAS 0.5 (SUPREME): V85 NEUTRAL ZONE SHIELD - ANTI-STABLE TRAP
+        # Mencegah Short Trap saat RSI Neutral + WMI ekstrim negatif + IER aktif
+        # Ini adalah filter utama untuk kasus STABLEUSDT!
+        # ============================================
+        if nzs_result and nzs_result.get('is_shielded'):
+            return {
+                "bias": nzs_result['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V85_NZS_SHIELD: {nzs_result['reason']}",
+                "phase": "NEUTRAL_TRAP_SHIELD",
+                "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"}
+            }
+        
+        # ============================================
+        # 🔄 PRIORITAS 0.6 (SUPREME): V85 POSITION FLIP DETECTOR - ANTI-INTERNAL FLOW ILLUSION
+        # Mencegah salah baca position flip sebagai exit distribution
+        # ============================================
+        if pfd_result and pfd_result.get('is_flip'):
+            return {
+                "bias": pfd_result['bias'],
+                "confidence": pfd_result.get('confidence', 'SUPREME'),
+                "reason": f"V85_PFD_POSITION_FLIP: {pfd_result['reason']}",
+                "phase": "POSITION_RELOAD",
+                "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"}
+            }
+        
+        # ============================================
+        # 🎭 PRIORITAS 0.7 (HIGH): V85 FAKE EXIT DETECTOR - ANTI-LIQUIDITY BUILDING
+        # Override IER jika terdeteksi fake exit (flow tinggi tanpa agresi)
+        # ============================================
+        if fed_v85_result and fed_v85_result.get('is_fake_exit'):
+            # Ignore IER jika fake exit terdeteksi
+            if ier_result and ier_result.get('is_exit'):
+                return {
+                    "bias": fed_v85_result['bias'],
+                    "confidence": fed_v85_result.get('confidence', 'HIGH'),
+                    "reason": f"V85_FED_FAKE_EXIT: {fed_v85_result['reason']} (IER OVERRIDE!)",
+                    "phase": "LIQUIDITY_BUILDING",
+                    "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"}
+                }
+        
+        # ============================================
+        # 🔁 PRIORITAS 0.8 (SUPREME): V85 LIQUIDITY RELOAD DETECTOR - ANTI-OI MANIPULATION
+        # Mencegah salah baca OI drop sebagai exit (bisa jadi liquidity reset)
+        # ============================================
+        if lrd_result and lrd_result.get('is_reload'):
+            # Override IER jika liquidity reload terdeteksi
+            if ier_result and ier_result.get('is_exit'):
+                return {
+                    "bias": lrd_result['bias'],
+                    "confidence": lrd_result.get('confidence', 'SUPREME'),
+                    "reason": f"V85_LRD_LIQUIDITY_RELOAD: {lrd_result['reason']} (IER OVERRIDE! Institutional Reload!)",
+                    "phase": "LIQUIDITY_RESET",
                     "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"}
                 }
         
@@ -7297,6 +7632,12 @@ class BinanceAnalyzerV85:
         self.otf = OversoldTrapFilterV85()              # V85 baru!
         self.aaf = AggressionAbsorptionFilterV85()      # V85 baru!
         self.fed = FakeExhaustionDetectorV85()          # V85 baru!
+        
+        # V85: NEW MODULES - ANTI-STABLE TRAP (Patch STABLEUSDT)
+        self.nzs = NeutralZoneShieldV85()               # V85 baru!
+        self.pfd = PositionFlipDetectorV85()            # V85 baru!
+        self.fed_v85 = FakeExitDetectorV85()            # V85 baru!
+        self.lrd = LiquidityReloadDetectorV85()         # V85 baru!
 
         # V80: New modules
         self.ier = InstitutionalExitRadarV80()  # V80 baru!
@@ -7833,6 +8174,34 @@ class BinanceAnalyzerV85:
                 rsi6,
                 oi_delta_5m
             )
+            
+            # V85: NEUTRAL ZONE SHIELD (NZS) - ANTI-STABLE TRAP!
+            # Cek apakah IER aktif untuk trigger shield
+            ier_active = ier_result.get('is_exit', False) if ier_result else False
+            nzs_result = self.nzs.analyze(
+                rsi6,
+                wmi_data.get('wmi_ratio', 0) if wmi_data else 0,
+                ier_active
+            )
+            
+            # V85: POSITION FLIP DETECTOR (PFD) - ANTI-INTERNAL FLOW ILLUSION!
+            pfd_result = self.pfd.analyze(
+                trades['ratio'],
+                trades['aggressive_ratio'],
+                oi_delta_5m
+            )
+            
+            # V85: FAKE EXIT DETECTOR (FED_V85) - ANTI-LIQUIDITY BUILDING!
+            fed_v85_result = self.fed_v85.analyze(
+                trades['ratio'],
+                trades['aggressive_ratio']
+            )
+            
+            # V85: LIQUIDITY RELOAD DETECTOR (LRD) - ANTI-OI MANIPULATION!
+            lrd_result = self.lrd.analyze(
+                oi_delta_5m,
+                wmi_data.get('wmi_ratio', 0) if wmi_data else 0
+            )
 
             # V80: FAKE MAGNET VACUUM (FMV)
             fmv_result = self.fmv.analyze(
@@ -7923,7 +8292,24 @@ class BinanceAnalyzerV85:
                 icd_result=icd_result,    # V81 baru!
                 api_result=api_result,    # V82 baru!
                 lmg_result=lmg_result,     # V82 baru!
-                fid_result=fid_result      # V82 baru! FID
+                fid_result=fid_result,      # V82 baru! FID
+                # V83 NEW MODULES
+                lhg_result=lhg_result,
+                ovs_result=ovs_result,
+                adv_result=adv_result,
+                tbd_result=tbd_result,
+                oia_result=oia_result,
+                lsp_result=lsp_result,
+                sniper_result=sniper_result,
+                # V85 NEW MODULES - ANTI-LIQUIDITY TRAP (UAI & DEGO CASES)
+                otf_result=otf_result,
+                aaf_result=aaf_result,
+                fed_result=fed_result,
+                # V85 NEW MODULES - ANTI-STABLE TRAP (Neutral Zone Shield)
+                nzs_result=nzs_result,
+                pfd_result=pfd_result,
+                fed_v85_result=fed_v85_result,
+                lrd_result=lrd_result
             )
 
             entry_ready = self.state_mgr.update_entry(final['bias'])
