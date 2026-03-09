@@ -8230,8 +8230,10 @@ class BinanceAnalyzerV85:
             
             # OIA: OI Acceleration
             oia_result = self.oia.analyze(
-                oi_delta_5m,
-                change_5m
+                oi_now=oi_now,
+                oi_prev=oi_then or oi_now,
+                price_change=change_5m,
+                time_delta_s=300.0
             )
             
             # LSP: Liquidity Sweep Probability
