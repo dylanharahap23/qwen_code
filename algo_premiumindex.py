@@ -1,7 +1,32 @@
 #!/usr/bin/env python3
 """
-🔥 BINANCE LIQUIDATION HUNTER V85 - THE LIQUIDITY PATHFINDER (ANTI-CHECKMATE EDITION)
-💀 Analisa Kegagalan V83 & V84 (Kenapa Bot Salah Arah?)
+🔥 BINANCE LIQUIDATION HUNTER V86 - THE LIQUIDITY PATHFINDER (ZERO GRAVITY HORIZON EDITION)
+💀 Analisa Kegagalan V83, V84 & V85 (Kenapa Bot Salah Arah?)
+
+    KASUS TRIAUSDT (The Ultimate Trap - "The Paradox of 0.00% Liquidation"):
+        Data: Price pump, RSI 96.7 (Nuclear Overbought), Short Liq 0.0%, Long Liq -8.73%, 
+              Flow 1.94x, Agg 1.5x, OI Δ +1.37%
+        Bot memilih: LMG_DEATH_MAGNET_SHORT → LONG (Karena Short Liq 0.0% = magnet)
+        Tapi market: DUMP -5% sampai -10% setelah ±58 menit
+        
+        🧠 Error Utama: LMG terlalu dominan tanpa filter RSI-OI Ceiling
+        Masalahnya: Short liq 0.0% tidak selalu berarti cascade, sering kali itu "Exit Liquidity"!
+        
+        🔬 Clue yang Bot Lewatkan:
+        - RSI 96.7 > 90 = Nuclear Overbought (area extrem)
+        - OI Δ +1.37% > 0.5% = NEW POSITIONS ENTERING (bukan short liquidation!)
+        - Agg 1.5x < 2.0 = weak aggression (passive sell wall)
+        - Flow 1.94x tinggi tapi Agg rendah = internal matching / passive distribution
+        
+        Interpretasi sebenarnya:
+        - Jika benar squeeze ke atas, OI harus TURUN (karena short liquidation menutup posisi)
+        - TAPI OI NAIK = NEW SHORT BUILDING (Whale sedang build short positions!)
+        - Pattern: Distribution top → Whale building shorts → Fake short magnet 0% → Dump ke long liq 8%
+        
+        ⚡ Signal Penting yang Bot Lewatkan:
+        - RSI > 90 AND OI_delta > 0.5 AND Agg < 2.0 = OVERBOUGHT DISTRIBUTION TRAP
+        - Ini adalah "Zero Gravity Horizon" - harga sudah di plafon, MM berhenti beli!
+        - MM butuh bot lo entry LONG supaya mereka punya lawan buat nutup LONG mereka (JUAL)!
 
     KASUS 1: PHAUSDT (The Gravity Trap):
         Data: Price 0.0352, Long Liq: -0.17%, Short Liq: +1.76%, RSI 61.5, Flow 0.69, Agg 1.0, OI Δ +0.17, WMI -99.8
@@ -64,6 +89,25 @@
         - Ini adalah "The Liquidity Vacuum Rebound" - Short Trap klasik!
         - JANGAN PERNAH SHORT KALAU WMI < -90! Itu area "Spring" bandar!
 
+🛡️ THE SUPREME REFINEMENT: V86 "THE LIQUIDITY PATHFINDER" - ZERO GRAVITY HORIZON
+    Modul Baru V86: "Zero Gravity Horizon" (ZGH) - ANTI-TRIA TRAP!
+        ZGH RULE:
+            - Jika RSI > 90 AND OI_delta > 0.5 AND Agg < 2.0 → bias = SHORT (DILARANG LONG!)
+            - Ini adalah Overbought Distribution Trap - Whale building shorts!
+    
+    Modul Baru V86: "Overbought Distribution Filter" (ODF) - PRIORITAS TERATAS!
+        ODF RULE:
+            - IF RSI > 90 AND OI_delta > 0.5 AND Agg < 2.0 → bias = SHORT
+            - Reason: RSI extreme + OI rising + weak aggression = Whale short build
+    
+    Prinsip Pamungkas V86:
+        "RSI > 90 TIDAK SELALU berarti continuation. OI dan Agg adalah kunci!"
+        "Jika RSI > 90 dan OI naik, itu BUKAN squeeze - itu DISTRIBUTION!"
+        "MM tidak akan squeeze kalau OI masih naik - mereka butuh likuiditas buat EXIT!"
+        "Short liq 0.0% itu sering kali FAKE MAGNET - yang besar justru Long liq di bawah!"
+        "MM memilih target berdasarkan: 1) Liquidity size, 2) Path resistance, 3) Distance"
+        "Distance-based logic adalah kesalahan terbesar bot - HFT memakai liquidity reward logic!"
+
 🛡️ THE SUPREME REFINEMENT: V85 "THE LIQUIDITY PATHFINDER" - ANTI-CHECKMATE
     Modul Baru V85: "Oversold Trap Filter" (OTF) - SCENARIO DUAL-PATH!
         SCENARIO 1 (UAI Trap - Liquidation Cascade):
@@ -82,44 +126,58 @@
          itu jauh lebih 'bernutrisi' buat MM daripada hajar Long yang jaraknya cuma 0.5%."
         "MM selalu makan yang porsinya lebih besar."
 
-🎯 HIERARKI MUTLAK V84 (Filter Kriminalitas):
-    1. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO
-    2. LPS (Liquidity Path Score) - Optimal path liquidation prediction
-    3. LDF (Liquidity Density Filter) - Density comparison
-    4. WDF (Weak Dump Filter) - Validasi weak dump scenario
-    5. LLS (Long Liquidity Shield) - WMI based protection
-    6. FSD (Funding Skew Detector) - Funding rate analysis
-    7. LMG (Liquidity Mirror Guard) - Cek 'Magnet Maut' (Jarak < 0.05% & RSI Ekstrim)
-    8. API (Absorption Pressure Index) - Cek siapa yang menyerap siapa (Agg vs RSI)
-    9. LTG (Liquidity Thinning Guard) - Cek apakah sisi atas/bawah kosong (Flow > 50x)
-    10. ICD (Internal Cross Detector) - Validasi apakah IER_EXIT adalah sandiwara Whale
-    11. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT
-    12. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE
-    13. IER (Institutional Exit Radar) - ANTI-OPN/BARD FALSE FLOW
-    14. RMG (RSI Momentum Guard) - ANTI-RIVER GRAVITY DECOY
-    15. FMV (Fake Magnet Vacuum) - KOMBINASI IER + RMG
-    16. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR
-    17. OFF (Overdrive Flow Filter) - ANTI-HUSDT TRAP
-    18. AEF (Aggressive Exhaustion Filter) - ANTI-PHA TRAP
-    19. PSR (Panic Saturation Reversal) - ANTI-HUMA DRIFT TRAP
-    20. AMV (Absorption Momentum Validator) - ANTI-HUMA TRAP
-    21. LGO (Liquidation Gravity Overdrive) - ANTI-RIVER NUCLEAR
-    22. MDV (Magnet Decay Validator) - ANTI-RIVER SPOOF
-    23. PAB (Passive Absorption Blackhole) - ANTI-SIREN TRAP
-    24. CFK (Catching Falling Knives) - ANTI-ROBO TRAP
-    25. MDD (Magnet Distance Dominance) - ANTI-RIVER TRAP
-    26. OVD (Orderbook Vacuum Defense) - ANTI-PHA TRAP
-    27. Trend Integrity (V69) - ANTI-PIPPIN/PHA/POWER
-    28. Gravity Deflection (OGD) - ANTI-PIPPIN TRAP (V68)
-    29. Zero Aggression Slaughter (ZAS) - ANTI-DEADSTICK (V67)
-    30. Absorption Validity Check (AVC) - ANTI-EXIT LIQUIDITY TRAP (V67)
-    31. Aggression-Mass Divergence (AMD) - ANTI-SPOOF PROTECTION (V65)
-    32. The DYL Particle (TDP) - ABSOLUTE OVERRIDE (V64)
-    33. Temporal Accumulation Index (ATI) - WHALE PATIENCE LOADING (V66)
-    34. Wall Erasure Detection (WED) - GRAVITY MANDATE (V63)
-    35. Magnet Wall Reversal (MWR) (V62)
-    36. The Ghost Whisperer (LVS) (V61)
-    37. The Absorption Shield (DTD) (V60)
+🎯 HIERARKI MUTLAK V86 (Filter Kriminalitas - UPDATED):
+    0. ZGH (Zero Gravity Horizon) - ANTI-TRIA TRAP (V86) ⭐ BARU!
+    1. ODF (Overbought Distribution Filter) - ANTI-TRIA TRAP (V86) ⭐ BARU!
+    2. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO
+    3. LPS (Liquidity Path Score) - Optimal path liquidation prediction
+    4. LDF (Liquidity Density Filter) - Density comparison
+    5. WDF (Weak Dump Filter) - Validasi weak dump scenario
+    6. LLS (Long Liquidity Shield) - WMI based protection
+    7. FSD (Funding Skew Detector) - Funding rate analysis
+    8. LMG (Liquidity Mirror Guard) - Cek 'Magnet Maut' (Jarak < 0.05% & RSI Ekstrim)
+    9. API (Absorption Pressure Index) - Cek siapa yang menyerap siapa (Agg vs RSI)
+    10. LTG (Liquidity Thinning Guard) - Cek apakah sisi atas/bawah kosong (Flow > 50x)
+    11. ICD (Internal Cross Detector) - Validasi apakah IER_EXIT adalah sandiwara Whale
+    12. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT
+    13. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE
+    14. IER (Institutional Exit Radar) - ANTI-OPN/BARD FALSE FLOW
+    15. RMG (RSI Momentum Guard) - ANTI-RIVER GRAVITY DECOY
+    16. FMV (Fake Magnet Vacuum) - KOMBINASI IER + RMG
+    17. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR
+    18. OFF (Overdrive Flow Filter) - ANTI-HUSDT TRAP
+    19. AEF (Aggressive Exhaustion Filter) - ANTI-PHA TRAP
+    20. PSR (Panic Saturation Reversal) - ANTI-HUMA DRIFT TRAP
+    21. AMV (Absorption Momentum Validator) - ANTI-HUMA TRAP
+    22. LGO (Liquidation Gravity Overdrive) - ANTI-RIVER NUCLEAR
+    23. MDV (Magnet Decay Validator) - ANTI-RIVER SPOOF
+    24. PAB (Passive Absorption Blackhole) - ANTI-SIREN TRAP
+    25. CFK (Catching Falling Knives) - ANTI-ROBO TRAP
+    26. MDD (Magnet Distance Dominance) - ANTI-RIVER TRAP
+    27. OVD (Orderbook Vacuum Defense) - ANTI-PHA TRAP
+    28. Trend Integrity (V69) - ANTI-PIPPIN/PHA/POWER
+    29. Gravity Deflection (OGD) - ANTI-PIPPIN TRAP (V68)
+    30. Zero Aggression Slaughter (ZAS) - ANTI-DEADSTICK (V67)
+    31. Absorption Validity Check (AVC) - ANTI-EXIT LIQUIDITY TRAP (V67)
+    32. Aggression-Mass Divergence (AMD) - ANTI-SPOOF PROTECTION (V65)
+    33. The DYL Particle (TDP) - ABSOLUTE OVERRIDE (V64)
+    34. Temporal Accumulation Index (ATI) - WHALE PATIENCE LOADING (V66)
+    35. Wall Erasure Detection (WED) - GRAVITY MANDATE (V63)
+    36. Magnet Wall Reversal (MWR) (V62)
+    37. The Ghost Whisperer (LVS) (V61)
+    38. The Absorption Shield (DTD) (V60)
+
+🧠 Kaidah Pamungkas V86:
+    "RSI > 90 + OI naik + Agg rendah = DISTRIBUTION TOP! DILARANG LONG!"
+    "Short liq 0.0% itu sering kali FAKE MAGNET - yang besar justru Long liq di bawah!"
+    "MM tidak akan squeeze kalau OI masih naik - mereka butuh likuiditas buat EXIT!"
+    
+🧠 Kaidah Pamungkas V85:
+    "RSI < 15 TIDAK SELALU berarti bottom atau dump. Konteks WMI dan Agg adalah kunci!"
+    "Jangan pernah entry SHORT kalau WMI udah di bawah -90, seburuk apa pun beritanya."
+    "WMI -99.1x itu bukan sekadar angka. Itu artinya Short Liquidation Pool di atas 4% 
+     itu jauh lebih 'bernutrisi' buat MM daripada hajar Long yang jaraknya cuma 0.5%."
+    "MM selalu makan yang porsinya lebih besar."
 
 🧠 Kaidah Pamungkas V84:
     "Jangan pernah short hanya karena long liq dekat jika Flow > 0.6 dan Agg > 0.8.
@@ -304,6 +362,16 @@ AAF_FLOW_MAX = 1.0                             # Flow < 1.0 = volume tidak naik 
 # V85 - FAKE EXHAUSTION DETECTOR (FED) - BARU! (Patch Kasus UAIUSDT)
 FED_RSI_MAX = 10                               # RSI < 10 = extreme oversold
 FED_OI_DELTA_MAX = 0                           # OI turun = positions closing, bukan new longs
+
+# V86 - ZERO GRAVITY HORIZON (ZGH) - BARU! (Anti-TRIA Trap)
+ZGH_RSI_CEILING = 90                           # RSI > 90 = Nuclear Overbought
+ZGH_OI_DELTA_MIN = 0.5                         # OI Delta > 0.5% = new positions building
+ZGH_AGG_CEILING = 2.0                          # Agg < 2.0 = weak aggression (passive distribution)
+
+# V86 - OVERBOUGHT DISTRIBUTION FILTER (ODF) - BARU! (Anti-TRIA Trap)
+ODF_RSI_THRESHOLD = 90                         # RSI > 90 = extreme overbought
+ODF_OI_DELTA_THRESHOLD = 0.5                   # OI Delta > 0.5% = whale building shorts
+ODF_AGG_THRESHOLD = 2.0                        # Agg < 2.0 = passive sell wall
 
 # V74 - MAGNET DECAY VALIDATOR (MDV)
 MDV_MAX_WAIT_MINUTES = 10                     # Maksimal waktu tunggu magnet
@@ -2352,6 +2420,190 @@ class AggressionAbsorptionFilterV85:
             "bias": bias,
             "reason": reason,
             "confidence": confidence
+        }
+
+# ================= V86: ZERO GRAVITY HORIZON (ZGH) - BARU! =================
+class ZeroGravityHorizonV86:
+    """
+    🔥 V86: ZERO GRAVITY HORIZON - THE ULTIMATE ANTI-TRIA TRAP
+    
+    KASUS TRIAUSDT (The Paradox of 0.00% Liquidation):
+        Data: RSI 96.7 (Nuclear Overbought), Short Liq 0.0%, Long Liq -8.73%,
+              Flow 1.94x, Agg 1.5x, OI Δ +1.37%
+        Bot memilih: LMG_DEATH_MAGNET_SHORT → LONG (Karena Short Liq 0.0% = magnet)
+        Tapi market: DUMP -5% sampai -10% setelah ±58 menit
+        
+        🧠 Error Utama: LMG terlalu dominan tanpa filter RSI-OI Ceiling
+        Masalahnya: Short liq 0.0% tidak selalu berarti cascade, sering kali itu "Exit Liquidity"!
+        
+        🔬 Clue yang Bot Lewatkan:
+        - RSI 96.7 > 90 = Nuclear Overbought (area extrem)
+        - OI Δ +1.37% > 0.5% = NEW POSITIONS ENTERING (bukan short liquidation!)
+        - Agg 1.5x < 2.0 = weak aggression (passive sell wall)
+        - Flow 1.94x tinggi tapi Agg rendah = internal matching / passive distribution
+        
+        Interpretasi sebenarnya:
+        - Jika benar squeeze ke atas, OI harus TURUN (karena short liquidation menutup posisi)
+        - TAPI OI NAIK = NEW SHORT BUILDING (Whale sedang build short positions!)
+        - Pattern: Distribution top → Whale building shorts → Fake short magnet 0% → Dump ke long liq 8%
+        
+    Prinsip ZGH:
+        "RSI > 90 TIDAK SELALU berarti continuation. OI dan Agg adalah kunci!"
+        "Jika RSI > 90 dan OI naik, itu BUKAN squeeze - itu DISTRIBUTION!"
+        "MM tidak akan squeeze kalau OI masih naik - mereka butuh likuiditas buat EXIT!"
+        "Short liq 0.0% itu sering kali FAKE MAGNET - yang besar justru Long liq di bawah!"
+        
+    Rule Pamungkas:
+        IF RSI > 90 AND OI_delta > 0.5 AND Agg < 2.0 → bias = SHORT (DILARANG LONG!)
+        Reason: RSI extreme + OI rising + weak aggression = Whale short build
+    """
+    @staticmethod
+    def analyze(rsi6: float, oi_delta: float, agg_ratio: float, 
+                short_dist: float = None, long_dist: float = None) -> Dict:
+        """
+        Args:
+            rsi6: RSI 6 period (> 90 = Nuclear Overbought)
+            oi_delta: OI Delta 5 menit (> 0.5% = new positions building)
+            agg_ratio: Aggressive Ratio (< 2.0 = weak aggression, passive distribution)
+            short_dist: Distance to short liquidation (optional, untuk konteks)
+            long_dist: Distance to long liquidation (optional, untuk konteks)
+        Returns:
+            Dict dengan is_ceiling, bias, reason, confidence
+        """
+        is_ceiling = False
+        bias = "NEUTRAL"
+        reason = "Normal conditions"
+        confidence = "LOW"
+        
+        # ============================================
+        # 🟢 ZERO GRAVITY HORIZON DETECTED!
+        # RSI > 90 + OI naik + Agg rendah = DISTRIBUTION TOP!
+        # ============================================
+        if rsi6 > ZGH_RSI_CEILING and oi_delta > ZGH_OI_DELTA_MIN and agg_ratio < ZGH_AGG_CEILING:
+            is_ceiling = True
+            bias = "SHORT"  # DILARANG LONG! Ini Distribution Top!
+            confidence = "ABSOLUTE"
+            
+            # Tambahkan konteks tentang fake magnet jika short_dist tersedia
+            magnet_context = ""
+            if short_dist is not None and abs(short_dist) < 0.1:
+                magnet_context = (f" Short Liq {short_dist:.2f}% adalah FAKE MAGNET! "
+                                 f"MM pakai ini buat pancing LONG entry supaya mereka bisa EXIT!")
+            
+            reason = (f"ZGH_ZERO_GRAVITY_HORIZON: RSI {rsi6:.1f} > {ZGH_RSI_CEILING} (Nuclear Overbought) TAPI "
+                     f"OI Δ {oi_delta:.2f}% > {ZGH_OI_DELTA_MIN}% (NEW SHORT BUILDING) DAN "
+                     f"Agg {agg_ratio:.2f}x < {ZGH_AGG_CEILING} (weak aggression/passive sell wall). "
+                     f"INI ADALAH DISTRIBUTION TOP! Whale building short positions!{magnet_context}")
+        
+        return {
+            "is_ceiling": is_ceiling,
+            "bias": bias,
+            "reason": reason,
+            "confidence": confidence,
+            "rsi": round(rsi6, 1),
+            "oi_delta": round(oi_delta, 2),
+            "agg_ratio": round(agg_ratio, 2)
+        }
+
+# ================= V86: OVERBOUGHT DISTRIBUTION FILTER (ODF) - BARU! =================
+class OverboughtDistributionFilterV86:
+    """
+    🔥 V86: OVERBOUGHT DISTRIBUTION FILTER - PRIORITAS TERATAS ANTI-TRIA TRAP
+    
+    Ini adalah modul prioritas tertinggi yang override SEMUA sinyal LONG
+    ketika kondisi Overbought Distribution terdeteksi.
+    
+    KASUS TRIAUSDT (The Ultimate Trap):
+        Metric          Value           Interpretasi
+        RSI             96.7            Nuclear Overbought
+        Short liq       0.0%            Fake Magnet / Exit Liquidity
+        Long liq        -8.73%          REAL TARGET (besar & juicy)
+        Flow            1.94x           High volume
+        Agg             1.5x            LOW aggression (passive sell)
+        OI Δ            +1.37%          NEW POSITIONS (short building!)
+        
+        Bot membaca: LMG_DEATH_MAGNET_SHORT → SHORT LIQ sangat dekat → harus LONG
+        Realita: MM pump sedikit → distribution → dump ke long liq 8%
+        
+    🧠 Cara Market Maker Berpikir:
+        MM memilih target berdasarkan profit/effort:
+        - Target Short: Distance 0%, Reward kecil (cluster kecil/sudah tersapu)
+        - Target Long: Distance 8.7%, Reward besar (cluster gemuk)
+        
+        Jadi mereka:
+        1. Pump ke RSI 96 (bikin retail FOMO LONG)
+        2. Build short positions (OI naik +1.37%)
+        3. Fake short magnet 0% (pancing bot entry LONG)
+        4. Distribution (jual ke retail yang FOMO)
+        5. Dump ke long liq 8% (real target!)
+    
+    💀 Pattern Overbought Distribution Trap:
+        - RSI > 90
+        - OI_delta > 0.5%
+        - Agg 1-2x (low aggression)
+        - Move berikutnya: -5% sampai -10%
+    
+    Rule Pamungkas:
+        IF RSI > 90 AND OI_delta > 0.5 AND Agg < 2.0 → bias = SHORT
+        Reason: RSI extreme + OI rising + weak aggression = Whale short build
+    """
+    @staticmethod
+    def analyze(rsi6: float, oi_delta: float, agg_ratio: float,
+                short_liq_size: float = None, long_liq_size: float = None,
+                short_dist: float = None, long_dist: float = None) -> Dict:
+        """
+        Args:
+            rsi6: RSI 6 period (> 90 = extreme overbought)
+            oi_delta: OI Delta 5 menit (> 0.5% = whale building shorts)
+            agg_ratio: Aggressive Ratio (< 2.0 = passive sell wall)
+            short_liq_size: Total short liquidation size (optional, untuk density comparison)
+            long_liq_size: Total long liquidation size (optional, untuk density comparison)
+            short_dist: Distance to short liquidation (optional)
+            long_dist: Distance to long liquidation (optional)
+        Returns:
+            Dict dengan active, bias, reason, confidence
+        """
+        active = False
+        bias = "NEUTRAL"
+        reason = "Normal conditions"
+        confidence = "LOW"
+        
+        # ============================================
+        # 🔴 OVERBOUGHT DISTRIBUTION DETECTED!
+        # Ini adalah DISTRIBUTION TOP! Whale building shorts!
+        # ============================================
+        if rsi6 > ODF_RSI_THRESHOLD and oi_delta > ODF_OI_DELTA_THRESHOLD and agg_ratio < ODF_AGG_THRESHOLD:
+            active = True
+            bias = "SHORT"  # OVERRIDE SEMUA SINYAL LONG!
+            confidence = "ABSOLUTE"
+            
+            # Tambahkan konteks density jika data tersedia
+            density_context = ""
+            if short_liq_size is not None and long_liq_size is not None:
+                if long_liq_size > short_liq_size * 2:
+                    density_context = (f" Long liq pool {long_liq_size:.0f} >> Short liq pool {short_liq_size:.0f}. "
+                                      f"MM akan pilih target yang lebih 'bernutrisi' (Long liq)!")
+            
+            # Tambahkan konteks distance jika data tersedia
+            distance_context = ""
+            if short_dist is not None and long_dist is not None:
+                if abs(short_dist) < 0.1 and abs(long_dist) > 5:
+                    distance_context = (f" Short dist {short_dist:.2f}% adalah FAKE MAGNET! "
+                                       f"Long dist {abs(long_dist):.2f}% adalah REAL TARGET!")
+            
+            reason = (f"ODF_OVERBOUGHT_DISTRIBUTION: RSI {rsi6:.1f} > {ODF_RSI_THRESHOLD} (extreme overbought) + "
+                     f"OI Δ {oi_delta:.2f}% > {ODF_OI_DELTA_THRESHOLD}% (whale building shorts) + "
+                     f"Agg {agg_ratio:.2f}x < {ODF_AGG_THRESHOLD} (passive sell wall). "
+                     f"INI BUKAN SQUEEZE - INI DISTRIBUTION!{density_context}{distance_context}")
+        
+        return {
+            "active": active,
+            "bias": bias,
+            "reason": reason,
+            "confidence": confidence,
+            "rsi": round(rsi6, 1),
+            "oi_delta": round(oi_delta, 2),
+            "agg_ratio": round(agg_ratio, 2)
         }
 
 # ================= V85: NEUTRAL ZONE SHIELD (NZS) - ANTI-STABLE TRAP =================
