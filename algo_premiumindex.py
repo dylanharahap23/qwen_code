@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-🔥 BINANCE LIQUIDATION HUNTER V84 - THE LIQUIDITY PATHFINDER
-💀 Analisa Kegagalan V83 (Kenapa Bot Salah Arah di PHAUSDT?)
-    Kasus PHAUSDT (The Gravity Trap):
+🔥 BINANCE LIQUIDATION HUNTER V85 - THE LIQUIDITY PATHFINDER (ANTI-CHECKMATE EDITION)
+💀 Analisa Kegagalan V83 & V84 (Kenapa Bot Salah Arah?)
+
+    KASUS 1: PHAUSDT (The Gravity Trap):
         Data: Price 0.0352, Long Liq: -0.17%, Short Liq: +1.76%, RSI 61.5, Flow 0.69, Agg 1.0, OI Δ +0.17, WMI -99.8
         Kenapa Loss? Bot V83 memilih GRAVITY_OVERDRIVE → SHORT karena Long Liq terlalu dekat (0.17% < 0.2%).
         Tapi market justru LONG!
         
         🧠 Error Utama: LGO terlalu dominan tanpa filter konteks
-        Logic lama: if long_dist < 0.2: bias = SHORT
         Masalahnya: 0.17% long liq tidak selalu target, sering kali itu justru bait liquidity!
         
         🔬 Clue yang Bot Lewatkan:
@@ -26,29 +26,61 @@
         - Flow > 0.6 AND Agg > 0.8 = dump tidak mungkin terjadi
         - WMI < -80 = whale protect downside (short probability rendah)
 
-🛡️ THE SUPREME REFINEMENT: V84 "THE LIQUIDITY PATHFINDER"
-    Modul 1: "Fake Gravity Detector" (FGD) - BARU!
-        - Mendeteksi 'Gravity Trap' dimana long liq kecil adalah umpan
-        - Jika long_liq < 0.2 AND flow > 0.6 AND agg > 0.8 → LONG bias
+    KASUS 2: UAIUSDT (The Oversold Trap - Liquidation Cascade):
+        Data: Price 0.2847, RSI 3.6 (extreme oversold), Agg 4.0x buy, Flow 0.85x, OI Δ -0.32%
+        Bot memilih: RMG_WEAK_MOMENTUM_BULLISH → LONG
+        Tapi market: DUMP -7%
+        
+        🧠 Error Utama: RMG override PSV tanpa filter OI
+        Masalahnya: RSI < 10 tidak selalu berarti bottom, sering berarti liquidation acceleration phase
+        
+        🔬 Clue yang Bot Lewatkan:
+        - RSI 3.6 < 10 = extreme oversold
+        - OI Δ -0.32% < 0 = positions closing, bukan new longs entering
+        - Flow 0.85x < 1.0 = volume tidak confirm bullish
+        
+        Interpretasi sebenarnya:
+        - Jika market benar-benar reversal, OI harus naik (new longs entering)
+        - OI turun = liquidation cascade incoming
+        - Pattern: oversold bounce trap → retail buy dip → dump continuation → long liq cascade
+
+    KASUS 3: The Liquidity Vacuum Rebound (Checkmate Case - UAI Style):
+        Data: WMI -99.1x, RSI 11.7, Agg 2.33x, OI turun (Institutional Exit detected)
+        Bot memilih: IER_EXIT → SHORT (Karena OI turun, Whale kabur)
+        Tapi market: PUMP! REBOUND! Short squeeze!
+        
+        🧠 Error Utama: IER terlalu dominan tanpa filter WMI + RSI ekstrim
+        Masalahnya: WMI -99.1x artinya Short Liquidation Pool di atas 4% - itu "bernutrisi" buat MM!
+        
+        🔬 Clue yang Bot Lewatkan:
+        - RSI 11.7 < 15 = extreme oversold
+        - WMI -99.1 < -90 = massive short liquidation cluster BELOW price
+        - Agg 2.33 > 1.0 = ada agresi beli di dasar ekstrim
+        - OI turun = Whale narik order untuk bersihin Orderbook bawah (Liquidity Vacuum)
+        
+        Interpretasi sebenarnya:
+        - Whale sengaja narik order (bikin OI turun) buat ngebersihin Orderbook bawah
+        - Lalu dalam hitungan milidetik mereka hajar Market Buy buat squeeze semua Short seller
+        - Ini adalah "The Liquidity Vacuum Rebound" - Short Trap klasik!
+        - JANGAN PERNAH SHORT KALAU WMI < -90! Itu area "Spring" bandar!
+
+🛡️ THE SUPREME REFINEMENT: V85 "THE LIQUIDITY PATHFINDER" - ANTI-CHECKMATE
+    Modul Baru V85: "Oversold Trap Filter" (OTF) - SCENARIO DUAL-PATH!
+        SCENARIO 1 (UAI Trap - Liquidation Cascade):
+            - Jika RSI < 15 AND OI decreasing AND Flow < 1 AND WMI > -90 → bias = SHORT
+            - Ini liquidation cascade - retail buy dip trapped!
+        
+        SCENARIO 2 (Liquidity Vacuum Rebound - ANTI-CHECKMATE):
+            - Jika RSI < 15 AND WMI < -90 AND Agg > 1.0 → bias = LONG (DILARANG SHORT!)
+            - Ini Short Trap - Whale sedang narik rem tangan untuk rebound!
+            - Whale narik order (OI turun) buat bersihin orderbook, lalu MAHJARRR!
     
-    Modul 2: "Liquidity Density Filter" (LDF) - BARU!
-        - Hitung density: density_long = long_liq_size / long_dist
-        - density_short = short_liq_size / short_dist
-        - Jika density_short > density_long → LONG bias
-    
-    Modul 3: "Weak Dump Filter" (WDF) - BARU!
-        - Jika flow > 0.6 AND agg > 0.8 → dump tidak mungkin terjadi
-    
-    Modul 4: "Long Liquidity Shield" (LLS) - BARU!
-        - Jika WMI < -80 → short probability rendah karena whale protect downside
-    
-    Modul 5: "Funding Skew Detector" (FSD) - BARU!
-        - Jika funding negative → biasanya pump karena short crowded
-    
-    Modul 6: "Liquidity Path Score" (LPS) - BARU!
-        - path_long = short_liq_size - pump_cost
-        - path_short = long_liq_size - dump_cost
-        - Jika path_long > path_short → pump dulu
+    Prinsip Pamungkas V85:
+        "RSI < 15 TIDAK SELALU berarti bottom atau dump. Konteks WMI dan Agg adalah kunci!"
+        "Jangan pernah entry SHORT kalau WMI udah di bawah -90, seburuk apa pun beritanya."
+        "WMI -99.1x itu bukan sekadar angka. Itu artinya Short Liquidation Pool di atas 4% 
+         itu jauh lebih 'bernutrisi' buat MM daripada hajar Long yang jaraknya cuma 0.5%."
+        "MM selalu makan yang porsinya lebih besar."
 
 🎯 HIERARKI MUTLAK V84 (Filter Kriminalitas):
     1. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO
@@ -239,9 +271,11 @@ LLS_WMI_THRESHOLD = -80                       # WMI threshold untuk long liquidi
 # V84 - FUNDING SKEW DETECTOR (FSD) - BARU!
 FSD_FUNDING_NEGATIVE_THRESHOLD = -0.01        # Funding negative threshold untuk pump detection
 
-# V85 - OVERSOLD TRAP FILTER (OTF) - BARU! (Patch Kasus UAIUSDT)
-OTF_RSI_MAX = 10                               # Maksimal RSI untuk deteksi oversold trap
-OTF_OI_DELTA_MAX = 0                           # OI Delta harus negatif (< 0)
+# V85 - OVERSOLD TRAP FILTER (OTF) - BARU! (Patch Kasus UAIUSDT & Liquidity Vacuum Rebound)
+OTF_RSI_MAX = 15                               # Maksimal RSI untuk deteksi oversold trap (naik dari 10 ke 15)
+OTF_WMI_MIN = -90                              # WMI < -90 = extreme short liquidation cluster below
+OTF_AGG_MIN = 1.0                              # Agg > 1.0 = ada agresi beli di dasar
+OTF_OI_DELTA_MAX = 0                           # OI Delta harus negatif (< 0) untuk trap detection
 OTF_FLOW_MAX = 1.0                             # Flow < 1.0 = tidak ada volume confirmation
 
 # V85 - AGGRESSION ABSORPTION FILTER (AAF) - BARU! (Patch Kasus UAIUSDT)
@@ -2129,12 +2163,12 @@ class FundingSkewDetectorV84:
             "reason": reason
         }
 
-# ================= V85: OVERSOLD TRAP FILTER (OTF) =================
+# ================= V85: OVERSOLD TRAP FILTER (OTF) - ANTI-UAI TRAP =================
 class OversoldTrapFilterV85:
     """
     V85: Mendeteksi 'Oversold Trap' - RSI ekstrem yang bukan reversal signal
     
-    Kasus UAIUSDT (The Oversold Trap):
+    KASUS 1: UAIUSDT (The Oversold Trap - Liquidation Cascade)
         Data: Price 0.2847, RSI 3.6 (extreme oversold), Agg 4.0x buy, Flow 0.85x, OI Δ -0.32%
         Bot memilih: RMG_WEAK_MOMENTUM_BULLISH → LONG
         Tapi market: DUMP -7%
@@ -2152,20 +2186,46 @@ class OversoldTrapFilterV85:
         - OI turun = liquidation cascade incoming
         - Pattern: oversold bounce trap → retail buy dip → dump continuation → long liq cascade
     
-    Prinsip OTF:
-        "RSI < 10 tidak selalu berarti bottom. Sering berarti liquidation acceleration phase.
-        Jika OI decreasing dan Flow < 1, bias harus SHORT, bukan LONG."
+    KASUS 2: The Liquidity Vacuum Rebound (Anti-Checkmate)
+        Data: WMI -99.1x, RSI 11.7, Agg 2.33x, OI turun (Institutional Exit detected)
+        Bot memilih: IER_EXIT → SHORT (Karena OI turun, Whale kabur)
+        Tapi market: PUMP! REBOUND! Short squeeze!
+        
+        🧠 Error Utama: IER terlalu dominan tanpa filter WMI + RSI ekstrim
+        Masalahnya: WMI -99.1x artinya Short Liquidation Pool di atas 4% - itu "bernutrisi" buat MM!
+        
+        🔬 Clue yang Bot Lewatkan:
+        - RSI 11.7 < 15 = extreme oversold
+        - WMI -99.1 < -90 = massive short liquidation cluster BELOW price
+        - Agg 2.33 > 1.0 = ada agresi beli di dasar ekstrim
+        - OI turun = Whale narik order untuk bersihin Orderbook bawah (Liquidity Vacuum)
+        
+        Interpretasi sebenarnya:
+        - Whale sengaja narik order (bikin OI turun) buat ngebersihin Orderbook bawah
+        - Lalu dalam hitungan milidetik mereka hajar Market Buy buat squeeze semua Short seller
+        - Ini adalah "The Liquidity Vacuum Rebound" - Short Trap klasik!
     
-    Rule Baru:
-        Jika RSI < 10 AND OI decreasing AND Flow < 1 → bias = SHORT
+    Prinsip OTF V85:
+        "RSI < 15 TIDAK SELALU berarti bottom atau dump. Konteks WMI dan Agg adalah kunci!"
+        
+        SCENARIO 1 (UAI Trap): 
+            Jika RSI < 15 AND OI decreasing AND Flow < 1 AND WMI > -90 → bias = SHORT
+            (Ini liquidation cascade - retail buy dip trapped!)
+        
+        SCENARIO 2 (Liquidity Vacuum Rebound - ANTI-CHECKMATE):
+            Jika RSI < 15 AND WMI < -90 AND Agg > 1.0 → bias = LONG (DILARANG SHORT!)
+            (Ini Short Trap - Whale sedang narik rem tangan untuk rebound!)
     """
     @staticmethod
-    def analyze(rsi6: float, oi_delta: float, trade_flow: float) -> Dict:
+    def analyze(rsi6: float, oi_delta: float, trade_flow: float, 
+                wmi_ratio: float = None, agg_ratio: float = None) -> Dict:
         """
         Args:
-            rsi6: RSI 6 period (< 10 = extreme oversold)
+            rsi6: RSI 6 period (< 15 = extreme oversold)
             oi_delta: OI Delta 5 menit (< 0 = positions closing)
             trade_flow: Rasio volume beli/jual (< 1.0 = no volume confirmation)
+            wmi_ratio: WMI Ratio (optional, untuk deteksi Liquidity Vacuum Rebound)
+            agg_ratio: Aggressive Ratio (optional, untuk deteksi whale aggression)
         Returns:
             Dict dengan is_trap, bias, reason, confidence
         """
@@ -2175,8 +2235,30 @@ class OversoldTrapFilterV85:
         confidence = "LOW"
         
         # ============================================
-        # KASUS UAI: RSI < 10 + OI negatif + Flow < 1
-        # Ini OVERSOLD TRAP! Bukan reversal!
+        # 🟢 SCENARIO 2: LIQUIDITY VACUUM REBOUND (ANTI-CHECKMATE)
+        # Prioritas LEBIH TINGGI dari UAI Trap!
+        # Jika RSI ekstrim TAPI WMI super negatif + ada agresi beli = SHORT TRAP!
+        # ============================================
+        if wmi_ratio is not None and agg_ratio is not None:
+            if rsi6 < OTF_RSI_MAX and wmi_ratio < OTF_WMI_MIN and agg_ratio > OTF_AGG_MIN:
+                is_trap = True
+                bias = "LONG"  # DILARANG SHORT! Ini Short Trap!
+                confidence = "ABSOLUTE"
+                reason = (f"OTF_LIQUIDITY_VACUUM_REBOUND: RSI {rsi6:.1f} < {OTF_RSI_MAX} (extreme oversold) TAPI "
+                         f"WMI {wmi_ratio:.1f}x < {OTF_WMI_MIN} (massive short liq cluster below) DAN "
+                         f"Agg {agg_ratio:.1f}x > {OTF_AGG_MIN} (whale buy aggression). "
+                         f"Whale narik order (OI turun) buat bersihin orderbook, lalu MAHJARRR! Short Squeeze incoming!")
+                return {
+                    "is_trap": is_trap,
+                    "bias": bias,
+                    "reason": reason,
+                    "confidence": confidence,
+                    "scenario": "LIQUIDITY_VACUUM_REBOUND"
+                }
+        
+        # ============================================
+        # 🔴 SCENARIO 1: UAI TRAP (Liquidation Cascade)
+        # Hanya aktif jika Scenario 2 tidak terpenuhi
         # ============================================
         if rsi6 < OTF_RSI_MAX and oi_delta < OTF_OI_DELTA_MAX and trade_flow < OTF_FLOW_MAX:
             is_trap = True
@@ -2184,13 +2266,15 @@ class OversoldTrapFilterV85:
             confidence = "ABSOLUTE"
             reason = (f"OTF_OVERSOLD_TRAP: RSI {rsi6:.1f} < {OTF_RSI_MAX} (extreme oversold) TAPI "
                      f"OI Δ {oi_delta:.2f}% < 0 (positions closing) DAN Flow {trade_flow:.2f}x < 1.0 (no volume). "
+                     f"WMI={wmi_ratio if wmi_ratio else 'N/A'} (tidak cukup ekstrim untuk rebound). "
                      f"Ini BUKAN reversal! Ini LIQUIDATION CASCADE INCOMING! Retail buy dip trapped!")
         
         return {
             "is_trap": is_trap,
             "bias": bias,
             "reason": reason,
-            "confidence": confidence
+            "confidence": confidence,
+            "scenario": "UAI_TRAP" if is_trap and bias == "SHORT" else "NORMAL"
         }
 
 # ================= V85: AGGRESSION ABSORPTION FILTER (AAF) =================
@@ -6389,6 +6473,20 @@ class ConflictResolverV82:
                 otf_result: Dict = None, aaf_result: Dict = None,
                 fed_result: Dict = None):
         # ============================================
+        # 🟢 PRIORITAS 0 (TERTINGGI): V85 OVERSOLD TRAP FILTER - LIQUIDITY VACUUM REBOUND
+        # ANTI-CHECKMATE! Mencegah Short Trap saat WMI ekstrim negatif + RSI rendah
+        # ============================================
+        if otf_result and otf_result.get('is_trap'):
+            if otf_result.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND':
+                return {
+                    "bias": otf_result['bias'],
+                    "confidence": "ABSOLUTE",
+                    "reason": f"V85_OTF_LIQUIDITY_VACUUM: {otf_result['reason']}",
+                    "phase": "ANTI_LIQUIDITY_TRAP",
+                    "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"}
+                }
+        
+        # ============================================
         # PRIORITAS -1 (TERTINGGI): V83 LIQUIDITY SNIPER SCORE
         # ============================================
         if sniper_result and sniper_result.get('confidence') == 'HIGH':
@@ -7715,10 +7813,13 @@ class BinanceAnalyzerV82:
             )
 
             # V85: OVERSOLD TRAP FILTER (OTF) - PRIORITY OVERRIDE!
+            # Updated: Pass WMI and Agg for Liquidity Vacuum Rebound detection
             otf_result = self.otf.analyze(
                 rsi6,
                 oi_delta_5m,
-                trades['ratio']
+                trades['ratio'],
+                wmi_ratio=wmi_data.get('wmi_ratio', 0) if wmi_data else None,
+                agg_ratio=trades['aggressive_ratio']
             )
 
             # V85: AGGRESSION ABSORPTION FILTER (AAF) - PRIORITY OVERRIDE!
