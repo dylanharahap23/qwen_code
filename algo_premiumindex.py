@@ -6401,9 +6401,9 @@ class ConflictResolverV82:
     """
     V82: Resolve konflik dengan hierarki prioritas mutlak V82
     URUTAN PRIORITAS MUTLAK V82 (THE HIERARCHY OF LIQUIDITY GHOST):
-        1. LMG (Liquidity Mirror Guard) - ANTI-BOTTOMLESS HOLE / DEATH MAGNET (NEW V82!)
-        2. API (Absorption Pressure Index) - ANTI-BULLISH/BEARISH ABSORPTION SIPHON (NEW V82!)
-        3. LTG (Liquidity Thinning Guard) - ANTI-INFINITY SQUEEZE (V81)
+        1. OTF (Oversold Trap Filter) - ANTI-UAI & LIQUIDITY VACUUM REBOUND (NEW V85!) - ANTI-BOTTOMLESS HOLE / DEATH MAGNET (NEW V82!)
+        2. FGD (Fake Gravity Detector) - ANTI-GRAVITY TRAP (V84) - ANTI-BULLISH/BEARISH ABSORPTION SIPHON (NEW V82!)
+        3. LDF (Liquidity Density Filter) - PATH OPTIMAL (V84) - ANTI-INFINITY SQUEEZE (V81)
         4. ICD (Internal Cross Detector) - ANTI-POSITION FLIPPING TRAP (V81)
         5. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT (V78)
         6. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE (V79)
@@ -7214,12 +7214,12 @@ class ConflictResolverV82:
         }
 
 # ================= BINANCE ANALYZER V82 =================
-class BinanceAnalyzerV82:
+class BinanceAnalyzerV85:
     """
     V82: Main analyzer dengan prioritas tertinggi:
-        1. LMG (Liquidity Mirror Guard) - ANTI-BOTTOMLESS HOLE (NEW V82!)
-        2. API (Absorption Pressure Index) - ANTI-ABSORPTION SIPHON (NEW V82!)
-        3. LTG (Liquidity Thinning Guard) - ANTI-INFINITY SQUEEZE (V81)
+        1. OTF (Oversold Trap Filter) - ANTI-UAI & LIQUIDITY VACUUM REBOUND (NEW V85!) - ANTI-BOTTOMLESS HOLE (NEW V82!)
+        2. FGD (Fake Gravity Detector) - ANTI-GRAVITY TRAP (V84) - ANTI-ABSORPTION SIPHON (NEW V82!)
+        3. LDF (Liquidity Density Filter) - PATH OPTIMAL (V84) - ANTI-INFINITY SQUEEZE (V81)
         4. ICD (Internal Cross Detector) - ANTI-POSITION FLIPPING TRAP (V81)
         5. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT (V78)
         6. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE (V79)
@@ -8359,51 +8359,46 @@ class BinanceAnalyzerV82:
             return None
 
 # ================= OUTPUT FORMATTER V82 =================
-class OutputFormatterV82:
-    """Format output untuk V82 dengan hierarki prioritas mutlak: LMG > API > LTG > ICD > EZH > WTD ..."""
+class OutputFormatterV85:
+    """Format output untuk V85 dengan prioritas tertinggi OTF (Oversold Trap Filter) - ANTI-CHECKMATE EDITION"""
     @staticmethod
     def print_header():
         print("\n" + "="*80)
-        print("🔥 BINANCE LIQUIDATION HUNTER V82 - THE LIQUIDITY GHOST")
+        print("🔥 BINANCE LIQUIDATION HUNTER V85 - THE LIQUIDITY PATHFINDER (ANTI-CHECKMATE EDITION)")
         print("="*80)
-        print("\n🧠 ANALISA FORENSIK V81 (Kenapa Bot Masih Kena Bantai?)")
-        print("   📍 Kasus SIGNUSDT (The Bullish Absorption Siphon):")
-        print("      📊 Data: Long Liq: -0.09% (Sangat Dekat), Agg: 5.67x, RSI: 45.5.")
-        print("      📊 Bot Bias: SHORT (Karena IER Exit aktif, OI mampet -0.30%).")
-        print("      📊 Kelicikan HFT: MM sengaja bikin OI turun tipis biar bot lo mikir Whale lagi Exit.")
-        print("         Padahal, agresi retail 5.67x itu diserap habis oleh Whale lewat Limit Order.")
-        print("         RSI 45.5 itu adalah 'Spring Zone'. Jika Agresi Retail tinggi di harga bawah")
-        print("         tapi harga nggak mau turun, itu namanya BULLISH ABSORPTION.")
-        print("   📍 Kasus SIRENUSDT (The ICD Counter-Trap):")
-        print("      📊 Data: Flow 2.5x tinggi, Agg 0.11x rendah, RSI 6.6, Long Liq 0.02%.")
-        print("      📊 Bot Bias: LONG (Karena ICD Trap aktif, retail gak ada).")
-        print("      📊 Kelicikan HFT: MM ngelihat bot lo udah punya logic ICD.")
-        print("         Jadi mereka sengaja bikin Flow 2.5x tinggi tapi Agg 0.11x rendah di RSI 6.6.")
-        print("         Bot lo Long, tapi ternyata itu adalah 'The Bottomless Hole'.")
-        print("         MM cuma butuh satu dorongan kecil (Long Liq 0.02%) buat memicu cascade.")
-        print("\n🛡️ THE SUPREME REFINEMENT: V82 'THE LIQUIDITY GHOST'")
-        print("   📍 NEW MODUL 1: ABSORPTION PRESSURE INDEX (API) - ANTI-SIGN BULLISH SIPHON")
-        print("      📍 'Jika Agg > 5.0x TAPI RSI < 50, Whale sedang menyerap retail di zona bawah. SIAP TERBANG!'")
-        print("   📍 NEW MODUL 2: LIQUIDITY MIRROR GUARD (LMG) - ANTI-SIREN BOTTOMLESS HOLE")
-        print("      📍 'Jika Jarak Long Liq < 0.05% di RSI < 10, itu adalah Magnet Maut. Bahaya cascade!'")
-        print("\n🎯 NEW HIERARKI MUTLAK V82 (Filter Kriminalitas):")
-        print("   1. LMG (Liquidity Mirror Guard) - Cek 'Magnet Maut' (Jarak < 0.05%)")
-        print("   2. API (Absorption Pressure Index) - Cek siapa yang menyerap siapa")
-        print("   3. LTG (Liquidity Thinning Guard) - Cek apakah sisi atas/bawah kosong (Flow > 50x)")
-        print("   4. ICD (Internal Cross Detector) - Validasi apakah IER_EXIT adalah sandiwara Whale")
-        print("   5. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT")
-        print("   6. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE")
-        print("   7. IER (Institutional Exit Radar) - ANTI-OPN/BARD FALSE FLOW")
-        print("   8. RMG (RSI Momentum Guard) - ANTI-RIVER GRAVITY DECOY")
-        print("   9. FMV (Fake Magnet Vacuum) - KOMBINASI IER + RMG")
-        print("   10. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR")
+        print("\n🧠 ANALISA KEGAGALAN V83 & V84 (Kenapa Bot Salah Arah?)")
+        print("   📍 Kasus UAIUSDT (The Liquidity Vacuum Rebound Checkmate):")
+        print("      📊 Data: WMI -99.1x, RSI 11.7, Agg 2.33x, OI turun (IER Exit aktif).")
+        print("      📊 Bot Bias: SHORT (Karena IER Exit aktif - Whale kabur!).")
+        print("      📊 Kenyataannya: Itu adalah 'Liquidity Vacuum Rebound'!")
+        print("         Whale sengaja narik order (OI turun) buat ngebersihin Orderbook bawah,")
+        print("         lalu dalam hitungan milidetik mereka hajar Market Buy buat squeeze semua Short seller!")
+        print("         RSI 11.7 + WMI -99.1x = SHORT LIQUIDATION POOL di atas jauh lebih 'bernutrisi'!")
+        print("   📍 Masalah V83/V84: IER_EXIT dapat prioritas ABSOLUTE, RMG_REBOUND kalah!")
+        print("      📊 Bot mikir: 'Whale kabur, retail beli umpan, harga pasti dump!'")
+        print("      📊 Padahal: MM sedang narik rem tangan di dasar ekstrim. REBOUND INCOMING!")
+        print("\n🛡️ THE SUPREME REFINEMENT: V85 'THE LIQUIDITY PATHFINDER'")
+        print("   📍 NEW MODUL 1: OVERSOLD TRAP FILTER (OTF) - ANTI-UAI TRAP & LIQUIDITY VACUUM")
+        print("      📍 SCENARIO 1 (UAI Trap): RSI < 15 + OI turun + Flow < 1 → SHORT (Liquidation Cascade)")
+        print("      📍 SCENARIO 2 (Liquidity Vacuum): RSI < 15 + WMI < -90 + Agg > 1.0 → LONG (ANTI-CHECKMATE!)")
+        print("   📍 NEW MODUL 2: FAKE EXHAUSTION DETECTOR (FED) - ANTI-GRAVITY DECOY")
+        print("      📍 'Jika WMI < -90 tapi Flow tidak ekstrim, itu bukan exhaustion, itu trap!'")
+        print("\n🎯 HIERARKI MUTLAK V85 (Filter Kriminalitas):")
+        print("   1. OTF (Oversold Trap Filter) - ANTI-UAI & LIQUIDITY VACUUM REBOUND (V85 - TERTINGGI!)")
+        print("   2. FID (Fuel Ignition Detector) - Cek momentum injeksi mendadak")
+        print("   3. LHG (Liquidity Heat Gradient) - Target duit paling padet (Short/Long Liq Pool)")
+        print("   4. IER (Institutional Exit Radar) - Validasi exit whale (harus + RMG weak!)")
+        print("   5. RMG (RSI Momentum Guard) - Rem tangan Whale (Rebound detection)")
+        print("   6. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO")
+        print("   7. LPS (Liquidity Path Score) - Optimal path liquidation prediction")
+        print("   8. LDF (Liquidity Density Filter) - PATH OPTIMAL (V84)")
+        print("   9. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR")
         print("="*80 + "\n")
-        print("🧠 KAIDAH EMAS V82:")
-        print("   'Jangan pernah memburu likuidasi yang berjarak < 0.1% jika agresi retail nol.'")
-        print("   'Itu bukan jurang yang akan runtuh, itu adalah mulut Whale yang sedang terbuka lebar.'")
-        print("   'Binance HFT sengaja bikin Flow 0.43x (terlihat bearish) biar bot lo merasa aman untuk SHORT.'")
-        print("   'Tapi dengan Agg 0.0x, itu adalah bukti kalau Whale tidak sedang menjual,'")
-        print("   'mereka cuma memindahkan angka di Orderbook untuk menipu API lo.'\n")
+        print("🧠 KAIDAH EMAS V85:")
+        print("   'Jangan pernah entry SHORT kalau WMI udah di bawah -90, seburuk apa pun beritanya.'")
+        print("   'Itu area Spring bandar. WMI -99.1x artinya Short Liquidation Pool di atas 4%'")
+        print("   'jauh lebih bernutrisi buat MM daripada hajar Long yang jaraknya cuma 0.5%.'")
+        print("   'MM selalu makan yang porsinya lebih besar. Follow the liquidity, not the fear!'\n")
 
     @staticmethod
     def print_signal(result: Dict):
@@ -8646,7 +8641,7 @@ class OutputFormatterV82:
         print("="*80)
 
 # ================= MAIN FUNCTION V82 =================
-def main_v82():
+def main_v85():
     import sys
     if len(sys.argv) > 1:
         symbol = sys.argv[1].upper()
@@ -8654,16 +8649,16 @@ def main_v82():
         symbol = input("\nSymbol (e.g. BTCUSDT): ").upper() or "BTCUSDT"
 
     # Buat SATU INSTANCE analyzer V82 untuk seluruh loop
-    analyzer = BinanceAnalyzerV82(symbol)
+    analyzer = BinanceAnalyzerV85(symbol)
 
-    OutputFormatterV82.print_header()
+    OutputFormatterV85.print_header()
 
-    print(f"\n🔍 Analyzing {symbol} with V82 Liquidity Ghost Logic...")
+    print(f"\n🔍 Analyzing {symbol} with V85 Liquidity Ghost Logic...")
 
     result = analyzer.analyze()
 
     if result:
-        OutputFormatterV82.print_signal(result)
+        OutputFormatterV85.print_signal(result)
 
         if len(sys.argv) > 2 and sys.argv[2] == "--loop":
             print("\n🔄 Auto-refresh every 10 seconds. Press Ctrl+C to stop.\n")
@@ -8682,15 +8677,15 @@ def main_v82():
     else:
         print(f"❌ Failed to analyze {symbol}")
 
-def batch_mode_v82(symbols: List[str]):
-    OutputFormatterV82.print_header()
+def batch_mode_v85(symbols: List[str]):
+    OutputFormatterV85.print_header()
     results = []
     analyzers = {}
     for symbol in symbols:
-        analyzers[symbol] = BinanceAnalyzerV82(symbol)
+        analyzers[symbol] = BinanceAnalyzerV85(symbol)
 
     for symbol in symbols:
-        print(f"\n🔍 Analyzing {symbol} with V82 Liquidity Ghost Logic...")
+        print(f"\n🔍 Analyzing {symbol} with V85 Liquidity Ghost Logic...")
         result = analyzers[symbol].analyze()
         if result:
             results.append(result)
@@ -8765,8 +8760,8 @@ def batch_mode_v82(symbols: List[str]):
 
     return results
 
-def api_mode_v82(symbol: str) -> str:
-    analyzer = BinanceAnalyzerV82(symbol)
+def api_mode_v85(symbol: str) -> str:
+    analyzer = BinanceAnalyzerV85(symbol)
     result = analyzer.analyze()
     if result:
         if 'exhaustion' in result and 'details' in result['exhaustion']:
@@ -8795,13 +8790,13 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         if sys.argv[1] == "--api":
             symbol = sys.argv[2] if len(sys.argv) > 2 else "BTCUSDT"
-            print(api_mode_v82(symbol))
+            print(api_mode_v85(symbol))
         elif sys.argv[1] == "--batch":
             symbols = sys.argv[2:] if len(sys.argv) > 2 else POPULAR_SYMBOLS
-            batch_mode_v82(symbols)
+            batch_mode_v85(symbols)
         elif sys.argv[1] == "--help":
             print("""
-🔥 Binance Liquidation Hunter V82 - The Liquidity Ghost
+🔥 Binance Liquidation Hunter V85 - The Liquidity Pathfinder (Anti-Checkmate Edition)
 Usage:
 python script.py SYMBOL           # Analyze single symbol
 python script.py SYMBOL --loop     # Auto-refresh every 10s
@@ -8811,24 +8806,25 @@ python script.py --help            # Show this help
 
 Examples:
 python script.py BTCUSDT
-python script.py SIGNUSDT --loop   # Test API (Absorption Pressure) - V82 baru!
-python script.py SIRENUSDT --loop  # Test LMG (Liquidity Mirror Guard) - V82 baru!
+python script.py UAIUSDT --loop    # Test OTF Scenario 1 (UAI Trap)
+python script.py BTCUSDT --loop    # Test OTF Scenario 2 (Liquidity Vacuum Rebound)
 python script.py KITEUSDT --loop   # Test LTG (Liquidity Thinning) - V81
 python script.py HUMAUSDT --loop   # Test ICD (Internal Cross) - V81
 
-New Features V82 (The Liquidity Ghost):
-💀 LIQUIDITY MIRROR GUARD (LMG): Deteksi 'Magnet Maut'!
-    - Kasus SIREN: Long Liq 0.02% + RSI 6.6 = ZONA TERLARANG!
-    - Logic: Jika jarak likuidasi < 0.05% di RSI ekstrim, ikuti arah cascade!
+New Features V85 (The Liquidity Pathfinder):
+🛡️ OVERSOLD TRAP FILTER (OTF): Anti-UAI & Liquidity Vacuum Rebound!
+    - SCENARIO 1 (UAI Trap): RSI < 15 + OI turun + Flow < 1 → SHORT (Liquidation Cascade)
+    - SCENARIO 2 (Liquidity Vacuum): RSI < 15 + WMI < -90 + Agg > 1.0 → LONG (ANTI-CHECKMATE!)
 
-    🔄 ABSORPTION PRESSURE INDEX (API): Deteksi Whale menyerap retail!
-    - Kasus SIGN: Agg 5.67x tinggi tapi RSI 45.5 rendah = BULLISH ABSORPTION
-    - Logic: Jika Agg tinggi tapi harga nggak mau turun di RSI rendah, SIAP TERBANG!
 
-🎯 NEW HIERARKI MUTLAK V82 (Filter Kriminalitas):
-    1. LMG (Liquidity Mirror Guard) - Cek 'Magnet Maut' (Jarak < 0.05%)
-    2. API (Absorption Pressure Index) - Cek siapa yang menyerap siapa
-    3. LTG (Liquidity Thinning Guard) - Cek apakah sisi atas/bawah kosong (Flow > 50x)
+🧠 FAKE EXHAUSTION DETECTOR (FED): Anti-Gravity Decoy!
+    - Jika WMI < -90 tapi Flow tidak ekstrim, itu bukan exhaustion, itu trap!
+
+
+🎯 HIERARKI MUTLAK V85 (Filter Kriminalitas):
+    1. OTF (Oversold Trap Filter) - ANTI-UAI & LIQUIDITY VACUUM REBOUND (NEW V85!) - Cek 'Magnet Maut' (Jarak < 0.05%)
+    2. FGD (Fake Gravity Detector) - ANTI-GRAVITY TRAP (V84) - Cek siapa yang menyerap siapa
+    3. LDF (Liquidity Density Filter) - PATH OPTIMAL (V84) - Cek apakah sisi atas/bawah kosong (Flow > 50x)
     4. ICD (Internal Cross Detector) - Validasi apakah IER_EXIT adalah sandiwara Whale
     5. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT
     6. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE
@@ -8837,15 +8833,15 @@ New Features V82 (The Liquidity Ghost):
     9. FMV (Fake Magnet Vacuum) - KOMBINASI IER + RMG
     10. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR
 
-🧠 KAIDAH EMAS V82:
-    "Jangan pernah memburu likuidasi yang berjarak < 0.1% jika agresi retail nol.
-    Itu bukan jurang yang akan runtuh, itu adalah mulut Whale yang sedang terbuka lebar."
+🧠 KAIDAH EMAS V85:
+    "Jangan pernah entry SHORT kalau WMI udah di bawah -90, seburuk apa pun beritanya.
+    Itu area Spring bandar. WMI -99.1x artinya Short Liquidation Pool di atas 4%
 
-    "Binance HFT sengaja bikin Flow 0.43x (terlihat bearish) biar bot lo merasa aman untuk SHORT.
-    Tapi dengan Agg 0.0x, itu adalah bukti kalau Whale tidak sedang menjual,
-    mereka cuma memindahkan angka di Orderbook untuk menipu API lo."
+    jauh lebih bernutrisi buat MM daripada hajar Long yang jaraknya cuma 0.5%.
+    MM selalu makan yang porsinya lebih besar. Follow the liquidity, not the fear!"
+    
             """)
         else:
-            main_v82()
+            main_v85()
     else:
-        main_v82()
+        main_v85()
