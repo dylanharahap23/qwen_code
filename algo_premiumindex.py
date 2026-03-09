@@ -1,70 +1,102 @@
 #!/usr/bin/env python3
 """
-🔥 BINANCE LIQUIDATION HUNTER V82 - THE LIQUIDITY GHOST
-💀 Analisa Kegagalan V81 (Kenapa Bot Masuk Jebakan?)
-    Kasus SIGNUSDT (The Phantom Squeeze):
-        Data: Long Liq: -0.09% (Sangat Dekat), Agg: 0.0x (Nol Mutlak), Flow: 0.43x.
-        Kenapa Loss? MM sengaja menaruh harga tepat di atas titik likuidasi Long retail.
-        Bot V81 mikir: "Tinggal sentil dikit, harga bakal jatuh bebas!". Ini adalah Umpan (Bait).
-        Agg 0.0x artinya TIDAK ADA RETAIL YANG MARKET SELL. Volume sell yang dilihat di Flow (0.43x)
-        itu murni transaksi internal MM atau limit order yang "disuap". MM sedang memancing bot untuk Market Sell (Short).
-        Begitu bot dan retail Short masuk, MM melakukan instant reversal karena sisi atas kosong.
-    Kasus SIRENUSDT (The ICD Counter-Trap):
-        Data: Flow 2.5x tinggi, Agg 0.11x rendah, RSI 6.6 (Ekstrim Bottom), Long Liq 0.02%.
-        Kenapa Loss? Bot V81 mikir: "ICD Trap aktif, retail gak ada, pasti MM lagi Position Flipping buat Long."
-        Tapi ternyata itu adalah "The Bottomless Hole". MM cuma butuh satu dorongan kecil (Long Liq 0.02%)
-        buat memicu Liquidation Cascade ke bawah.
+🔥 BINANCE LIQUIDATION HUNTER V84 - THE LIQUIDITY PATHFINDER
+💀 Analisa Kegagalan V83 (Kenapa Bot Salah Arah di PHAUSDT?)
+    Kasus PHAUSDT (The Gravity Trap):
+        Data: Price 0.0352, Long Liq: -0.17%, Short Liq: +1.76%, RSI 61.5, Flow 0.69, Agg 1.0, OI Δ +0.17, WMI -99.8
+        Kenapa Loss? Bot V83 memilih GRAVITY_OVERDRIVE → SHORT karena Long Liq terlalu dekat (0.17% < 0.2%).
+        Tapi market justru LONG!
+        
+        🧠 Error Utama: LGO terlalu dominan tanpa filter konteks
+        Logic lama: if long_dist < 0.2: bias = SHORT
+        Masalahnya: 0.17% long liq tidak selalu target, sering kali itu justru bait liquidity!
+        
+        🔬 Clue yang Bot Lewatkan:
+        - Flow 0.69 = sell pressure lemah
+        - Agg 1.0 = netral, no real selling
+        - OI +0.17 = posisi baru masuk
+        - WMI -99.8 = cluster long liquidation sangat besar
+        
+        Interpretasi sebenarnya:
+        - Long liq kecil, short liq jauh, long cluster besar
+        - Market maker biasanya: pump dulu, baru sweep long
+        - Pattern umum: price pump → retail long FOMO → long liquidation build → dump
+        
+        ⚡ Signal Penting yang Bot Lewatkan:
+        - Flow > 0.6 AND Agg > 0.8 = dump tidak mungkin terjadi
+        - WMI < -80 = whale protect downside (short probability rendah)
 
-🛡️ THE SUPREME REFINEMENT: V82 "THE LIQUIDITY GHOST"
-    Modul 1: "Absorption Pressure Index" (API) - BARU!
-        - Mendeteksi Whale yang menyerap retail (Absorption).
-        - Kasus SIGN: Agg 5.67x tinggi tapi RSI 45.5 rendah. Retail agresif beli di harga bawah,
-          tapi harga nggak mau turun karena diserap Whale. Itu namanya BULLISH ABSORPTION.
-    Modul 2: "Liquidity Mirror Guard" (LMG) - BARU!
-        - Mendeteksi 'Magnet Maut' (Death Magnet).
-        - Kasus SIREN: Long Liq 0.02% di RSI 6.6. Jarak super tipis itu bukan support, itu zona terlarang.
-          Satu dorongan kecil bisa memicu cascade ke bawah.
+🛡️ THE SUPREME REFINEMENT: V84 "THE LIQUIDITY PATHFINDER"
+    Modul 1: "Fake Gravity Detector" (FGD) - BARU!
+        - Mendeteksi 'Gravity Trap' dimana long liq kecil adalah umpan
+        - Jika long_liq < 0.2 AND flow > 0.6 AND agg > 0.8 → LONG bias
+    
+    Modul 2: "Liquidity Density Filter" (LDF) - BARU!
+        - Hitung density: density_long = long_liq_size / long_dist
+        - density_short = short_liq_size / short_dist
+        - Jika density_short > density_long → LONG bias
+    
+    Modul 3: "Weak Dump Filter" (WDF) - BARU!
+        - Jika flow > 0.6 AND agg > 0.8 → dump tidak mungkin terjadi
+    
+    Modul 4: "Long Liquidity Shield" (LLS) - BARU!
+        - Jika WMI < -80 → short probability rendah karena whale protect downside
+    
+    Modul 5: "Funding Skew Detector" (FSD) - BARU!
+        - Jika funding negative → biasanya pump karena short crowded
+    
+    Modul 6: "Liquidity Path Score" (LPS) - BARU!
+        - path_long = short_liq_size - pump_cost
+        - path_short = long_liq_size - dump_cost
+        - Jika path_long > path_short → pump dulu
 
-🎯 HIERARKI MUTLAK V82 (Filter Kriminalitas):
-    1. LMG (Liquidity Mirror Guard) - Cek 'Magnet Maut' (Jarak < 0.05% & RSI Ekstrim)
-    2. API (Absorption Pressure Index) - Cek siapa yang menyerap siapa (Agg vs RSI)
-    3. LTG (Liquidity Thinning Guard) - Cek apakah sisi atas/bawah kosong (Flow > 50x)
-    4. ICD (Internal Cross Detector) - Validasi apakah IER_EXIT adalah sandiwara Whale
-    5. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT
-    6. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE
-    7. IER (Institutional Exit Radar) - ANTI-OPN/BARD FALSE FLOW
-    8. RMG (RSI Momentum Guard) - ANTI-RIVER GRAVITY DECOY
-    9. FMV (Fake Magnet Vacuum) - KOMBINASI IER + RMG
-    10. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR
-    11. OFF (Overdrive Flow Filter) - ANTI-HUSDT TRAP
-    12. AEF (Aggressive Exhaustion Filter) - ANTI-PHA TRAP
-    13. PSR (Panic Saturation Reversal) - ANTI-HUMA DRIFT TRAP
-    14. AMV (Absorption Momentum Validator) - ANTI-HUMA TRAP
-    15. LGO (Liquidation Gravity Overdrive) - ANTI-RIVER NUCLEAR
-    16. MDV (Magnet Decay Validator) - ANTI-RIVER SPOOF
-    17. PAB (Passive Absorption Blackhole) - ANTI-SIREN TRAP
-    18. CFK (Catching Falling Knives) - ANTI-ROBO TRAP
-    19. MDD (Magnet Distance Dominance) - ANTI-RIVER TRAP
-    20. OVD (Orderbook Vacuum Defense) - ANTI-PHA TRAP
-    21. Trend Integrity (V69) - ANTI-PIPPIN/PHA/POWER
-    22. Gravity Deflection (OGD) - ANTI-PIPPIN TRAP (V68)
-    23. Zero Aggression Slaughter (ZAS) - ANTI-DEADSTICK (V67)
-    24. Absorption Validity Check (AVC) - ANTI-EXIT LIQUIDITY TRAP (V67)
-    25. Aggression-Mass Divergence (AMD) - ANTI-SPOOF PROTECTION (V65)
-    26. The DYL Particle (TDP) - ABSOLUTE OVERRIDE (V64)
-    27. Temporal Accumulation Index (ATI) - WHALE PATIENCE LOADING (V66)
-    28. Wall Erasure Detection (WED) - GRAVITY MANDATE (V63)
-    29. Magnet Wall Reversal (MWR) (V62)
-    30. The Ghost Whisperer (LVS) (V61)
-    31. The Absorption Shield (DTD) (V60)
+🎯 HIERARKI MUTLAK V84 (Filter Kriminalitas):
+    1. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO
+    2. LPS (Liquidity Path Score) - Optimal path liquidation prediction
+    3. LDF (Liquidity Density Filter) - Density comparison
+    4. WDF (Weak Dump Filter) - Validasi weak dump scenario
+    5. LLS (Long Liquidity Shield) - WMI based protection
+    6. FSD (Funding Skew Detector) - Funding rate analysis
+    7. LMG (Liquidity Mirror Guard) - Cek 'Magnet Maut' (Jarak < 0.05% & RSI Ekstrim)
+    8. API (Absorption Pressure Index) - Cek siapa yang menyerap siapa (Agg vs RSI)
+    9. LTG (Liquidity Thinning Guard) - Cek apakah sisi atas/bawah kosong (Flow > 50x)
+    10. ICD (Internal Cross Detector) - Validasi apakah IER_EXIT adalah sandiwara Whale
+    11. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT
+    12. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE
+    13. IER (Institutional Exit Radar) - ANTI-OPN/BARD FALSE FLOW
+    14. RMG (RSI Momentum Guard) - ANTI-RIVER GRAVITY DECOY
+    15. FMV (Fake Magnet Vacuum) - KOMBINASI IER + RMG
+    16. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR
+    17. OFF (Overdrive Flow Filter) - ANTI-HUSDT TRAP
+    18. AEF (Aggressive Exhaustion Filter) - ANTI-PHA TRAP
+    19. PSR (Panic Saturation Reversal) - ANTI-HUMA DRIFT TRAP
+    20. AMV (Absorption Momentum Validator) - ANTI-HUMA TRAP
+    21. LGO (Liquidation Gravity Overdrive) - ANTI-RIVER NUCLEAR
+    22. MDV (Magnet Decay Validator) - ANTI-RIVER SPOOF
+    23. PAB (Passive Absorption Blackhole) - ANTI-SIREN TRAP
+    24. CFK (Catching Falling Knives) - ANTI-ROBO TRAP
+    25. MDD (Magnet Distance Dominance) - ANTI-RIVER TRAP
+    26. OVD (Orderbook Vacuum Defense) - ANTI-PHA TRAP
+    27. Trend Integrity (V69) - ANTI-PIPPIN/PHA/POWER
+    28. Gravity Deflection (OGD) - ANTI-PIPPIN TRAP (V68)
+    29. Zero Aggression Slaughter (ZAS) - ANTI-DEADSTICK (V67)
+    30. Absorption Validity Check (AVC) - ANTI-EXIT LIQUIDITY TRAP (V67)
+    31. Aggression-Mass Divergence (AMD) - ANTI-SPOOF PROTECTION (V65)
+    32. The DYL Particle (TDP) - ABSOLUTE OVERRIDE (V64)
+    33. Temporal Accumulation Index (ATI) - WHALE PATIENCE LOADING (V66)
+    34. Wall Erasure Detection (WED) - GRAVITY MANDATE (V63)
+    35. Magnet Wall Reversal (MWR) (V62)
+    36. The Ghost Whisperer (LVS) (V61)
+    37. The Absorption Shield (DTD) (V60)
 
-🧠 Kaidah Pamungkas V82:
-    "Jangan pernah memburu likuidasi yang berjarak < 0.1% jika agresi retail nol.
-    Itu bukan jurang yang akan runtuh, itu adalah mulut Whale yang sedang terbuka lebar."
+🧠 Kaidah Pamungkas V84:
+    "Jangan pernah short hanya karena long liq dekat jika Flow > 0.6 dan Agg > 0.8.
+    Itu bukan jurang yang akan runtuh, itu adalah magnet palsu untuk memancing short trap."
 
-    "Binance HFT sengaja bikin Flow 0.43x (terlihat bearish) biar bot lo merasa aman untuk SHORT.
-    Tapi dengan Agg 0.0x, itu adalah bukti kalau Whale tidak sedang menjual,
-    mereka cuma memindahkan angka di Orderbook untuk menipu API lo."
+    "Liquidity Path Prediction lebih penting dari nearest liquidation.
+    Market maker akan memilih path dengan resistance terkecil dan reward terbesar."
+
+    "WMI < -80 adalah shield yang melindungi downside. Short probability rendah."
 """
 import requests
 from datetime import datetime
@@ -188,6 +220,24 @@ AMV_TRADE_FLOW_MIN = 0.7                      # Minimal Trade Flow
 # V75 - LIQUIDATION GRAVITY OVERDRIVE (LGO)
 LGO_SHORT_DIST_MAX = 0.2                      # Maksimal jarak Short Liq untuk overdrive
 LGO_LONG_DIST_MAX = 0.2                       # Maksimal jarak Long Liq untuk overdrive
+
+# V84 - FAKE GRAVITY DETECTOR (FGD) - BARU!
+FGD_LONG_DIST_MAX = 0.2                       # Maksimal jarak Long Liq untuk deteksi fake gravity
+FGD_FLOW_MIN = 0.6                            # Minimal Flow untuk validasi weak sell pressure
+FGD_AGG_MIN = 0.8                             # Minimal Agg untuk validasi netral/no real selling
+
+# V84 - LIQUIDITY DENSITY FILTER (LDF) - BARU!
+LDF_DENSITY_THRESHOLD = 1.5                   # Threshold density ratio untuk bias detection
+
+# V84 - WEAK DUMP FILTER (WDF) - BARU!
+WDF_FLOW_MIN = 0.6                            # Minimal Flow untuk weak dump detection
+WDF_AGG_MIN = 0.8                             # Minimal Agg untuk weak dump detection
+
+# V84 - LONG LIQUIDITY SHIELD (LLS) - BARU!
+LLS_WMI_THRESHOLD = -80                       # WMI threshold untuk long liquidity shield
+
+# V84 - FUNDING SKEW DETECTOR (FSD) - BARU!
+FSD_FUNDING_NEGATIVE_THRESHOLD = -0.01        # Funding negative threshold untuk pump detection
 
 # V74 - MAGNET DECAY VALIDATOR (MDV)
 MDV_MAX_WAIT_MINUTES = 10                     # Maksimal waktu tunggu magnet
@@ -1724,15 +1774,24 @@ class AbsorptionMomentumValidatorV75:
 class LiquidationGravityOverdriveV75:
     """
     V75: Mendeteksi 'The Nuclear Squeeze'
+    V84 UPDATE: Sekarang dengan Fake Gravity Detector (FGD) override
     """
     @staticmethod
-    def analyze(short_dist: float, long_dist: float, rsi6: float, trade_flow: float) -> Dict:
+    def analyze(short_dist: float, long_dist: float, rsi6: float, trade_flow: float,
+                agg_ratio: float = 1.0, wmi_ratio: float = 0.0,
+                long_liq_size: float = 0.0, short_liq_size: float = 0.0,
+                funding_rate: float = 0.0) -> Dict:
         """
         Args:
             short_dist: Jarak ke likuidasi SHORT (dalam persen)
             long_dist: Jarak ke likuidasi LONG (dalam persen)
             rsi6: RSI 6 period
             trade_flow: Rasio volume beli/jual
+            agg_ratio: Aggressive Ratio (untuk FGD filter)
+            wmi_ratio: WMI ratio (untuk LLS filter)
+            long_liq_size: Ukuran likuidasi LONG (untuk density calculation)
+            short_liq_size: Ukuran likuidasi SHORT (untuk density calculation)
+            funding_rate: Funding rate (untuk FSD filter)
         Returns:
             Dict dengan is_overdrive, bias, reason, confidence
         """
@@ -1741,6 +1800,101 @@ class LiquidationGravityOverdriveV75:
         reason = "Normal distance"
         confidence = "LOW"
         overdrive_type = "NONE"
+
+        # ============================================
+        # V84 - FAKE GRAVITY DETECTOR (FGD) - QUICK PATCH
+        # Jika long_dist < 0.2 tapi flow > 0.6 dan agg >= 1 → LONG (bukan SHORT!)
+        # ============================================
+        if long_dist < FGD_LONG_DIST_MAX and trade_flow > FGD_FLOW_MIN and agg_ratio >= FGD_AGG_MIN:
+            is_overdrive = True
+            bias = "LONG"  # Override! Ini adalah Gravity Trap!
+            overdrive_type = "FAKE_GRAVITY_TRAP"
+            confidence = "ABSOLUTE"
+            reason = (f"FGD_FAKE_GRAVITY: Long Liq ({long_dist}%) dekat TAPI Flow {trade_flow:.2f}x > {FGD_FLOW_MIN} "
+                     f"dAN Agg {agg_ratio:.2f}x >= {FGD_AGG_MIN}. Ini BAIT LIQUIDITY! "
+                     f"MM akan PUMP dulu sebelum sweep long. BIAS LONG!")
+            return {
+                "is_overdrive": is_overdrive,
+                "overdrive_type": overdrive_type,
+                "bias": bias,
+                "reason": reason,
+                "confidence": confidence,
+                "short_dist": short_dist,
+                "long_dist": long_dist
+            }
+
+        # ============================================
+        # V84 - WEAK DUMP FILTER (WDF) - BLOCK SHORT
+        # Jika flow > 0.6 dan agg > 0.8 → dump tidak mungkin terjadi
+        # ============================================
+        if trade_flow > WDF_FLOW_MIN and agg_ratio > WDF_AGG_MIN:
+            # Block SHORT bias jika kondisi weak dump terpenuhi
+            if long_dist < LGO_LONG_DIST_MAX:
+                #原本是SHORT，但被WDF block
+                is_overdrive = True
+                bias = "LONG"  # Override ke LONG karena dump tidak mungkin
+                overdrive_type = "WEAK_DUMP_BLOCK"
+                confidence = "HIGH"
+                reason = (f"WDF_WEAK_DUMP: Flow {trade_flow:.2f}x > {WDF_FLOW_MIN} DAN Agg {agg_ratio:.2f}x > {WDF_AGG_MIN}. "
+                         f"Tidak ada real selling pressure! Dump tidak mungkin terjadi. "
+                         f"Bias LONG dipaksa meskipun Long Liq dekat!")
+                return {
+                    "is_overdrive": is_overdrive,
+                    "overdrive_type": overdrive_type,
+                    "bias": bias,
+                    "reason": reason,
+                    "confidence": confidence,
+                    "short_dist": short_dist,
+                    "long_dist": long_dist
+                }
+
+        # ============================================
+        # V84 - LONG LIQUIDITY SHIELD (LLS) - WMI PROTECTION
+        # Jika WMI < -80 → short probability rendah
+        # ============================================
+        if wmi_ratio < LLS_WMI_THRESHOLD:
+            # Block SHORT bias jika WMI sangat negatif
+            if long_dist < LGO_LONG_DIST_MAX:
+                is_overdrive = True
+                bias = "LONG"  # Override ke LONG karena whale protect downside
+                overdrive_type = "LONG_LIQUIDITY_SHIELD"
+                confidence = "HIGH"
+                reason = (f"LLS_WMI_SHIELD: WMI {wmi_ratio:.1f}x < {LLS_WMI_THRESHOLD}. "
+                         f"Whale protect downside! Short probability rendah. "
+                         f"Bias LONG dipaksa!")
+                return {
+                    "is_overdrive": is_overdrive,
+                    "overdrive_type": overdrive_type,
+                    "bias": bias,
+                    "reason": reason,
+                    "confidence": confidence,
+                    "short_dist": short_dist,
+                    "long_dist": long_dist
+                }
+
+        # ============================================
+        # V84 - FUNDING SKEW DETECTOR (FSD) - PUMP SIGNAL
+        # Jika funding negative → biasanya pump karena short crowded
+        # ============================================
+        if funding_rate < FSD_FUNDING_NEGATIVE_THRESHOLD:
+            # Support LONG bias jika funding negative
+            if long_dist < LGO_LONG_DIST_MAX:
+                is_overdrive = True
+                bias = "LONG"  # Override ke LONG karena funding negative
+                overdrive_type = "FUNDING_SKEW_PUMP"
+                confidence = "MEDIUM"
+                reason = (f"FSD_FUNDING_SKEW: Funding rate {funding_rate:.4f} < {FSD_FUNDING_NEGATIVE_THRESHOLD}. "
+                         f"Short crowded! Biasanya pump terjadi. "
+                         f"Bias LONG dipaksa!")
+                return {
+                    "is_overdrive": is_overdrive,
+                    "overdrive_type": overdrive_type,
+                    "bias": bias,
+                    "reason": reason,
+                    "confidence": confidence,
+                    "short_dist": short_dist,
+                    "long_dist": long_dist
+                }
 
         # ============================================
         # KASUS RIVER: Short Liq 0.06% (SANGAT DEKAT) - GRAVITY OVERDRIVE
@@ -1793,6 +1947,218 @@ class LiquidationGravityOverdriveV75:
             "confidence": confidence,
             "short_dist": short_dist,
             "long_dist": long_dist
+        }
+
+# ================= V84: FAKE GRAVITY DETECTOR (FGD) =================
+class FakeGravityDetectorV84:
+    """
+    V84: Mendeteksi 'Gravity Trap' dimana long liq kecil adalah umpan
+    Quick Patch untuk kasus PHAUSDT
+    """
+    @staticmethod
+    def analyze(long_dist: float, trade_flow: float, agg_ratio: float) -> Dict:
+        """
+        Args:
+            long_dist: Jarak ke likuidasi LONG (dalam persen)
+            trade_flow: Rasio volume beli/jual
+            agg_ratio: Aggressive Ratio
+        Returns:
+            Dict dengan is_fake_gravity, bias, reason, confidence
+        """
+        is_fake_gravity = False
+        bias = "NEUTRAL"
+        reason = "Normal gravity"
+        confidence = "LOW"
+
+        # Jika long_liq < 0.2 AND flow > 0.6 AND agg > 0.8 → LONG bias
+        if long_dist < FGD_LONG_DIST_MAX and trade_flow > FGD_FLOW_MIN and agg_ratio >= FGD_AGG_MIN:
+            is_fake_gravity = True
+            bias = "LONG"
+            confidence = "ABSOLUTE"
+            reason = (f"FGD_GRAVITY_TRAP: Long Liq ({long_dist}%) dekat TAPI Flow {trade_flow:.2f}x > {FGD_FLOW_MIN} "
+                     f"DAN Agg {agg_ratio:.2f}x >= {FGD_AGG_MIN}. Ini BAIT LIQUIDITY! "
+                     f"MM akan PUMP dulu sebelum sweep long.")
+
+        return {
+            "is_fake_gravity": is_fake_gravity,
+            "bias": bias,
+            "reason": reason,
+            "confidence": confidence
+        }
+
+# ================= V84: LIQUIDITY DENSITY FILTER (LDF) =================
+class LiquidityDensityFilterV84:
+    """
+    V84: Hitung density likuidasi untuk memprediksi path optimal
+    """
+    @staticmethod
+    def analyze(long_liq_size: float, short_liq_size: float,
+                long_dist: float, short_dist: float) -> Dict:
+        """
+        Args:
+            long_liq_size: Ukuran likuidasi LONG
+            short_liq_size: Ukuran likuidasi SHORT
+            long_dist: Jarak ke likuidasi LONG (dalam persen)
+            short_dist: Jarak ke likuidasi SHORT (dalam persen)
+        Returns:
+            Dict dengan density_long, density_short, bias, reason
+        """
+        long_dist_abs = abs(long_dist) if long_dist != 0 else 0.01
+        short_dist_abs = abs(short_dist) if short_dist != 0 else 0.01
+
+        density_long = long_liq_size / long_dist_abs if long_dist_abs > 0 else 0
+        density_short = short_liq_size / short_dist_abs if short_dist_abs > 0 else 0
+
+        bias = "NEUTRAL"
+        reason = "Density balanced"
+
+        # Jika density_short > density_long → LONG bias
+        if density_short > density_long * LDF_DENSITY_THRESHOLD:
+            bias = "LONG"
+            reason = f"LDF_DENSITY: Density Short ({density_short:.2f}) > Density Long ({density_long:.2f}). Path optimal ke atas!"
+        elif density_long > density_short * LDF_DENSITY_THRESHOLD:
+            bias = "SHORT"
+            reason = f"LDF_DENSITY: Density Long ({density_long:.2f}) > Density Short ({density_short:.2f}). Path optimal ke bawah!"
+
+        return {
+            "density_long": round(density_long, 2),
+            "density_short": round(density_short, 2),
+            "bias": bias,
+            "reason": reason
+        }
+
+# ================= V84: WEAK DUMP FILTER (WDF) =================
+class WeakDumpFilterV84:
+    """
+    V84: Filter kondisi weak dump - jika flow > 0.6 dan agg > 0.8, dump tidak mungkin
+    """
+    @staticmethod
+    def analyze(trade_flow: float, agg_ratio: float) -> Dict:
+        """
+        Args:
+            trade_flow: Rasio volume beli/jual
+            agg_ratio: Aggressive Ratio
+        Returns:
+            Dict dengan is_weak_dump, bias, reason
+        """
+        is_weak_dump = False
+        bias = "NEUTRAL"
+        reason = "Normal conditions"
+
+        # Jika flow > 0.6 dan agg > 0.8 → dump tidak mungkin terjadi
+        if trade_flow > WDF_FLOW_MIN and agg_ratio > WDF_AGG_MIN:
+            is_weak_dump = True
+            bias = "LONG"  # Block SHORT, support LONG
+            reason = (f"WDF_WEAK_DUMP: Flow {trade_flow:.2f}x > {WDF_FLOW_MIN} DAN Agg {agg_ratio:.2f}x > {WDF_AGG_MIN}. "
+                     f"Tidak ada real selling pressure! Dump tidak mungkin terjadi.")
+
+        return {
+            "is_weak_dump": is_weak_dump,
+            "bias": bias,
+            "reason": reason
+        }
+
+# ================= V84: LONG LIQUIDITY SHIELD (LLS) =================
+class LongLiquidityShieldV84:
+    """
+    V84: WMI based protection - jika WMI < -80, short probability rendah
+    """
+    @staticmethod
+    def analyze(wmi_ratio: float) -> Dict:
+        """
+        Args:
+            wmi_ratio: WMI ratio
+        Returns:
+            Dict dengan is_shield_active, bias, reason
+        """
+        is_shield_active = False
+        bias = "NEUTRAL"
+        reason = "No shield"
+
+        # Jika WMI < -80 → short probability rendah
+        if wmi_ratio < LLS_WMI_THRESHOLD:
+            is_shield_active = True
+            bias = "LONG"  # Whale protect downside
+            reason = f"LLS_WMI_SHIELD: WMI {wmi_ratio:.1f}x < {LLS_WMI_THRESHOLD}. Whale protect downside! Short probability rendah."
+
+        return {
+            "is_shield_active": is_shield_active,
+            "bias": bias,
+            "reason": reason
+        }
+
+# ================= V84: FUNDING SKEW DETECTOR (FSD) =================
+class FundingSkewDetectorV84:
+    """
+    V84: Funding rate analysis - jika funding negative, biasanya pump karena short crowded
+    """
+    @staticmethod
+    def analyze(funding_rate: float) -> Dict:
+        """
+        Args:
+            funding_rate: Funding rate
+        Returns:
+            Dict dengan is_crowded_short, bias, reason
+        """
+        is_crowded_short = False
+        bias = "NEUTRAL"
+        reason = "Normal funding"
+
+        # Jika funding negative → biasanya pump karena short crowded
+        if funding_rate < FSD_FUNDING_NEGATIVE_THRESHOLD:
+            is_crowded_short = True
+            bias = "LONG"  # Pump signal
+            reason = f"FSD_FUNDING_SKEW: Funding rate {funding_rate:.4f} < {FSD_FUNDING_NEGATIVE_THRESHOLD}. Short crowded! Biasanya pump terjadi."
+
+        return {
+            "is_crowded_short": is_crowded_short,
+            "bias": bias,
+            "reason": reason
+        }
+
+# ================= V84: LIQUIDITY PATH SCORE (LPS) =================
+class LiquidityPathScoreV84:
+    """
+    V84: Optimal path liquidation prediction
+    path_long = short_liq_size - pump_cost
+    path_short = long_liq_size - dump_cost
+    """
+    @staticmethod
+    def analyze(long_liq_size: float, short_liq_size: float,
+                long_dist: float, short_dist: float,
+                pump_cost: float = 0.1, dump_cost: float = 0.1) -> Dict:
+        """
+        Args:
+            long_liq_size: Ukuran likuidasi LONG
+            short_liq_size: Ukuran likuidasi SHORT
+            long_dist: Jarak ke likuidasi LONG (dalam persen)
+            short_dist: Jarak ke likuidasi SHORT (dalam persen)
+            pump_cost: Estimated cost untuk pump (default 0.1%)
+            dump_cost: Estimated cost untuk dump (default 0.1%)
+        Returns:
+            Dict dengan path_long_score, path_short_score, bias, reason
+        """
+        # path_long = short_liq_size - pump_cost
+        # path_short = long_liq_size - dump_cost
+        path_long_score = short_liq_size - (pump_cost * 1000)  # Scale cost
+        path_short_score = long_liq_size - (dump_cost * 1000)  # Scale cost
+
+        bias = "NEUTRAL"
+        reason = "Balanced paths"
+
+        # Jika path_long > path_short → pump dulu
+        if path_long_score > path_short_score:
+            bias = "LONG"
+            reason = f"LPS_PATH: Path LONG ({path_long_score:.2f}) > Path SHORT ({path_short_score:.2f}). MM akan PUMP dulu!"
+        elif path_short_score > path_long_score:
+            bias = "SHORT"
+            reason = f"LPS_PATH: Path SHORT ({path_short_score:.2f}) > Path LONG ({path_long_score:.2f}). MM akan DUMP dulu!"
+
+        return {
+            "path_long_score": round(path_long_score, 2),
+            "path_short_score": round(path_short_score, 2),
+            "bias": bias,
+            "reason": reason
         }
 
 # ================= V74: MAGNET DECAY VALIDATOR (MDV) =================
