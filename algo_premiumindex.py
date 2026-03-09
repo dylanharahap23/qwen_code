@@ -239,6 +239,19 @@ LLS_WMI_THRESHOLD = -80                       # WMI threshold untuk long liquidi
 # V84 - FUNDING SKEW DETECTOR (FSD) - BARU!
 FSD_FUNDING_NEGATIVE_THRESHOLD = -0.01        # Funding negative threshold untuk pump detection
 
+# V85 - OVERSOLD TRAP FILTER (OTF) - BARU! (Patch Kasus UAIUSDT)
+OTF_RSI_MAX = 10                               # Maksimal RSI untuk deteksi oversold trap
+OTF_OI_DELTA_MAX = 0                           # OI Delta harus negatif (< 0)
+OTF_FLOW_MAX = 1.0                             # Flow < 1.0 = tidak ada volume confirmation
+
+# V85 - AGGRESSION ABSORPTION FILTER (AAF) - BARU! (Patch Kasus UAIUSDT)
+AAF_AGG_MIN = 3.0                              # Agg > 3x = aggressive buyers
+AAF_FLOW_MAX = 1.0                             # Flow < 1.0 = volume tidak naik (buyers trapped)
+
+# V85 - FAKE EXHAUSTION DETECTOR (FED) - BARU! (Patch Kasus UAIUSDT)
+FED_RSI_MAX = 10                               # RSI < 10 = extreme oversold
+FED_OI_DELTA_MAX = 0                           # OI turun = positions closing, bukan new longs
+
 # V74 - MAGNET DECAY VALIDATOR (MDV)
 MDV_MAX_WAIT_MINUTES = 10                     # Maksimal waktu tunggu magnet
 
@@ -2114,6 +2127,185 @@ class FundingSkewDetectorV84:
             "is_crowded_short": is_crowded_short,
             "bias": bias,
             "reason": reason
+        }
+
+# ================= V85: OVERSOLD TRAP FILTER (OTF) =================
+class OversoldTrapFilterV85:
+    """
+    V85: Mendeteksi 'Oversold Trap' - RSI ekstrem yang bukan reversal signal
+    
+    Kasus UAIUSDT (The Oversold Trap):
+        Data: Price 0.2847, RSI 3.6 (extreme oversold), Agg 4.0x buy, Flow 0.85x, OI Δ -0.32%
+        Bot memilih: RMG_WEAK_MOMENTUM_BULLISH → LONG
+        Tapi market: DUMP -7%
+        
+        🧠 Error Utama: RMG override PSV tanpa filter OI
+        Masalahnya: RSI < 10 tidak selalu berarti bottom, sering berarti liquidation acceleration phase
+        
+        🔬 Clue yang Bot Lewatkan:
+        - RSI 3.6 < 10 = extreme oversold
+        - OI Δ -0.32% < 0 = positions closing, bukan new longs entering
+        - Flow 0.85x < 1.0 = volume tidak confirm bullish
+        
+        Interpretasi sebenarnya:
+        - Jika market benar-benar reversal, OI harus naik (new longs entering)
+        - OI turun = liquidation cascade incoming
+        - Pattern: oversold bounce trap → retail buy dip → dump continuation → long liq cascade
+    
+    Prinsip OTF:
+        "RSI < 10 tidak selalu berarti bottom. Sering berarti liquidation acceleration phase.
+        Jika OI decreasing dan Flow < 1, bias harus SHORT, bukan LONG."
+    
+    Rule Baru:
+        Jika RSI < 10 AND OI decreasing AND Flow < 1 → bias = SHORT
+    """
+    @staticmethod
+    def analyze(rsi6: float, oi_delta: float, trade_flow: float) -> Dict:
+        """
+        Args:
+            rsi6: RSI 6 period (< 10 = extreme oversold)
+            oi_delta: OI Delta 5 menit (< 0 = positions closing)
+            trade_flow: Rasio volume beli/jual (< 1.0 = no volume confirmation)
+        Returns:
+            Dict dengan is_trap, bias, reason, confidence
+        """
+        is_trap = False
+        bias = "NEUTRAL"
+        reason = "Normal conditions"
+        confidence = "LOW"
+        
+        # ============================================
+        # KASUS UAI: RSI < 10 + OI negatif + Flow < 1
+        # Ini OVERSOLD TRAP! Bukan reversal!
+        # ============================================
+        if rsi6 < OTF_RSI_MAX and oi_delta < OTF_OI_DELTA_MAX and trade_flow < OTF_FLOW_MAX:
+            is_trap = True
+            bias = "SHORT"  # PAKSA SHORT! Ini trap!
+            confidence = "ABSOLUTE"
+            reason = (f"OTF_OVERSOLD_TRAP: RSI {rsi6:.1f} < {OTF_RSI_MAX} (extreme oversold) TAPI "
+                     f"OI Δ {oi_delta:.2f}% < 0 (positions closing) DAN Flow {trade_flow:.2f}x < 1.0 (no volume). "
+                     f"Ini BUKAN reversal! Ini LIQUIDATION CASCADE INCOMING! Retail buy dip trapped!")
+        
+        return {
+            "is_trap": is_trap,
+            "bias": bias,
+            "reason": reason,
+            "confidence": confidence
+        }
+
+# ================= V85: AGGRESSION ABSORPTION FILTER (AAF) =================
+class AggressionAbsorptionFilterV85:
+    """
+    V85: Mendeteksi 'Aggression Absorption' - aggressive buyers yang trapped
+    
+    Kasus UAIUSDT (The Absorption Trap):
+        Data: Agg 4.0x (aggressive buyers), Flow 0.85x (volume tidak naik)
+        
+        🧠 Error Utama: Agg tinggi disalahartikan sebagai bullish signal
+        Masalahnya: Aggression tinggi tapi volume tidak naik = buyers trapped
+        
+        🔬 Clue yang Bot Lewatkan:
+        - Agg 4.0x > 3 = aggressive buyers masuk
+        - Flow 0.85x < 1.0 = volume tidak confirm
+        - Interpretasi: Market maker menyerap order mereka dengan limit orders
+        - Net liquidity imbalance tetap bearish
+        
+    Prinsip AAF:
+        "Aggression tinggi biasanya berarti buyer agresif.
+        Tetapi jika Flow < 1, artinya volume tidak naik.
+        Ini biasanya berarti buyers trapped. Market maker menyerap order mereka."
+    
+    Rule Baru:
+        Jika Agg > 3 AND Flow < 1 → bias = SHORT (buyers absorbed)
+    """
+    @staticmethod
+    def analyze(agg_ratio: float, trade_flow: float) -> Dict:
+        """
+        Args:
+            agg_ratio: Aggressive Ratio (> 3.0 = aggressive buyers)
+            trade_flow: Rasio volume beli/jual (< 1.0 = volume tidak naik)
+        Returns:
+            Dict dengan is_absorbed, bias, reason, confidence
+        """
+        is_absorbed = False
+        bias = "NEUTRAL"
+        reason = "Normal aggression"
+        confidence = "LOW"
+        
+        # ============================================
+        # KASUS UAI: Agg > 3 + Flow < 1
+        # Ini ABSORPTION TRAP! Buyers trapped!
+        # ============================================
+        if agg_ratio > AAF_AGG_MIN and trade_flow < AAF_FLOW_MAX:
+            is_absorbed = True
+            bias = "SHORT"  # PAKSA SHORT! Buyers trapped!
+            confidence = "ABSOLUTE"
+            reason = (f"AAF_AGGRESSION_ABSORPTION: Agg {agg_ratio:.2f}x > {AAF_AGG_MIN} (aggressive buyers) TAPI "
+                     f"Flow {trade_flow:.2f}x < 1.0 (volume tidak naik). "
+                     f"Buyers TRAPPED! Market maker menyerap order dengan limit orders. SIAP DUMP!")
+        
+        return {
+            "is_absorbed": is_absorbed,
+            "bias": bias,
+            "reason": reason,
+            "confidence": confidence
+        }
+
+# ================= V85: FAKE EXHAUSTION DETECTOR (FED) =================
+class FakeExhaustionDetectorV85:
+    """
+    V85: Mendeteksi 'Fake Exhaustion' - RSI ekstrem tanpa OI confirmation
+    
+    Kasus UAIUSDT (The Fake Exhaustion):
+        Data: RSI 3.6 (extreme oversold), OI Δ -0.32% (turun)
+        
+        🧠 Error Utama: RSI < 10 dianggap sebagai exhaustion/reversal signal
+        Masalahnya: Jika market benar-benar reversal, OI harus naik (new longs entering)
+        
+        🔬 Clue yang Bot Lewatkan:
+        - RSI 3.6 < 10 = extreme oversold
+        - OI Δ -0.32% < 0 = positions closing, bukan new longs
+        - Pattern klasik: liquidation cascade incoming
+        
+    Prinsip FED:
+        "RSI < 10 tidak selalu berarti bottom.
+        Sering berarti liquidation acceleration phase.
+        Jika OI down, maka NO REVERSAL."
+    
+    Rule Baru:
+        Jika RSI < 10 AND OI down → NO REVERSAL (bias SHORT)
+    """
+    @staticmethod
+    def analyze(rsi6: float, oi_delta: float) -> Dict:
+        """
+        Args:
+            rsi6: RSI 6 period (< 10 = extreme oversold)
+            oi_delta: OI Delta 5 menit (< 0 = positions closing)
+        Returns:
+            Dict dengan is_fake, bias, reason, confidence
+        """
+        is_fake = False
+        bias = "NEUTRAL"
+        reason = "Normal exhaustion"
+        confidence = "LOW"
+        
+        # ============================================
+        # KASUS UAI: RSI < 10 + OI negatif
+        # Ini FAKE EXHAUSTION! Bukan reversal!
+        # ============================================
+        if rsi6 < FED_RSI_MAX and oi_delta < FED_OI_DELTA_MAX:
+            is_fake = True
+            bias = "SHORT"  # PAKSA SHORT! Fake exhaustion!
+            confidence = "ABSOLUTE"
+            reason = (f"FED_FAKE_EXHAUSTION: RSI {rsi6:.1f} < {FED_RSI_MAX} (extreme oversold) TAPI "
+                     f"OI Δ {oi_delta:.2f}% < 0 (positions closing). "
+                     f"Ini BUKAN reversal signal! Ini LIQUIDATION ACCELERATION PHASE! NO REVERSAL!")
+        
+        return {
+            "is_fake": is_fake,
+            "bias": bias,
+            "reason": reason,
+            "confidence": confidence
         }
 
 # ================= V84: LIQUIDITY PATH SCORE (LPS) =================
@@ -7000,6 +7192,11 @@ class BinanceAnalyzerV82:
         self.lsp = LiquiditySweepProbabilityV83()       # V83 baru!
         self.sniper_score = LiquiditySniperScoreV83()   # V83 baru!
 
+        # V85: NEW MODULES - OVERSOLD TRAP PROTECTION (Patch UAIUSDT)
+        self.otf = OversoldTrapFilterV85()              # V85 baru!
+        self.aaf = AggressionAbsorptionFilterV85()      # V85 baru!
+        self.fed = FakeExhaustionDetectorV85()          # V85 baru!
+
         # V80: New modules
         self.ier = InstitutionalExitRadarV80()  # V80 baru!
         self.rmg = RSIMomentumGuardV80()         # V80 baru!
@@ -7512,6 +7709,25 @@ class BinanceAnalyzerV82:
                 rsi6,
                 trades['aggressive_ratio'],
                 liq['short_dist']
+            )
+
+            # V85: OVERSOLD TRAP FILTER (OTF) - PRIORITY OVERRIDE!
+            otf_result = self.otf.analyze(
+                rsi6,
+                oi_delta_5m,
+                trades['ratio']
+            )
+
+            # V85: AGGRESSION ABSORPTION FILTER (AAF) - PRIORITY OVERRIDE!
+            aaf_result = self.aaf.analyze(
+                trades['aggressive_ratio'],
+                trades['ratio']
+            )
+
+            # V85: FAKE EXHAUSTION DETECTOR (FED) - PRIORITY OVERRIDE!
+            fed_result = self.fed.analyze(
+                rsi6,
+                oi_delta_5m
             )
 
             # V80: FAKE MAGNET VACUUM (FMV)
