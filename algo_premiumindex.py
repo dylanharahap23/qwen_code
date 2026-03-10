@@ -268,9 +268,9 @@ class ConflictResolverV90:
     """
     URUTAN PRIORITAS MUTLAK V90 (Berdasarkan analisis HUMA):
     1. WSC (Whale Singularity) - WMI > 99 + Short Dist < 0.5% ⭐ TERTINGGI!
-    2. WDI (Whale Dominance) - WMI > 90 (V88)
-    3. SAT (Liquidity Saturation) - Imbalance > 50x (V90)
-    4. PET (Position Expansion Trap) - OI naik + Agg tinggi + Flow tinggi (V90)
+    2. SAT (Liquidity Saturation) - Imbalance > 50x (V90)
+    3. PET (Position Expansion Trap) - OI naik + Agg rendah + Flow tinggi (V90)
+    4. WDI (Whale Dominance) - WMI > 90 (V88)
     5. ZGH (Zero Gravity) - RSI > 90 + OI naik + Agg rendah (V86)
     6. OTF (Oversold Trap) - RSI < 15 + WMI ekstrim (V85)
     7. LIM (Liquidity Imbalance) - Imbalance normal (V87)
@@ -278,7 +278,6 @@ class ConflictResolverV90:
     @staticmethod
     def resolve(
         wsc_res: Dict,
-        wdi_res: Dict,
         sat_res: Dict,
         pet_res: Dict,
         zgh_res: Dict,
@@ -295,16 +294,7 @@ class ConflictResolverV90:
                 "phase": "SINGULARITY_EXECUTION"
             }
         
-        # 🐳 2. WHALE DOMINANCE VETO (V88)
-        if wdi_res.get('is_veto'):
-            return {
-                "bias": wdi_res['bias'],
-                "confidence": "ABSOLUTE",
-                "reason": wdi_res['reason'],
-                "phase": "WHALE_HUNT"
-            }
-        
-        # ⚡ 3. LIQUIDITY SATURATION (V90)
+        # ⚡ 2. LIQUIDITY SATURATION (V90)
         if sat_res.get('active'):
             return {
                 "bias": sat_res['bias'],
@@ -313,7 +303,7 @@ class ConflictResolverV90:
                 "phase": "SATURATION_SQUEEZE"
             }
         
-        # 🔥 4. POSITION EXPANSION TRAP (V90)
+        # 🔥 3. POSITION EXPANSION TRAP (V90)
         if pet_res.get('active'):
             return {
                 "bias": pet_res['bias'],
@@ -322,7 +312,7 @@ class ConflictResolverV90:
                 "phase": "EXPANSION_TRAP"
             }
         
-        # 🔴 5. PLAFON CHECK (V86)
+        # 🔴 4. PLAFON CHECK (V86)
         if zgh_res.get('is_ceiling'):
             return {
                 "bias": "SHORT",
@@ -331,7 +321,7 @@ class ConflictResolverV90:
                 "phase": "ZERO_GRAVITY"
             }
         
-        # 🟢 6. DASAR CHECK (V85)
+        # 🟢 5. DASAR CHECK (V85)
         if otf_res.get('is_trap'):
             return {
                 "bias": "LONG" if otf_res.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND' else otf_res['bias'],
@@ -340,7 +330,7 @@ class ConflictResolverV90:
                 "phase": "OVERSOLD_TRAP"
             }
         
-        # ⚖️ 7. LIQUIDITY IMBALANCE (V87)
+        # ⚖️ 6. LIQUIDITY IMBALANCE (V87)
         if lim_res.get('bias') != "NEUTRAL" and lim_res.get('imbalance_ratio', 1.0) > 10:
             return {
                 "bias": lim_res['bias'],
@@ -8017,7 +8007,7 @@ SAT_WMI_MIN = 80.0                   # WMI minimal untuk validasi
 
 # Position Expansion Trap (V90)
 PET_OI_DELTA_MIN = 1.0               # OI naik > 1%
-PET_AGG_MIN = 2.0                    # Aggressive ratio > 2.0
+PET_AGG_MAX = 1.0                    # Aggressive ratio < 1.0 (rendah = limit buy)
 PET_FLOW_MIN = 2.0                   # Trade flow > 2.0
 
 
@@ -8243,16 +8233,24 @@ class WhaleSingularityV89:
         return {"is_active": False, "bias": "NEUTRAL", "reason": ""}
 
 
-# ================= V90: LIQUIDITY SATURATION =================
+# ================= V90: LIQUIDITY SATURATION (SAT) - ANTI-HUMA/ARC TRAP =================
 class LiquiditySaturationV90:
     """
-    V90: Mendeteksi kondisi Short Overcrowded.
-    Jika imbalance_ratio > 50x dan WMI > 80, maka short side sudah terlalu penuh.
-    MM akan exploitasi saturation ini untuk SQUEEZE.
+    V90: Mendeteksi kondisi 'Jenuh Likuiditas'.
+    Jika Imbalance > 50x DAN WMI > 80, 
+    maka MM sedang dalam 'Predator Mode'. 
+    Sinyal SHORT dari LIM adalah BUNUH DIRI. MM akan nabrak target SHORT terdekat.
     """
     @staticmethod
-    def analyze(imbalance_ratio: float, wmi: float) -> Dict:
+    def analyze(imbalance_ratio: float, wmi: float, short_dist: float = None) -> Dict:
         if imbalance_ratio > SAT_IMBALANCE_THRESHOLD and abs(wmi) > SAT_WMI_MIN:
+            # Jika short_dist tersedia dan sangat dekat (< 1%), sinyal lebih kuat
+            if short_dist is not None and abs(short_dist) < 1.0:
+                return {
+                    "active": True,
+                    "bias": "LONG",
+                    "reason": f"SAT_SQUEEZE: Imbalance {imbalance_ratio:.1f}x (EKSTRIM) + WMI {wmi:.1f}x. Short seller sudah menyerah, MM sedang mengeksekusi 'Event Horizon' di +{short_dist}%. DILARANG SHORT!"
+                }
             return {
                 "active": True,
                 "bias": "LONG",
@@ -8261,22 +8259,28 @@ class LiquiditySaturationV90:
         return {"active": False, "bias": "NEUTRAL", "reason": ""}
 
 
-# ================= V90: POSITION EXPANSION TRAP =================
+# ================= V90: POSITION EXPANSION TRAP (PET) - ANTI-AINU TRAP =================
 class PositionExpansionTrapV90:
     """
-    V90: Mendeteksi Shorts yang baru masuk (bukan exit).
-    Jika OI naik + Agg tinggi + Flow tinggi, itu berarti shorts baru entering.
-    Market maker melihat ini sebagai bahan bakar squeeze.
+    V90: Mendeteksi jebakan ekspansi posisi.
+    Jika OI Delta Positif (>1%) TAPI Aggression Rendah + Flow Tinggi,
+    artinya Whale sedang membangun jaring jebakan (Trap Building).
     """
     @staticmethod
     def analyze(oi_delta: float, agg: float, flow: float, rsi: float = None) -> Dict:
-        if oi_delta > PET_OI_DELTA_MIN and agg > PET_AGG_MIN and flow > PET_FLOW_MIN:
-            # Tambahan validasi: jika RSI tinggi, sinyal lebih kuat
+        if oi_delta > PET_OI_DELTA_MIN and agg < PET_AGG_MAX and flow > PET_FLOW_MIN:
+            # Di dasar neraka (RSI < 30), sinyal lebih kuat
             rsi_context = f" di RSI {rsi:.1f}" if rsi else ""
+            if rsi and rsi < 30:
+                return {
+                    "active": True,
+                    "bias": "LONG",
+                    "reason": f"PET_BULL_TRAP: Shorts baru masuk TAPI Whale nahan pake Limit Buy (Flow Tinggi){rsi_context}. Bensin Squeeze lagi dikumpulin! REBOUND SEGERA!"
+                }
             return {
                 "active": True,
                 "bias": "LONG",
-                "reason": f"PET_POSITION_EXPANSION_TRAP: Shorts entering aggressively{rsi_context}! OI Δ +{oi_delta:.2f}% (NEW SHORTS), Agg {agg:.2f}x (market order), Flow {flow:.2f}x → SQUEEZE FUEL!"
+                "reason": f"PET_POSITION_EXPANSION_TRAP: OI Δ +{oi_delta:.2f}% (NEW SHORTS), Agg {agg:.2f}x (LIMIT BUY WALL), Flow {flow:.2f}x → TRAP BUILDING!{rsi_context}"
             }
         return {"active": False, "bias": "NEUTRAL", "reason": ""}
 
@@ -9224,7 +9228,8 @@ class BinanceAnalyzerV87:
             imbalance_ratio = lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0
             sat_result = self.sat.analyze(
                 imbalance_ratio=imbalance_ratio,
-                wmi=wmi_ratio
+                wmi=wmi_ratio,
+                short_dist=liq['short_dist']
             )
 
             # Position Expansion Trap (V90)
@@ -9278,7 +9283,6 @@ class BinanceAnalyzerV87:
             # 🔥 PRIORITAS UTAMA V90: Gunakan ConflictResolverV90 dengan prioritas baru!
             final_decision = self.conflict_resolver_v90.resolve(
                 wsc_res=wsc_result,
-                wdi_res=wdi_result,
                 sat_res=sat_result,
                 pet_res=pet_result,
                 zgh_res=zgh_result,
@@ -9754,7 +9758,7 @@ class BinanceAnalyzerV87:
                 "bias": final_decision['bias'],
                 "confidence": final_decision['confidence'],
                 "reason": final_decision['reason'],
-                "phase_v88": final_decision.get('phase', 'NORMAL'),
+                "phase_v90": final_decision.get('phase', 'NORMAL'),
                 "entry_status": entry_status,
                 "hold_status": hold_status,
                 "entry_ready": entry_ready,
