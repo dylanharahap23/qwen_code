@@ -263,6 +263,100 @@ class ConflictResolverV88:
         return {"bias": "NEUTRAL", "confidence": "LOW", "reason": "No Whale Signature detected."}
 
 
+# ================= V90: CONFLICT RESOLVER (FINAL HIERARCHY) =================
+class ConflictResolverV90:
+    """
+    URUTAN PRIORITAS MUTLAK V90 (Berdasarkan analisis HUMA):
+    1. WSC (Whale Singularity) - WMI > 99 + Short Dist < 0.5% ⭐ TERTINGGI!
+    2. WDI (Whale Dominance) - WMI > 90 (V88)
+    3. SAT (Liquidity Saturation) - Imbalance > 50x (V90)
+    4. PET (Position Expansion Trap) - OI naik + Agg tinggi + Flow tinggi (V90)
+    5. ZGH (Zero Gravity) - RSI > 90 + OI naik + Agg rendah (V86)
+    6. OTF (Oversold Trap) - RSI < 15 + WMI ekstrim (V85)
+    7. LIM (Liquidity Imbalance) - Imbalance normal (V87)
+    """
+    @staticmethod
+    def resolve(
+        wsc_res: Dict,
+        wdi_res: Dict,
+        sat_res: Dict,
+        pet_res: Dict,
+        zgh_res: Dict,
+        otf_res: Dict,
+        lim_res: Dict
+    ) -> Dict:
+        
+        # 🌌 1. SINGULARITY VETO (Tertinggi - Raja Segala Raja)
+        if wsc_res.get('is_active'):
+            return {
+                "bias": wsc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": wsc_res['reason'],
+                "phase": "SINGULARITY_EXECUTION"
+            }
+        
+        # 🐳 2. WHALE DOMINANCE VETO (V88)
+        if wdi_res.get('is_veto'):
+            return {
+                "bias": wdi_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": wdi_res['reason'],
+                "phase": "WHALE_HUNT"
+            }
+        
+        # ⚡ 3. LIQUIDITY SATURATION (V90)
+        if sat_res.get('active'):
+            return {
+                "bias": sat_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": sat_res['reason'],
+                "phase": "SATURATION_SQUEEZE"
+            }
+        
+        # 🔥 4. POSITION EXPANSION TRAP (V90)
+        if pet_res.get('active'):
+            return {
+                "bias": pet_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": pet_res['reason'],
+                "phase": "EXPANSION_TRAP"
+            }
+        
+        # 🔴 5. PLAFON CHECK (V86)
+        if zgh_res.get('is_ceiling'):
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "reason": zgh_res['reason'],
+                "phase": "ZERO_GRAVITY"
+            }
+        
+        # 🟢 6. DASAR CHECK (V85)
+        if otf_res.get('is_trap'):
+            return {
+                "bias": "LONG" if otf_res.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND' else otf_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": otf_res['reason'],
+                "phase": "OVERSOLD_TRAP"
+            }
+        
+        # ⚖️ 7. LIQUIDITY IMBALANCE (V87)
+        if lim_res.get('bias') != "NEUTRAL" and lim_res.get('imbalance_ratio', 1.0) > 10:
+            return {
+                "bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": lim_res['reason'],
+                "phase": "IMBALANCE_MOMENTUM"
+            }
+        
+        return {
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "Market in Equilibrium. No strong signal detected.",
+            "phase": "NEUTRAL"
+        }
+
+
 # ================= CONFIG V83 (THE LIQUIDITY SNIPER) =================
 # 🔥 V83 NEW MODULES - MICROSECOND LIQUIDITY RADAR
 
@@ -7912,6 +8006,21 @@ SAD_WMI_MIN = 20            # WMI > 20 (short liquidity above)
 SAD_OI_DELTA_MAX = 0.0      # OI delta < 0 (negative/short covering)
 
 
+# ================= V89/V90 CONFIG =================
+# Whale Singularity Check (V89)
+WSC_WMI_THRESHOLD = 99.0           # WMI > 99.0 = Singularitas
+WSC_SHORT_DIST_MAX = 0.5            # Jarak short < 0.5%
+
+# Liquidity Saturation (V90)
+SAT_IMBALANCE_THRESHOLD = 50.0      # Imbalance ratio > 50x = saturation
+SAT_WMI_MIN = 80.0                   # WMI minimal untuk validasi
+
+# Position Expansion Trap (V90)
+PET_OI_DELTA_MIN = 1.0               # OI naik > 1%
+PET_AGG_MIN = 2.0                    # Aggressive ratio > 2.0
+PET_FLOW_MIN = 2.0                   # Trade flow > 2.0
+
+
 # ================= V87: ZERO AGGRESSION SQUEEZE (ZAS) =================
 class ZeroAggressionSqueezeV87:
     """
@@ -8112,6 +8221,64 @@ class StealthAccumulationDetectorV87:
             "reason": "Normal - no stealth accumulation detected",
             "phase": "NORMAL"
         }
+
+
+# ================= V89: WHALE SINGULARITY CHECK (WSC) =================
+class WhaleSingularityV89:
+    """
+    V89: Mendeteksi 'Singularitas Likuiditas'.
+    Jika WMI > 99.0 (Short Pool Raksasa) DAN Jarak Short < 0.5%,
+    maka MM sedang dalam 'Execution Mode'. 
+    MM TIDAK AKAN EXIT. MM bakal hajar atas secara brutal tanpa ampun.
+    IER dan PSV di sini adalah FALSE SIGNAL (Umpan buat nambah bensin Short).
+    """
+    @staticmethod
+    def analyze(wmi: float, short_dist: float, rsi: float) -> Dict:
+        if wmi > WSC_WMI_THRESHOLD and abs(short_dist) < WSC_SHORT_DIST_MAX:
+            return {
+                "is_active": True,
+                "bias": "LONG",
+                "reason": f"WSC_SINGULARITY: WMI {wmi:.1f}x (SHORT_LIQ_WHALE) terdeteksi! Jarak {short_dist:.2f}% adalah EVENT HORIZON. MM tidak akan dump di sini. MM sedang narik Short Seller (Trap) buat jadi bensin SQUEEZE +7%! DILARANG SHORT!"
+            }
+        return {"is_active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V90: LIQUIDITY SATURATION =================
+class LiquiditySaturationV90:
+    """
+    V90: Mendeteksi kondisi Short Overcrowded.
+    Jika imbalance_ratio > 50x dan WMI > 80, maka short side sudah terlalu penuh.
+    MM akan exploitasi saturation ini untuk SQUEEZE.
+    """
+    @staticmethod
+    def analyze(imbalance_ratio: float, wmi: float) -> Dict:
+        if imbalance_ratio > SAT_IMBALANCE_THRESHOLD and abs(wmi) > SAT_WMI_MIN:
+            return {
+                "active": True,
+                "bias": "LONG",
+                "reason": f"SAT_LIQUIDITY_SATURATION: Imbalance {imbalance_ratio:.1f}x terlalu ekstrim → Short overcrowded → SQUEEZE. WMI {wmi:.1f}x mengkonfirmasi."
+            }
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V90: POSITION EXPANSION TRAP =================
+class PositionExpansionTrapV90:
+    """
+    V90: Mendeteksi Shorts yang baru masuk (bukan exit).
+    Jika OI naik + Agg tinggi + Flow tinggi, itu berarti shorts baru entering.
+    Market maker melihat ini sebagai bahan bakar squeeze.
+    """
+    @staticmethod
+    def analyze(oi_delta: float, agg: float, flow: float, rsi: float = None) -> Dict:
+        if oi_delta > PET_OI_DELTA_MIN and agg > PET_AGG_MIN and flow > PET_FLOW_MIN:
+            # Tambahan validasi: jika RSI tinggi, sinyal lebih kuat
+            rsi_context = f" di RSI {rsi:.1f}" if rsi else ""
+            return {
+                "active": True,
+                "bias": "LONG",
+                "reason": f"PET_POSITION_EXPANSION_TRAP: Shorts entering aggressively{rsi_context}! OI Δ +{oi_delta:.2f}% (NEW SHORTS), Agg {agg:.2f}x (market order), Flow {flow:.2f}x → SQUEEZE FUEL!"
+            }
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
 
 
 # ================= V87 CONFLICT RESOLVER =================
@@ -8438,6 +8605,14 @@ class OutputFormatterV87:
         # V82/V81/V80 Key Metrics
         print(f"\n📊 KEY MODULES STATUS:")
         
+        # V89/V90 Modules
+        if result.get('wsc', {}).get('is_active'):
+            print(f"🌌 WSC: ACTIVE - {result['wsc']['reason']}")
+        if result.get('sat', {}).get('active'):
+            print(f"⚡ SAT: ACTIVE - {result['sat']['reason']}")
+        if result.get('pet', {}).get('active'):
+            print(f"🔥 PET: ACTIVE - {result['pet']['reason']}")
+        
         # V82
         if result.get('lmg', {}).get('is_death_magnet'):
             print(f"💀 LMG: ACTIVE - {result['lmg']['reason']}")
@@ -8521,6 +8696,12 @@ class BinanceAnalyzerV87:
         # V88: NEW MODULES - WHALE DOMINANCE INDEX
         self.wdi = WhaleDominanceV88()  # V88 baru!
         self.conflict_resolver_v88 = ConflictResolverV88()  # V88 baru!
+        
+        # V89/V90: NEW MODULES - THE PREDATOR TRAP DEFENSE
+        self.wsc = WhaleSingularityV89()           # V89 baru!
+        self.sat = LiquiditySaturationV90()        # V90 baru!
+        self.pet = PositionExpansionTrapV90()      # V90 baru!
+        self.conflict_resolver_v90 = ConflictResolverV90()  # V90 baru!
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
@@ -9030,6 +9211,31 @@ class BinanceAnalyzerV87:
             sad_result = self.sad.analyze(trades['aggressive_ratio'], change_5m, oi_delta_5m, wmi_ratio)
             # ============================================================================
 
+            # ================= V89/V90 MODULES - ANTI-PREDATOR TRAP =================
+            # Whale Singularity Check (V89)
+            wsc_result = self.wsc.analyze(
+                wmi=wmi_ratio, 
+                short_dist=liq['short_dist'],
+                rsi=rsi6
+            )
+
+            # Liquidity Saturation (V90)
+            # Gunakan imbalance_ratio dari LIM jika tersedia
+            imbalance_ratio = lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0
+            sat_result = self.sat.analyze(
+                imbalance_ratio=imbalance_ratio,
+                wmi=wmi_ratio
+            )
+
+            # Position Expansion Trap (V90)
+            pet_result = self.pet.analyze(
+                oi_delta=oi_delta_5m,
+                agg=trades['aggressive_ratio'],
+                flow=trades['ratio'],
+                rsi=rsi6
+            )
+            # =======================================================================
+
             # V80: FAKE MAGNET VACUUM (FMV)
             fmv_result = self.fmv.analyze(
                 ier_result, rmg_result, rsi6, trades['ratio'],
@@ -9069,14 +9275,15 @@ class BinanceAnalyzerV87:
 
             vbt_result = self.vbt.analyze(price, self.state_mgr.price_history, volume_ratio)
 
-            # 🔥 PRIORITAS UTAMA V88: Gunakan ConflictResolverV88 untuk keputusan final!
-            final_decision = self.conflict_resolver_v88.resolve(
-                wdi=wdi_result,
-                zgh=zgh_result,
-                otf=otf_result,
-                sad=sad_result,
-                lim=lim_result,
-                sniper=None  # optional
+            # 🔥 PRIORITAS UTAMA V90: Gunakan ConflictResolverV90 dengan prioritas baru!
+            final_decision = self.conflict_resolver_v90.resolve(
+                wsc_res=wsc_result,
+                wdi_res=wdi_result,
+                sat_res=sat_result,
+                pet_res=pet_result,
+                zgh_res=zgh_result,
+                otf_res=otf_result,
+                lim_res=lim_result
             )
 
             entry_ready = self.state_mgr.update_entry(final_decision['bias'])
@@ -9160,6 +9367,22 @@ class BinanceAnalyzerV87:
                     "bias": sad_result.get('bias', 'NEUTRAL'),
                     "reason": sad_result.get('reason', ''),
                     "confidence": sad_result.get('confidence', 'LOW')
+                },
+                # V89/V90 Results
+                "wsc": {
+                    "is_active": wsc_result.get('is_active', False),
+                    "bias": wsc_result.get('bias', 'NEUTRAL'),
+                    "reason": wsc_result.get('reason', '')
+                },
+                "sat": {
+                    "active": sat_result.get('active', False),
+                    "bias": sat_result.get('bias', 'NEUTRAL'),
+                    "reason": sat_result.get('reason', '')
+                },
+                "pet": {
+                    "active": pet_result.get('active', False),
+                    "bias": pet_result.get('bias', 'NEUTRAL'),
+                    "reason": pet_result.get('reason', '')
                 },
                 # V82 New Modules
                 "fid": {
