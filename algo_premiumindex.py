@@ -7001,7 +7001,34 @@ class ConflictResolverV82:
                 fed_result: Dict = None,
                 # V85 NEW MODULES - ANTI-STABLE TRAP (Neutral Zone Shield)
                 nzs_result: Dict = None, pfd_result: Dict = None,
-                fed_v85_result: Dict = None, lrd_result: Dict = None):
+                fed_v85_result: Dict = None, lrd_result: Dict = None,
+                # V86 NEW MODULES - ZERO GRAVITY HORIZON (Anti-TRIA Trap)
+                zgh_result: Dict = None, odf_result: Dict = None):
+        # ============================================
+        # 🟢 PRIORITAS 0 (TERTINGGI): V86 OVERBOUGHT DISTRIBUTION FILTER - ANTI-TRIA TRAP
+        # PRIORITAS TERATAS! Mencegah Long Trap saat RSI > 90 + OI naik + Agg rendah
+        # ============================================
+        if odf_result and odf_result.get('active'):
+            return {
+                "bias": odf_result['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V86_ODF_OVERBOUGHT_DISTRIBUTION: {odf_result['reason']}",
+                "phase": "ZERO_GRAVITY_HORIZON",
+                "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"}
+            }
+
+        # ============================================
+        # 🟢 PRIORITAS 0.1 (TERTINGGI): V86 ZERO GRAVITY HORIZON - ANTI-TRIA TRAP
+        # ============================================
+        if zgh_result and zgh_result.get('is_ceiling'):
+            return {
+                "bias": zgh_result['bias'],
+                "confidence": zgh_result['confidence'],
+                "reason": f"V86_ZGH_ZERO_GRAVITY: {zgh_result['reason']}",
+                "phase": "DISTRIBUTION_TOP",
+                "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"}
+            }
+                
         # ============================================
         # 🟢 PRIORITAS 0 (TERTINGGI): V85 OVERSOLD TRAP FILTER - LIQUIDITY VACUUM REBOUND
         # ANTI-CHECKMATE! Mencegah Short Trap saat WMI ekstrim negatif + RSI rendah
@@ -7801,7 +7828,7 @@ class ConflictResolverV82:
         }
 
 # ================= BINANCE ANALYZER V82 =================
-class BinanceAnalyzerV85:
+class BinanceAnalyzerV86:
     """
     V82: Main analyzer dengan prioritas tertinggi:
         1. OTF (Oversold Trap Filter) - ANTI-UAI & LIQUIDITY VACUUM REBOUND (NEW V85!) - ANTI-BOTTOMLESS HOLE (NEW V82!)
@@ -7890,6 +7917,10 @@ class BinanceAnalyzerV85:
         self.pfd = PositionFlipDetectorV85()            # V85 baru!
         self.fed_v85 = FakeExitDetectorV85()            # V85 baru!
         self.lrd = LiquidityReloadDetectorV85()         # V85 baru!
+
+        # V86: NEW MODULES - ZERO GRAVITY HORIZON (Anti-TRIA Trap)
+        self.zgh = ZeroGravityHorizonV86()               # V86 baru!
+        self.odf = OverboughtDistributionFilterV86()     # V86 baru!
 
         # V80: New modules
         self.ier = InstitutionalExitRadarV80()  # V80 baru!
@@ -8414,6 +8445,26 @@ class BinanceAnalyzerV85:
                 wmi_ratio=wmi_data.get('wmi_ratio', 0) if wmi_data else None,
                 agg_ratio=trades['aggressive_ratio']
             )
+            
+            # V86: ZERO GRAVITY HORIZON (ZGH) - ANTI-TRIA TRAP!
+            zgh_result = self.zgh.analyze(
+            rsi6=rsi6,
+            oi_delta=oi_delta_5m,
+            agg_ratio=trades['aggressive_ratio'],
+            short_dist=liq['short_dist'],
+            long_dist=liq['long_dist']
+            )
+
+            # V86: OVERBOUGHT DISTRIBUTION FILTER (ODF) - PRIORITAS TERATAS!
+            odf_result = self.odf.analyze(
+            rsi6=rsi6,
+            oi_delta=oi_delta_5m,
+            agg_ratio=trades['aggressive_ratio'],
+            short_liq_size=liq['short_vol'],
+            long_liq_size=liq['long_vol'],
+            short_dist=liq['short_dist'],
+            long_dist=liq['long_dist']
+            )
 
             # V85: AGGRESSION ABSORPTION FILTER (AAF) - PRIORITY OVERRIDE!
             aaf_result = self.aaf.analyze(
@@ -8610,7 +8661,10 @@ class BinanceAnalyzerV85:
                 nzs_result=nzs_result,
                 pfd_result=pfd_result,
                 fed_v85_result=fed_v85_result,
-                lrd_result=lrd_result
+                lrd_result=lrd_result,
+                # V86 NEW MODULES - ZERO GRAVITY HORIZON (Anti-TRIA Trap)
+                zgh_result=zgh_result,
+                odf_result=odf_result
             )
 
             entry_ready = self.state_mgr.update_entry(final['bias'])
@@ -9038,6 +9092,24 @@ class BinanceAnalyzerV85:
                 "accumulation_detected": accumulation_detected
             }
 
+            result["zgh"] = {
+             "is_ceiling": zgh_result.get('is_ceiling', False),
+            "bias": zgh_result.get('bias', 'NEUTRAL'),
+            "reason": zgh_result.get('reason', ''),
+            "rsi": zgh_result.get('rsi', rsi6),
+            "oi_delta": zgh_result.get('oi_delta', oi_delta_5m),
+            "agg_ratio": zgh_result.get('agg_ratio', trades['aggressive_ratio'])
+        }
+
+            result["odf"] = {
+            "active": odf_result.get('active', False),
+            "bias": odf_result.get('bias', 'NEUTRAL'),
+            "reason": odf_result.get('reason', ''),
+            "rsi": odf_result.get('rsi', rsi6),
+            "oi_delta": odf_result.get('oi_delta', oi_delta_5m),
+            "agg_ratio": odf_result.get('agg_ratio', trades['aggressive_ratio'])
+            }
+
             return result
         except Exception as e:
             print(f"❌ Error analyzing {self.symbol}: {e}")
@@ -9045,46 +9117,65 @@ class BinanceAnalyzerV85:
             traceback.print_exc()
             return None
 
-# ================= OUTPUT FORMATTER V82 =================
-class OutputFormatterV85:
-    """Format output untuk V85 dengan prioritas tertinggi OTF (Oversold Trap Filter) - ANTI-CHECKMATE EDITION"""
+# ================= OUTPUT FORMATTER V86 =================
+class OutputFormatterV86:
+    """Format output untuk V86 dengan prioritas tertinggi ODF (Overbought Distribution Filter) - ZERO GRAVITY HORIZON EDITION"""
     @staticmethod
     def print_header():
         print("\n" + "="*80)
-        print("🔥 BINANCE LIQUIDATION HUNTER V85 - THE LIQUIDITY PATHFINDER (ANTI-CHECKMATE EDITION)")
+        print("🔥 BINANCE LIQUIDATION HUNTER V86 - THE LIQUIDITY PATHFINDER (ZERO GRAVITY HORIZON EDITION)")
         print("="*80)
-        print("\n🧠 ANALISA KEGAGALAN V83 & V84 (Kenapa Bot Salah Arah?)")
-        print("   📍 Kasus UAIUSDT (The Liquidity Vacuum Rebound Checkmate):")
-        print("      📊 Data: WMI -99.1x, RSI 11.7, Agg 2.33x, OI turun (IER Exit aktif).")
-        print("      📊 Bot Bias: SHORT (Karena IER Exit aktif - Whale kabur!).")
-        print("      📊 Kenyataannya: Itu adalah 'Liquidity Vacuum Rebound'!")
-        print("         Whale sengaja narik order (OI turun) buat ngebersihin Orderbook bawah,")
-        print("         lalu dalam hitungan milidetik mereka hajar Market Buy buat squeeze semua Short seller!")
-        print("         RSI 11.7 + WMI -99.1x = SHORT LIQUIDATION POOL di atas jauh lebih 'bernutrisi'!")
-        print("   📍 Masalah V83/V84: IER_EXIT dapat prioritas ABSOLUTE, RMG_REBOUND kalah!")
-        print("      📊 Bot mikir: 'Whale kabur, retail beli umpan, harga pasti dump!'")
-        print("      📊 Padahal: MM sedang narik rem tangan di dasar ekstrim. REBOUND INCOMING!")
-        print("\n🛡️ THE SUPREME REFINEMENT: V85 'THE LIQUIDITY PATHFINDER'")
-        print("   📍 NEW MODUL 1: OVERSOLD TRAP FILTER (OTF) - ANTI-UAI TRAP & LIQUIDITY VACUUM")
-        print("      📍 SCENARIO 1 (UAI Trap): RSI < 15 + OI turun + Flow < 1 → SHORT (Liquidation Cascade)")
-        print("      📍 SCENARIO 2 (Liquidity Vacuum): RSI < 15 + WMI < -90 + Agg > 1.0 → LONG (ANTI-CHECKMATE!)")
-        print("   📍 NEW MODUL 2: FAKE EXHAUSTION DETECTOR (FED) - ANTI-GRAVITY DECOY")
-        print("      📍 'Jika WMI < -90 tapi Flow tidak ekstrim, itu bukan exhaustion, itu trap!'")
-        print("\n🎯 HIERARKI MUTLAK V85 (Filter Kriminalitas):")
-        print("   1. OTF (Oversold Trap Filter) - ANTI-UAI & LIQUIDITY VACUUM REBOUND (V85 - TERTINGGI!)")
-        print("   2. FID (Fuel Ignition Detector) - Cek momentum injeksi mendadak")
-        print("   3. LHG (Liquidity Heat Gradient) - Target duit paling padet (Short/Long Liq Pool)")
-        print("   4. IER (Institutional Exit Radar) - Validasi exit whale (harus + RMG weak!)")
-        print("   5. RMG (RSI Momentum Guard) - Rem tangan Whale (Rebound detection)")
-        print("   6. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO")
-        print("   7. LPS (Liquidity Path Score) - Optimal path liquidation prediction")
-        print("   8. LDF (Liquidity Density Filter) - PATH OPTIMAL (V84)")
-        print("   9. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR")
+        print("\n🧠 ANALISA KEGAGALAN V85 (Kenapa Bot Salah Arah?)")
+        print("   📍 Kasus TRIAUSDT (The Ultimate Trap - 'The Paradox of 0.00% Liquidation'):")
+        print("      📊 Data: Price pump, RSI 96.7 (Nuclear Overbought), Short Liq 0.0%, Long Liq -8.73%,")
+        print("              Flow 1.94x, Agg 1.5x, OI Δ +1.37%")
+        print("      📊 Bot V85 memilih: LMG_DEATH_MAGNET_SHORT → LONG (Karena Short Liq 0.0% = magnet)")
+        print("      📊 Tapi market: DUMP -5% sampai -10% setelah ±58 menit")
+        print("      ")
+        print("      🧠 Error Utama: LMG terlalu dominan tanpa filter RSI-OI Ceiling")
+        print("      Masalahnya: Short liq 0.0% tidak selalu berarti cascade, sering kali itu 'Exit Liquidity'!")
+        print("      ")
+        print("      🔬 Clue yang Bot Lewatkan:")
+        print("      - RSI 96.7 > 90 = Nuclear Overbought (area extrem)")
+        print("      - OI Δ +1.37% > 0.5% = NEW POSITIONS ENTERING (bukan short liquidation!)")
+        print("      - Agg 1.5x < 2.0 = weak aggression (passive sell wall)")
+        print("      - Flow 1.94x tinggi tapi Agg rendah = internal matching / passive distribution")
+        print("      ")
+        print("      📍 Interpretasi sebenarnya:")
+        print("      - Jika benar squeeze ke atas, OI harus TURUN (karena short liquidation menutup posisi)")
+        print("      - TAPI OI NAIK = NEW SHORT BUILDING (Whale sedang build short positions!)")
+        print("      - Pattern: Distribution top → Whale building shorts → Fake short magnet 0% → Dump ke long liq 8%")
+        print("      ")
+        print("      ⚡ Signal Penting yang Bot Lewatkan:")
+        print("      - RSI > 90 AND OI_delta > 0.5 AND Agg < 2.0 = OVERBOUGHT DISTRIBUTION TRAP")
+        print("      - Ini adalah 'Zero Gravity Horizon' - harga sudah di plafon, MM berhenti beli!")
+        print("      - MM butuh bot lo entry LONG supaya mereka punya lawan buat nutup LONG mereka (JUAL)!")
+        print("\n🛡️ THE SUPREME REFINEMENT: V86 'THE LIQUIDITY PATHFINDER' - ZERO GRAVITY HORIZON")
+        print("   📍 NEW MODUL 1: ZERO GRAVITY HORIZON (ZGH) - ANTI-TRIA TRAP!")
+        print("      📍 RULE: RSI > 90 + OI_delta > 0.5 + Agg < 2.0 → bias = SHORT (DILARANG LONG!)")
+        print("      📍 Reason: RSI extreme + OI rising + weak aggression = Whale short build")
+        print("   📍 NEW MODUL 2: OVERBOUGHT DISTRIBUTION FILTER (ODF) - PRIORITAS TERATAS!")
+        print("      📍 RULE: IF RSI > 90 AND OI_delta > 0.5 AND Agg < 2.0 → bias = SHORT")
+        print("      📍 Reason: RSI extreme + OI rising + weak aggression = Whale short build")
+        print("\n🎯 HIERARKI MUTLAK V86 (Filter Kriminalitas - UPDATED):")
+        print("   0. ODF (Overbought Distribution Filter) - ANTI-TRIA TRAP (V86) ⭐ TERTINGGI!")
+        print("   1. ZGH (Zero Gravity Horizon) - ANTI-TRIA TRAP (V86) ⭐")
+        print("   2. OTF (Oversold Trap Filter) - ANTI-UAI & LIQUIDITY VACUUM REBOUND (V85)")
+        print("   3. FID (Fuel Ignition Detector) - Cek momentum injeksi mendadak")
+        print("   4. LHG (Liquidity Heat Gradient) - Target duit paling padet (Short/Long Liq Pool)")
+        print("   5. IER (Institutional Exit Radar) - Validasi exit whale")
+        print("   6. RMG (RSI Momentum Guard) - Rem tangan Whale (Rebound detection)")
+        print("   7. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO")
+        print("   8. LPS (Liquidity Path Score) - Optimal path liquidation prediction")
+        print("   9. LDF (Liquidity Density Filter) - PATH OPTIMAL (V84)")
+        print("   10. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR")
         print("="*80 + "\n")
-        print("🧠 KAIDAH EMAS V85:")
+        print("🧠 KAIDAH EMAS V86:")
+        print("   'RSI > 90 TIDAK SELALU berarti continuation. OI dan Agg adalah kunci!'")
+        print("   'Jika RSI > 90 dan OI naik, itu BUKAN squeeze - itu DISTRIBUTION!'")
+        print("   'MM tidak akan squeeze kalau OI masih naik - mereka butuh likuiditas buat EXIT!'")
+        print("   'Short liq 0.0% itu sering kali FAKE MAGNET - yang besar justru Long liq di bawah!'\n")
         print("   'Jangan pernah entry SHORT kalau WMI udah di bawah -90, seburuk apa pun beritanya.'")
-        print("   'Itu area Spring bandar. WMI -99.1x artinya Short Liquidation Pool di atas 4%'")
-        print("   'jauh lebih bernutrisi buat MM daripada hajar Long yang jaraknya cuma 0.5%.'")
         print("   'MM selalu makan yang porsinya lebih besar. Follow the liquidity, not the fear!'\n")
 
     @staticmethod
@@ -9094,15 +9185,42 @@ class OutputFormatterV85:
         print(f"💰 Price: ${result['price']:.4f}")
         print("="*80)
 
-        # PRIORITAS 1: LIQUIDITY MIRROR GUARD (LMG) - V82
-        if result['lmg']['is_death_magnet']:
+        # PRIORITAS 0: OVERBOUGHT DISTRIBUTION FILTER (ODF) - V86 (TERTINGGI!)
+        if result.get('odf', {}).get('active'):
+            print(f"\n☢️☢️☢️ ZERO GRAVITY HORIZON DETECTED! TRIA STYLE! (V86 - TERTINGGI!)")
+            print(f"   📌 {result['odf']['reason']}")
+            print(f"   📊 RSI: {result['rsi6']} (NUCLEAR!) | OI Δ: {result['oi_delta_5m']}% (NAIK!) | Agg: {result['aggressive_ratio']}x (PASIF!)")
+            print(f"   📊 Ini BUKAN SQUEEZE! Ini DISTRIBUTION TOP! Whale building short positions!")
+            print(f"   ⚠️ DILARANG LONG! FAKE MAGNET 0% SHORT LIQ TERDETEKSI!")
+
+        # PRIORITAS 1: ZERO GRAVITY HORIZON (ZGH) - V86
+        elif result.get('zgh', {}).get('is_ceiling'):
+            print(f"\n☢️☢️☢️ ZERO GRAVITY HORIZON DETECTED! TRIA STYLE!")
+            print(f"   📌 {result['zgh']['reason']}")
+            print(f"   📊 RSI: {result['rsi6']} (NUCLEAR!) | OI Δ: {result['oi_delta_5m']}% (NAIK!)")
+            print(f"   📊 Short liq {result['short_liq']}% adalah FAKE MAGNET! Long liq {abs(result['long_liq'])}% adalah REAL TARGET!")
+
+        # PRIORITAS 2: OVERSOLD TRAP FILTER (OTF) - V85
+        elif result.get('otf', {}).get('is_trap'):
+            if result['otf'].get('scenario') == 'LIQUIDITY_VACUUM_REBOUND':
+                print(f"\n🔄🔄🔄 LIQUIDITY VACUUM REBOUND DETECTED! UAI STYLE! (V85)")
+                print(f"   📌 {result['otf']['reason']}")
+                print(f"   📊 WMI: {result['wmi']['mass_ratio']:.1f}x (EKSTRIM!) | Agg: {result['aggressive_ratio']}x (TINGGI!)")
+                print(f"   📊 RSI {result['rsi6']} oversold TAPI WMI < -90 = SHORT TRAP! MAHJARRR KE ATAS!")
+            elif result['otf'].get('scenario') == 'UAI_TRAP':
+                print(f"\n🔻🔻🔻 OVERSOLD TRAP DETECTED! UAI STYLE! (V85)")
+                print(f"   📌 {result['otf']['reason']}")
+                print(f"   📊 RSI {result['rsi6']} oversold TAPI OI turun + Flow lemah = LIQUIDATION CASCADE!")
+
+        # PRIORITAS 3: LIQUIDITY MIRROR GUARD (LMG) - V82
+        elif result['lmg']['is_death_magnet']:
             print(f"\n💀💀💀 DEATH MAGNET DETECTED! SIREN STYLE!")
             print(f"   📌 {result['lmg']['reason']}")
             print(f"   📊 Long Liq: {result['long_liq']}% (SUPER TIPIS!) | RSI: {result['rsi6']}")
             print(f"   📊 Ini ZONA TERLARANG! Satu dorongan kecil bisa memicu LIQUIDATION CASCADE!")
             print(f"   ⏱️ LMG terdeteksi selama: {result['lmg']['lmg_duration_minutes']:.1f} menit")
 
-        # PRIORITAS 2: ABSORPTION PRESSURE INDEX (API) - V82
+        # PRIORITAS 4: ABSORPTION PRESSURE INDEX (API) - V82
         elif result['api']['is_absorbing']:
             print(f"\n🔄🔄🔄 WHALE ABSORPTION ZONE DETECTED! SIGN STYLE!")
             print(f"   📌 {result['api']['reason']}")
@@ -9110,7 +9228,7 @@ class OutputFormatterV85:
             print(f"   📊 Retail agresif tapi harga nggak mau turun/naik, Whale lagi 'makan' semua!")
             print(f"   ⏱️ API terdeteksi selama: {result['api']['api_duration_minutes']:.1f} menit")
 
-        # PRIORITAS 3: LIQUIDITY THINNING GUARD (LTG) - V81
+        # PRIORITAS 5: LIQUIDITY THINNING GUARD (LTG) - V81
         elif result['ltg']['is_vacuum']:
             print(f"\n💨💨💨 LIQUIDITY VACUUM DETECTED! KITE STYLE!")
             print(f"   📌 {result['ltg']['reason']}")
@@ -9118,7 +9236,7 @@ class OutputFormatterV85:
             print(f"   📊 Sisi ASK kosong! Harga akan melayang tanpa hambatan (Infinity Squeeze)!")
             print(f"   ⏱️ LTG terdeteksi selama: {result['ltg']['ltg_duration_minutes']:.1f} menit")
 
-        # PRIORITAS 4: INTERNAL CROSS DETECTOR (ICD) - V81
+        # PRIORITAS 6: INTERNAL CROSS DETECTOR (ICD) - V81
         elif result['icd']['is_internal_trap']:
             print(f"\n🔄🔄🔄 INTERNAL CROSS TRAP DETECTED! HUMA STYLE!")
             print(f"   📌 {result['icd']['reason']}")
@@ -9126,7 +9244,7 @@ class OutputFormatterV85:
             print(f"   📊 Whale sedang Position Flipping! IER_EXIT adalah Jebakan!")
             print(f"   ⏱️ ICD terdeteksi selama: {result['icd']['icd_duration_minutes']:.1f} menit")
 
-        # PRIORITAS 5: EXECUTION ZONE HUNTER (EZH)
+        # PRIORITAS 7: EXECUTION ZONE HUNTER (EZH)
         elif result['ezh']['is_execution'] and result['ezh']['confidence'] in ["ABSOLUTE", "SUPREME", "HIGH"]:
             if result['ezh']['execution_type'] == "SHORT_EXECUTION_ZONE":
                 print(f"\n🎯🎯🎯 MAGNETIC SLINGSHOT DETECTED! RIVER STYLE!")
@@ -9140,7 +9258,7 @@ class OutputFormatterV85:
                 print(f"   📊 Long Liq: {result['long_liq']}% (SUDAH TERSENTUH!) | RSI: {result['rsi6']}")
                 print(f"   📊 MM sudah sapu likuidasi bawah, siap-siap rebound besar!")
 
-        # PRIORITAS 6: WASH TRADE DETECTOR (WTD)
+        # PRIORITAS 8: WASH TRADE DETECTOR (WTD)
         elif result['wtd']['is_wash_trade'] and result['wtd']['confidence'] in ["ABSOLUTE", "SUPREME", "HIGH"]:
             if result['wtd']['wash_type'] == "WASH_TRADE_DISTRIBUTION":
                 print(f"\n🎭🎭🎭 WASH TRADE DISTRIBUTION DETECTED! KITE STYLE!")
@@ -9149,7 +9267,7 @@ class OutputFormatterV85:
                 print(f"   📊 Ini BUKAN akumulasi Whale asli, ini Jebakan Volume Palsu!")
                 print(f"   ⏱️ WTD terdeteksi selama: {result['wtd']['wtd_duration_minutes']:.1f} menit")
 
-        # PRIORITAS 7: INSTITUTIONAL EXIT RADAR (IER)
+        # PRIORITAS 9: INSTITUTIONAL EXIT RADAR (IER)
         elif result['ier']['is_exit'] and result['ier']['confidence'] in ["ABSOLUTE", "SUPREME", "HIGH"]:
             if result['ier']['exit_type'] == "INSTITUTIONAL_EXIT":
                 print(f"\n🏦🏦🏦 INSTITUTIONAL EXIT DETECTED! OPN/BARD STYLE!")
@@ -9158,7 +9276,7 @@ class OutputFormatterV85:
                 print(f"   📊 Whale sedang cuci gudang/exit ke retail! Magnet atas adalah jebakan!")
                 print(f"   ⏱️ IER terdeteksi selama: {result['ier']['ier_duration_minutes']:.1f} menit")
 
-        # PRIORITAS 8: RSI MOMENTUM GUARD (RMG)
+        # PRIORITAS 10: RSI MOMENTUM GUARD (RMG)
         elif result['rmg']['is_weak'] and result['rmg']['confidence'] in ["ABSOLUTE", "SUPREME", "HIGH"]:
             if result['rmg']['weakness_type'] == "GRAVITY_DECOY":
                 print(f"\n🎣🎣🎣 GRAVITY DECOY DETECTED! RIVER STYLE!")
@@ -9167,7 +9285,7 @@ class OutputFormatterV85:
                 print(f"   📊 Short Liq {result['short_liq']}% hanya umpan! Gak ada tenaga buat makan magnet atas.")
                 print(f"   ⏱️ RMG terdeteksi selama: {result['rmg']['rmg_duration_minutes']:.1f} menit")
 
-        # PRIORITAS 9: FAKE MAGNET VACUUM (FMV)
+        # PRIORITAS 11: FAKE MAGNET VACUUM (FMV)
         elif result['fmv']['is_fake_magnet'] and result['fmv']['confidence'] in ["ABSOLUTE", "SUPREME"]:
             if result['fmv']['fake_type'] in ["FAKE_MAGNET_VACUUM_OPN", "FAKE_MAGNET_VACUUM_RIVER"]:
                 print(f"\n🧲🧲🧲 FAKE MAGNET VACUUM DETECTED!")
@@ -9176,7 +9294,7 @@ class OutputFormatterV85:
                 print(f"   📊 Binance sengaja tarik bot LONG masuk dengan umpan Magnet, sebelum banting harga!")
                 print(f"   ⏱️ FMV terdeteksi selama: {result['fmv']['fmv_duration_minutes']:.1f} menit")
 
-        # PRIORITAS 10: PANIC SELL VALIDATOR (PSV)
+        # PRIORITAS 12: PANIC SELL VALIDATOR (PSV)
         elif result['psv']['is_valid'] and result['psv']['confidence'] in ["ABSOLUTE", "SUPREME", "HIGH"]:
             if result['psv']['validation_type'] == "FALLING_KNIFE_CONTINUATION":
                 print(f"\n🔪🔪🔪 ENDLESS FLOOR DETECTED! OPN STYLE!")
@@ -9210,11 +9328,36 @@ class OutputFormatterV85:
         if result['entry_ready']:
             print(f"\n{'✅'*10} ENTRY READY! {'✅'*10}")
 
-        # V82 Key Metrics (PRIORITAS TERTINGGI)
+        # V86 Key Metrics
         print(f"\n{'='*40}")
-        print("📊 V82 THE LIQUIDITY GHOST METRICS:")
+        print("📊 V86 ZERO GRAVITY HORIZON METRICS:")
 
-        # LMG Status (Prioritas 1)
+        # ODF Status (Prioritas Tertinggi)
+        if result.get('odf', {}).get('active'):
+            print(f"☢️ ODF Overbought Distribution: ACTIVE (PRIORITAS TERTINGGI!)")
+            print(f"   RSI: {result['odf']['rsi']} | OI Δ: {result['odf']['oi_delta']}% | Agg: {result['odf']['agg_ratio']}x")
+            print(f"   ⚠️ INI BUKAN SQUEEZE! INI DISTRIBUTION TOP! DILARANG LONG!")
+        else:
+            print(f"⚪ ODF Overbought Distribution: INACTIVE")
+
+        # ZGH Status
+        if result.get('zgh', {}).get('is_ceiling'):
+            print(f"☢️ ZGH Zero Gravity Horizon: ACTIVE")
+            print(f"   RSI: {result['zgh']['rsi']} | OI Δ: {result['zgh']['oi_delta']}% | Agg: {result['zgh']['agg_ratio']}x")
+        else:
+            print(f"⚪ ZGH Zero Gravity Horizon: INACTIVE")
+
+        # V85 Key Metrics
+        print(f"\n📊 V85 LIQUIDITY PATHFINDER METRICS:")
+        if result.get('otf', {}).get('is_trap'):
+            print(f"🔄 OTF Oversold Trap: ACTIVE ({result['otf'].get('scenario', 'UNKNOWN')})")
+        else:
+            print(f"⚪ OTF Oversold Trap: INACTIVE")
+
+        # V82 Key Metrics
+        print(f"\n📊 V82 THE LIQUIDITY GHOST METRICS:")
+
+        # LMG Status
         if result['lmg']['is_death_magnet']:
             print(f"💀 LMG Death Magnet: ACTIVE")
             print(f"   {result['lmg']['reason']}")
@@ -9222,7 +9365,7 @@ class OutputFormatterV85:
         else:
             print(f"⚪ LMG Death Magnet: INACTIVE")
 
-        # API Status (Prioritas 2)
+        # API Status
         if result['api']['is_absorbing']:
             print(f"🔄 API Absorption: ACTIVE")
             print(f"   {result['api']['reason']}")
@@ -9233,7 +9376,7 @@ class OutputFormatterV85:
         # V81 Key Metrics
         print(f"\n📊 V81 THE LIQUIDITY QUANTUM METRICS:")
 
-        # LTG Status (Prioritas 3)
+        # LTG Status
         if result['ltg']['is_vacuum']:
             print(f"💨 LTG Liquidity Vacuum: ACTIVE")
             print(f"   {result['ltg']['reason']}")
@@ -9241,7 +9384,7 @@ class OutputFormatterV85:
         else:
             print(f"⚪ LTG Liquidity Vacuum: INACTIVE")
 
-        # ICD Status (Prioritas 4)
+        # ICD Status
         if result['icd']['is_internal_trap']:
             print(f"🔄 ICD Internal Cross: ACTIVE")
             print(f"   {result['icd']['reason']}")
@@ -9252,67 +9395,52 @@ class OutputFormatterV85:
         # V80 Key Metrics
         print(f"\n📊 V80 THE BLACK BOX DISMANTLER METRICS:")
 
-        # IER Status (Prioritas 7)
+        # IER Status
         if result['ier']['is_exit']:
             ier_color = "🏦" if result['ier']['confidence'] in ["ABSOLUTE", "SUPREME"] else "⚠️"
             print(f"{ier_color} IER Institutional Exit: ACTIVE ({result['ier']['exit_type']})")
-            print(f"   {result['ier']['reason']}")
             print(f"   Flow: {result['trade_flow']:.1f}x | OI Δ: {result['oi_delta_5m']:.2f}%")
             print(f"   ⏱️ Durasi IER: {result['ier']['ier_duration_minutes']:.1f}m")
         else:
             print(f"⚪ IER Institutional Exit: INACTIVE")
 
-        # RMG Status (Prioritas 8)
+        # RMG Status
         if result['rmg']['is_weak']:
             rmg_color = "🎣" if result['rmg']['confidence'] in ["ABSOLUTE", "SUPREME"] else "⚠️"
             print(f"{rmg_color} RMG Momentum Guard: ACTIVE ({result['rmg']['weakness_type']})")
-            print(f"   {result['rmg']['reason']}")
             print(f"   RSI: {result['rsi6']} | Agg: {result['aggressive_ratio']:.2f}x")
             print(f"   ⏱️ Durasi RMG: {result['rmg']['rmg_duration_minutes']:.1f}m")
         else:
             print(f"⚪ RMG Momentum Guard: INACTIVE")
 
-        # FMV Status (Prioritas 9)
+        # FMV Status
         if result['fmv']['is_fake_magnet']:
             fmv_color = "🧲" if result['fmv']['confidence'] in ["ABSOLUTE", "SUPREME"] else "⚠️"
             print(f"{fmv_color} FMV Fake Magnet Vacuum: ACTIVE ({result['fmv']['fake_type']})")
-            print(f"   {result['fmv']['reason']}")
             print(f"   ⏱️ Durasi FMV: {result['fmv']['fmv_duration_minutes']:.1f}m")
         else:
             print(f"⚪ FMV Fake Magnet Vacuum: INACTIVE")
 
-        # EZH Status (Prioritas 5)
+        # EZH Status
         if result['ezh']['is_execution']:
             ezh_color = "🎯" if result['ezh']['confidence'] in ["ABSOLUTE", "SUPREME"] else "⚠️"
             print(f"{ezh_color} EZH Execution Zone: ACTIVE ({result['ezh']['execution_type']})")
             print(f"   Short Liq: {result['short_liq']}% | Long Liq: {result['long_liq']}% | RSI: {result['rsi6']}")
             print(f"   ⏱️ Durasi EZH: {result['ezh']['ezh_duration_minutes']:.1f}m")
 
-        # WTD Status (Prioritas 6)
+        # WTD Status
         if result['wtd']['is_wash_trade']:
             wtd_color = "🎭" if result['wtd']['confidence'] in ["ABSOLUTE", "SUPREME"] else "⚠️"
             print(f"{wtd_color} WTD Wash Trade: ACTIVE ({result['wtd']['wash_type']})")
             print(f"   Flow: {result['trade_flow']:.1f}x | RSI: {result['rsi6']}")
             print(f"   ⏱️ Durasi WTD: {result['wtd']['wtd_duration_minutes']:.1f}m")
 
-        # PSV Status (Prioritas 10)
+        # PSV Status
         if result['psv']['is_valid']:
             psv_color = "🔪" if result['psv']['validation_type'] == "FALLING_KNIFE_CONTINUATION" else "🟢" if result['psv']['validation_type'] == "REAL_EXHAUSTION" else "⚠️"
             print(f"{psv_color} PSV Panic Validator: ACTIVE ({result['psv']['validation_type']})")
             print(f"   RSI: {result['rsi6']} | Flow: {result['trade_flow']:.2f}x")
             print(f"   ⏱️ Durasi PSV: {result['psv']['psv_duration_minutes']:.1f}m")
-
-        # OFF Status
-        if result['off']['is_patched']:
-            off_color = "🌉" if result['off']['confidence'] in ["ABSOLUTE", "SUPREME"] else "⚠️"
-            print(f"{off_color} OFF Overdrive Flow: ACTIVE ({result['off']['patched_type']})")
-            print(f"   ⏱️ Durasi OFF: {result['off']['off_duration_minutes']:.1f}m")
-
-        # AEF Status
-        if result['aef']['is_exhausted']:
-            aef_color = "💀" if result['aef']['confidence'] in ["ABSOLUTE", "SUPREME"] else "⚠️"
-            print(f"{aef_color} AEF Aggressive Exhaustion: ACTIVE ({result['aef']['exhausted_type']})")
-            print(f"   ⏱️ Durasi AEF: {result['aef']['aef_duration_minutes']:.1f}m")
 
         print(f"🐋 WMI: {result['wmi']['mass_ratio']:.1f}x ({result['wmi']['dominant_side']})")
         print(f"👻 Ghost Intent: {'ACTIVE' if result['ghost']['is_ghost'] else 'INACTIVE'} (Score: {result['ghost']['score']})")
@@ -9327,25 +9455,26 @@ class OutputFormatterV85:
 
         print("="*80)
 
-# ================= MAIN FUNCTION V82 =================
-def main_v85():
+
+# ================= MAIN FUNCTION V86 =================
+def main_v86():
     import sys
     if len(sys.argv) > 1:
         symbol = sys.argv[1].upper()
     else:
         symbol = input("\nSymbol (e.g. BTCUSDT): ").upper() or "BTCUSDT"
 
-    # Buat SATU INSTANCE analyzer V82 untuk seluruh loop
-    analyzer = BinanceAnalyzerV85(symbol)
+    # Buat SATU INSTANCE analyzer V86 untuk seluruh loop
+    analyzer = BinanceAnalyzerV86(symbol)  # Pastikan class name sudah diubah ke V86
 
-    OutputFormatterV85.print_header()
+    OutputFormatterV86.print_header()
 
-    print(f"\n🔍 Analyzing {symbol} with V85 Liquidity Ghost Logic...")
+    print(f"\n🔍 Analyzing {symbol} with V86 Zero Gravity Horizon Logic...")
 
     result = analyzer.analyze()
 
     if result:
-        OutputFormatterV85.print_signal(result)
+        OutputFormatterV86.print_signal(result)
 
         if len(sys.argv) > 2 and sys.argv[2] == "--loop":
             print("\n🔄 Auto-refresh every 10 seconds. Press Ctrl+C to stop.\n")
@@ -9364,21 +9493,28 @@ def main_v85():
     else:
         print(f"❌ Failed to analyze {symbol}")
 
-def batch_mode_v85(symbols: List[str]):
-    OutputFormatterV85.print_header()
+
+def batch_mode_v86(symbols: List[str]):
+    OutputFormatterV86.print_header()
     results = []
     analyzers = {}
     for symbol in symbols:
-        analyzers[symbol] = BinanceAnalyzerV85(symbol)
+        analyzers[symbol] = BinanceAnalyzerV86(symbol)  # Pastikan class name sudah diubah ke V86
 
     for symbol in symbols:
-        print(f"\n🔍 Analyzing {symbol} with V85 Liquidity Ghost Logic...")
+        print(f"\n🔍 Analyzing {symbol} with V86 Zero Gravity Horizon Logic...")
         result = analyzers[symbol].analyze()
         if result:
             results.append(result)
             bias_icon = "🟢" if result['bias'] == "LONG" else "🔴" if result['bias'] == "SHORT" else "⚪"
             ready_icon = "✅" if result['entry_ready'] else "⏳"
-            # Safety icons - V82 dengan hierarki baru
+            
+            # V86 Icons (Prioritas Tertinggi)
+            odf_icon = "☢️" if result.get('odf', {}).get('active') else " "
+            zgh_icon = "☢️" if result.get('zgh', {}).get('is_ceiling') else " "
+            otf_icon = "🔄" if result.get('otf', {}).get('is_trap') else " "
+            
+            # V82 Icons
             lmg_icon = "💀" if result['lmg']['is_death_magnet'] else " "
             api_icon = "🔄" if result['api']['is_absorbing'] else " "
             ltg_icon = "💨" if result['ltg']['is_vacuum'] else " "
@@ -9403,7 +9539,8 @@ def batch_mode_v85(symbols: List[str]):
             vacuum_icon = "💨" if result['wmi']['is_whale_trap'] and abs(result['wmi']['mass_ratio']) > VACUUM_WMI_MIN else " "
             ghost_icon = "👻" if result['ghost']['is_ghost'] else " "
             engine_icon = "🚀" if result['starter']['is_starting'] else " "
-            print(f"{ready_icon}{lmg_icon}{api_icon}{ltg_icon}{icd_icon}{ezh_icon}{wtd_icon}{ier_icon}{rmg_icon}{fmv_icon}{psv_icon}{off_icon}{aef_icon}{psr_icon}{amv_icon}{lgo_icon}{mdv_icon}{pab_icon}{cfk_icon}{mdd_icon}{ovd_icon}{ti_icon}{vacuum_icon}{ghost_icon}{engine_icon} {bias_icon} {symbol}: {result['bias']} ({result['confidence']}) - {result['market_phase']} [TTK:{result['ttk']['estimated_minutes']}m]")
+            
+            print(f"{ready_icon}{odf_icon}{zgh_icon}{otf_icon}{lmg_icon}{api_icon}{ltg_icon}{icd_icon}{ezh_icon}{wtd_icon}{ier_icon}{rmg_icon}{fmv_icon}{psv_icon}{off_icon}{aef_icon}{psr_icon}{amv_icon}{lgo_icon}{mdv_icon}{pab_icon}{cfk_icon}{mdd_icon}{ovd_icon}{ti_icon}{vacuum_icon}{ghost_icon}{engine_icon} {bias_icon} {symbol}: {result['bias']} ({result['confidence']}) - {result['market_phase']} [TTK:{result['ttk']['estimated_minutes']}m]")
         else:
             print(f"❌ {symbol}: Failed")
 
@@ -9415,6 +9552,13 @@ def batch_mode_v85(symbols: List[str]):
     for r in results:
         if r['entry_ready']:
             bias_icon = "🟢" if r['bias'] == "LONG" else "🔴"
+            
+            # V86 Warnings (Prioritas Tertinggi)
+            odf_warn = "☢️ODF! " if r.get('odf', {}).get('active') else ""
+            zgh_warn = "☢️ZGH! " if r.get('zgh', {}).get('is_ceiling') else ""
+            otf_warn = "🔄OTF! " if r.get('otf', {}).get('is_trap') else ""
+            
+            # Other warnings
             lmg_warn = "💀LMG! " if r['lmg']['is_death_magnet'] else ""
             api_warn = "🔄API! " if r['api']['is_absorbing'] else ""
             ltg_warn = "💨LTG! " if r['ltg']['is_vacuum'] else ""
@@ -9439,7 +9583,8 @@ def batch_mode_v85(symbols: List[str]):
             vacuum_warn = "💨VACUUM! " if r['wmi']['is_whale_trap'] and abs(r['wmi']['mass_ratio']) > VACUUM_WMI_MIN else ""
             ghost_warn = "👻GHOST! " if r['ghost']['is_ghost'] else ""
             engine_warn = "🚀ENGINE! " if r['starter']['is_starting'] else ""
-            print(f"{bias_icon} {r['symbol']}: {r['bias']} ({r['confidence']}) - {lmg_warn}{api_warn}{ltg_warn}{icd_warn}{ezh_warn}{wtd_warn}{ier_warn}{rmg_warn}{fmv_warn}{psv_warn}{off_warn}{aef_warn}{psr_warn}{amv_warn}{lgo_warn}{mdv_warn}{pab_warn}{cfk_warn}{mdd_warn}{ovd_warn}{ti_warn}{vacuum_warn}{ghost_warn}{engine_warn}{r['reason'][:60]} | TTK:{r['ttk']['estimated_minutes']}m")
+            
+            print(f"{bias_icon} {r['symbol']}: {r['bias']} ({r['confidence']}) - {odf_warn}{zgh_warn}{otf_warn}{lmg_warn}{api_warn}{ltg_warn}{icd_warn}{ezh_warn}{wtd_warn}{ier_warn}{rmg_warn}{fmv_warn}{psv_warn}{off_warn}{aef_warn}{psr_warn}{amv_warn}{lgo_warn}{mdv_warn}{pab_warn}{cfk_warn}{mdd_warn}{ovd_warn}{ti_warn}{vacuum_warn}{ghost_warn}{engine_warn}{r['reason'][:60]} | TTK:{r['ttk']['estimated_minutes']}m")
             ready_count += 1
 
     if ready_count == 0:
@@ -9447,8 +9592,9 @@ def batch_mode_v85(symbols: List[str]):
 
     return results
 
-def api_mode_v85(symbol: str) -> str:
-    analyzer = BinanceAnalyzerV85(symbol)
+
+def api_mode_v86(symbol: str) -> str:
+    analyzer = BinanceAnalyzerV86(symbol)  # Pastikan class name sudah diubah ke V86
     result = analyzer.analyze()
     if result:
         if 'exhaustion' in result and 'details' in result['exhaustion']:
@@ -9464,6 +9610,7 @@ def api_mode_v85(symbol: str) -> str:
         return json.dumps(result, indent=2, default=str)
     return json.dumps({"error": f"Failed to analyze {symbol}"})
 
+
 POPULAR_SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "DOGEUSDT",
     "RIVERUSDT", "SIRENUSDT", "POWERUSDT", "BEATUSDT", "PIPPINUSDT",
@@ -9477,13 +9624,13 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         if sys.argv[1] == "--api":
             symbol = sys.argv[2] if len(sys.argv) > 2 else "BTCUSDT"
-            print(api_mode_v85(symbol))
+            print(api_mode_v86(symbol))  # ← Diubah ke v86
         elif sys.argv[1] == "--batch":
             symbols = sys.argv[2:] if len(sys.argv) > 2 else POPULAR_SYMBOLS
-            batch_mode_v85(symbols)
+            batch_mode_v86(symbols)  # ← Diubah ke v86
         elif sys.argv[1] == "--help":
             print("""
-🔥 Binance Liquidation Hunter V85 - The Liquidity Pathfinder (Anti-Checkmate Edition)
+🔥 BINANCE LIQUIDATION HUNTER V86 - THE LIQUIDITY PATHFINDER (ZERO GRAVITY HORIZON EDITION)
 Usage:
 python script.py SYMBOL           # Analyze single symbol
 python script.py SYMBOL --loop     # Auto-refresh every 10s
@@ -9493,42 +9640,51 @@ python script.py --help            # Show this help
 
 Examples:
 python script.py BTCUSDT
-python script.py UAIUSDT --loop    # Test OTF Scenario 1 (UAI Trap)
-python script.py BTCUSDT --loop    # Test OTF Scenario 2 (Liquidity Vacuum Rebound)
-python script.py KITEUSDT --loop   # Test LTG (Liquidity Thinning) - V81
-python script.py HUMAUSDT --loop   # Test ICD (Internal Cross) - V81
+python script.py TRIAUSDT --loop   # Test V86 ODF (Overbought Distribution Filter) - PRIORITAS TERTINGGI!
+python script.py UAIUSDT --loop    # Test V85 OTF Scenario 1 (UAI Trap)
+python script.py KITEUSDT --loop   # Test V81 LTG (Liquidity Thinning)
+python script.py HUMAUSDT --loop   # Test V81 ICD (Internal Cross)
 
-New Features V85 (The Liquidity Pathfinder):
-🛡️ OVERSOLD TRAP FILTER (OTF): Anti-UAI & Liquidity Vacuum Rebound!
+🔴🔴🔴 NEW FEATURES V86 (ZERO GRAVITY HORIZON) - PRIORITAS TERTINGGI! 🔴🔴🔴
+
+☢️ OVERBOUGHT DISTRIBUTION FILTER (ODF): Anti-TRIA Trap! (V86 - PRIORITAS TERTINGGI!)
+    - RULE: RSI > 90 + OI_delta > 0.5 + Agg < 2.0 → SHORT (DILARANG LONG!)
+    - Reason: RSI extreme + OI rising + weak aggression = Whale short build
+    - Pattern: Distribution top → Whale building shorts → Fake short magnet 0% → Dump ke long liq 8%
+
+☢️ ZERO GRAVITY HORIZON (ZGH): Anti-TRIA Trap! (V86)
+    - RULE: RSI > 90 + OI_delta > 0.5 + Agg < 2.0 → bias = SHORT
+    - "Short liq 0.0% itu sering kali FAKE MAGNET - yang besar justru Long liq di bawah!"
+
+🛡️ OVERSOLD TRAP FILTER (OTF): Anti-UAI & Liquidity Vacuum Rebound! (V85)
     - SCENARIO 1 (UAI Trap): RSI < 15 + OI turun + Flow < 1 → SHORT (Liquidation Cascade)
     - SCENARIO 2 (Liquidity Vacuum): RSI < 15 + WMI < -90 + Agg > 1.0 → LONG (ANTI-CHECKMATE!)
 
-
-🧠 FAKE EXHAUSTION DETECTOR (FED): Anti-Gravity Decoy!
+🧠 FAKE EXHAUSTION DETECTOR (FED): Anti-Gravity Decoy! (V85)
     - Jika WMI < -90 tapi Flow tidak ekstrim, itu bukan exhaustion, itu trap!
 
-
-🎯 HIERARKI MUTLAK V85 (Filter Kriminalitas):
-    1. OTF (Oversold Trap Filter) - ANTI-UAI & LIQUIDITY VACUUM REBOUND (NEW V85!) - Cek 'Magnet Maut' (Jarak < 0.05%)
-    2. FGD (Fake Gravity Detector) - ANTI-GRAVITY TRAP (V84) - Cek siapa yang menyerap siapa
-    3. LDF (Liquidity Density Filter) - PATH OPTIMAL (V84) - Cek apakah sisi atas/bawah kosong (Flow > 50x)
-    4. ICD (Internal Cross Detector) - Validasi apakah IER_EXIT adalah sandiwara Whale
-    5. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT
-    6. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE
-    7. IER (Institutional Exit Radar) - ANTI-OPN/BARD FALSE FLOW
-    8. RMG (RSI Momentum Guard) - ANTI-RIVER GRAVITY DECOY
-    9. FMV (Fake Magnet Vacuum) - KOMBINASI IER + RMG
+🎯 HIERARKI MUTLAK V86 (Filter Kriminalitas - UPDATED):
+    0. ODF (Overbought Distribution Filter) - ANTI-TRIA TRAP (V86) ⭐ TERTINGGI!
+    1. ZGH (Zero Gravity Horizon) - ANTI-TRIA TRAP (V86) ⭐
+    2. OTF (Oversold Trap Filter) - ANTI-UAI & LIQUIDITY VACUUM REBOUND (V85)
+    3. FID (Fuel Ignition Detector) - Cek momentum injeksi mendadak
+    4. LHG (Liquidity Heat Gradient) - Target duit paling padet (Short/Long Liq Pool)
+    5. IER (Institutional Exit Radar) - Validasi exit whale
+    6. RMG (RSI Momentum Guard) - Rem tangan Whale (Rebound detection)
+    7. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO
+    8. LPS (Liquidity Path Score) - Optimal path liquidation prediction
+    9. LDF (Liquidity Density Filter) - PATH OPTIMAL (V84)
     10. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR
 
-🧠 KAIDAH EMAS V85:
-    "Jangan pernah entry SHORT kalau WMI udah di bawah -90, seburuk apa pun beritanya.
-    Itu area Spring bandar. WMI -99.1x artinya Short Liquidation Pool di atas 4%
-
-    jauh lebih bernutrisi buat MM daripada hajar Long yang jaraknya cuma 0.5%.
-    MM selalu makan yang porsinya lebih besar. Follow the liquidity, not the fear!"
-    
+🧠 KAIDAH EMAS V86:
+    'RSI > 90 TIDAK SELALU berarti continuation. OI dan Agg adalah kunci!'
+    'Jika RSI > 90 dan OI naik, itu BUKAN squeeze - itu DISTRIBUTION!'
+    'MM tidak akan squeeze kalau OI masih naik - mereka butuh likuiditas buat EXIT!'
+    'Short liq 0.0% itu sering kali FAKE MAGNET - yang besar justru Long liq di bawah!'
+    'Jangan pernah entry SHORT kalau WMI udah di bawah -90, seburuk apa pun beritanya.'
+    'MM selalu makan yang porsinya lebih besar. Follow the liquidity, not the fear!'
             """)
         else:
-            main_v85()
+            main_v86()  # ← Diubah ke v86
     else:
-        main_v85()
+        main_v86()  # ← Diubah ke v86
