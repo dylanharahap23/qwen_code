@@ -126,46 +126,51 @@
          itu jauh lebih 'bernutrisi' buat MM daripada hajar Long yang jaraknya cuma 0.5%."
         "MM selalu makan yang porsinya lebih besar."
 
-🎯 HIERARKI MUTLAK V86 (Filter Kriminalitas - UPDATED):
-    0. ZGH (Zero Gravity Horizon) - ANTI-TRIA TRAP (V86) ⭐ BARU!
-    1. ODF (Overbought Distribution Filter) - ANTI-TRIA TRAP (V86) ⭐ BARU!
-    2. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO
-    3. LPS (Liquidity Path Score) - Optimal path liquidation prediction
-    4. LDF (Liquidity Density Filter) - Density comparison
-    5. WDF (Weak Dump Filter) - Validasi weak dump scenario
-    6. LLS (Long Liquidity Shield) - WMI based protection
-    7. FSD (Funding Skew Detector) - Funding rate analysis
-    8. LMG (Liquidity Mirror Guard) - Cek 'Magnet Maut' (Jarak < 0.05% & RSI Ekstrim)
-    9. API (Absorption Pressure Index) - Cek siapa yang menyerap siapa (Agg vs RSI)
-    10. LTG (Liquidity Thinning Guard) - Cek apakah sisi atas/bawah kosong (Flow > 50x)
-    11. ICD (Internal Cross Detector) - Validasi apakah IER_EXIT adalah sandiwara Whale
-    12. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT
-    13. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE
-    14. IER (Institutional Exit Radar) - ANTI-OPN/BARD FALSE FLOW
-    15. RMG (RSI Momentum Guard) - ANTI-RIVER GRAVITY DECOY
-    16. FMV (Fake Magnet Vacuum) - KOMBINASI IER + RMG
-    17. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR
-    18. OFF (Overdrive Flow Filter) - ANTI-HUSDT TRAP
-    19. AEF (Aggressive Exhaustion Filter) - ANTI-PHA TRAP
-    20. PSR (Panic Saturation Reversal) - ANTI-HUMA DRIFT TRAP
-    21. AMV (Absorption Momentum Validator) - ANTI-HUMA TRAP
-    22. LGO (Liquidation Gravity Overdrive) - ANTI-RIVER NUCLEAR
-    23. MDV (Magnet Decay Validator) - ANTI-RIVER SPOOF
-    24. PAB (Passive Absorption Blackhole) - ANTI-SIREN TRAP
-    25. CFK (Catching Falling Knives) - ANTI-ROBO TRAP
-    26. MDD (Magnet Distance Dominance) - ANTI-RIVER TRAP
-    27. OVD (Orderbook Vacuum Defense) - ANTI-PHA TRAP
-    28. Trend Integrity (V69) - ANTI-PIPPIN/PHA/POWER
-    29. Gravity Deflection (OGD) - ANTI-PIPPIN TRAP (V68)
-    30. Zero Aggression Slaughter (ZAS) - ANTI-DEADSTICK (V67)
-    31. Absorption Validity Check (AVC) - ANTI-EXIT LIQUIDITY TRAP (V67)
-    32. Aggression-Mass Divergence (AMD) - ANTI-SPOOF PROTECTION (V65)
-    33. The DYL Particle (TDP) - ABSOLUTE OVERRIDE (V64)
-    34. Temporal Accumulation Index (ATI) - WHALE PATIENCE LOADING (V66)
-    35. Wall Erasure Detection (WED) - GRAVITY MANDATE (V63)
-    36. Magnet Wall Reversal (MWR) (V62)
-    37. The Ghost Whisperer (LVS) (V61)
-    38. The Absorption Shield (DTD) (V60)
+🎯 HIERARKI MUTLAK V87 (Filter Kriminalitas - GHOST IN THE SHELL EDITION):
+    0. SAD (Stealth Accumulation Detector) - ANTI-POWER/ROBO GHOSTING (V87) ⭐ BARU!
+    1. ZAS (Zero Aggression Squeeze) - ANTI-SELLER EXHAUSTION (V87) ⭐ BARU!
+    2. LCD (Liquidity Compression Detector) - ANTI-SIDEWAY FATIGUE (V87) ⭐ BARU!
+    3. LBD (Liquidity Bait Detector) - ANTI-FAKE MAGNET (V87) ⭐ BARU!
+    4. LIM (Liquidity Imbalance Momentum) - ANTI-WRONG TARGET (V87) ⭐ BARU!
+    5. ZGH (Zero Gravity Horizon) - ANTI-TRIA TRAP (V86)
+    6. ODF (Overbought Distribution Filter) - ANTI-TRIA TRAP (V86)
+    7. FGD (Fake Gravity Detector) - Cek 'Gravity Trap' sebelum LGO
+    8. LPS (Liquidity Path Score) - Optimal path liquidation prediction
+    9. LDF (Liquidity Density Filter) - Density comparison
+    10. WDF (Weak Dump Filter) - Validasi weak dump scenario
+    11. LLS (Long Liquidity Shield) - WMI based protection
+    12. FSD (Funding Skew Detector) - Funding rate analysis
+    13. LMG (Liquidity Mirror Guard) - Cek 'Magnet Maut' (Jarak < 0.05% & RSI Ekstrim)
+    14. API (Absorption Pressure Index) - Cek siapa yang menyerap siapa (Agg vs RSI)
+    15. LTG (Liquidity Thinning Guard) - Cek apakah sisi atas/bawah kosong (Flow > 50x)
+    16. ICD (Internal Cross Detector) - Validasi apakah IER_EXIT adalah sandiwara Whale
+    17. EZH (Execution Zone Hunter) - ANTI-RIVER MAGNETIC SLINGSHOT
+    18. WTD (Wash Trade Detector) - ANTI-KITE FALSE BRIDGE
+    19. IER (Institutional Exit Radar) - ANTI-OPN/BARD FALSE FLOW
+    20. RMG (RSI Momentum Guard) - ANTI-RIVER GRAVITY DECOY
+    21. FMV (Fake Magnet Vacuum) - KOMBINASI IER + RMG
+    22. PSV (Panic Sell Validator) - ANTI-OPN ENDLESS FLOOR
+    23. OFF (Overdrive Flow Filter) - ANTI-HUSDT TRAP
+    24. AEF (Aggressive Exhaustion Filter) - ANTI-PHA TRAP
+    25. PSR (Panic Saturation Reversal) - ANTI-HUMA DRIFT TRAP
+    26. AMV (Absorption Momentum Validator) - ANTI-HUMA TRAP
+    27. LGO (Liquidation Gravity Overdrive) - ANTI-RIVER NUCLEAR
+    28. MDV (Magnet Decay Validator) - ANTI-RIVER SPOOF
+    29. PAB (Passive Absorption Blackhole) - ANTI-SIREN TRAP
+    30. CFK (Catching Falling Knives) - ANTI-ROBO TRAP
+    31. MDD (Magnet Distance Dominance) - ANTI-RIVER TRAP
+    32. OVD (Orderbook Vacuum Defense) - ANTI-PHA TRAP
+    33. Trend Integrity (V69) - ANTI-PIPPIN/PHA/POWER
+    34. Gravity Deflection (OGD) - ANTI-PIPPIN TRAP (V68)
+    35. Zero Aggression Slaughter (ZAS) - ANTI-DEADSTICK (V67)
+    36. Absorption Validity Check (AVC) - ANTI-EXIT LIQUIDITY TRAP (V67)
+    37. Aggression-Mass Divergence (AMD) - ANTI-SPOOF PROTECTION (V65)
+    38. The DYL Particle (TDP) - ABSOLUTE OVERRIDE (V64)
+    39. Temporal Accumulation Index (ATI) - WHALE PATIENCE LOADING (V66)
+    40. Wall Erasure Detection (WED) - GRAVITY MANDATE (V63)
+    41. Magnet Wall Reversal (MWR) (V62)
+    42. The Ghost Whisperer (LVS) (V61)
+    43. The Absorption Shield (DTD) (V60)
 
 🧠 Kaidah Pamungkas V86:
     "RSI > 90 + OI naik + Agg rendah = DISTRIBUTION TOP! DILARANG LONG!"
@@ -199,16 +204,6 @@ import json
 from collections import deque
 import math
 
-# Import V87 Modules
-from v87_modules import (
-    ZeroAggressionSqueezeV87,
-    LiquidityCompressionDetectorV87,
-    LiquidityBaitDetectorV87,
-    LiquidityImbalanceMomentumV87,
-    StealthAccumulationDetectorV87,
-    ConflictResolverV87,
-    OutputFormatterV87
-)
 # Nonaktifkan SSL warning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -9699,3 +9694,119 @@ python script.py HUMAUSDT --loop   # Test V81 ICD (Internal Cross)
             main_v86()  # ← Diubah ke v86
     else:
         main_v86()  # ← Diubah ke v86
+# ================= V87 CONFIG =================
+ZAS_AGG_MAX = 0.0
+ZAS_FLOW_MAX = 1.5
+ZAS_RSI_MIN = 20
+ZAS_RSI_MAX = 65
+LCD_AGG_MAX = 0.05
+LCD_FLOW_MAX = 1.2
+LCD_OI_DELTA_MAX = 1.0
+LCD_RSI_MIN = 20
+LCD_RSI_MAX = 65
+LBD_SHORT_DIST_MAX = 0.5
+LBD_FLOW_MAX = 1.0
+LBD_AGG_MAX = 1.0
+LBD_OI_DELTA_MAX = 1.0
+SAD_AGG_MAX = 0.1
+SAD_CHANGE_MAX = 0.1
+SAD_WMI_MIN = 20
+SAD_OI_DELTA_MAX = 0.0
+
+class ZeroAggressionSqueezeV87:
+    @staticmethod
+    def analyze(agg_ratio: float, flow: float, rsi: float, oi_delta: float = None) -> Dict:
+        is_squeeze = agg_ratio <= ZAS_AGG_MAX and flow < ZAS_FLOW_MAX and ZAS_RSI_MIN < rsi < ZAS_RSI_MAX
+        if is_squeeze:
+            oi_info = f" OI Δ {oi_delta:.2f}% " if oi_delta is not None else ""
+            return {"is_squeeze": True, "bias": "LONG", "confidence": "SUPREME", 
+                    "reason": f"ZAS_ZERO_AGGRESSION: Agg {agg_ratio}x (NO SELLERS LEFT!) + Flow {flow:.2f}x + RSI {rsi:.1f}{oi_info}→ Squeeze +4-8% incoming!",
+                    "phase": "LIQUIDITY_FREEZE"}
+        return {"is_squeeze": False, "bias": "NEUTRAL", "confidence": "LOW", "reason": "Normal", "phase": "NORMAL"}
+
+class LiquidityCompressionDetectorV87:
+    @staticmethod
+    def analyze(agg_ratio: float, flow: float, oi_delta: float, rsi: float) -> Dict:
+        is_comp = agg_ratio <= LCD_AGG_MAX and flow < LCD_FLOW_MAX and abs(oi_delta) < LCD_OI_DELTA_MAX and LCD_RSI_MIN < rsi < LCD_RSI_MAX
+        if is_comp:
+            return {"is_compression": True, "bias": "LONG", "confidence": "HIGH",
+                    "reason": f"LCD_LIQUIDITY_COMPRESSION: Agg {agg_ratio}x + Flow {flow:.2f}x + OI Δ {oi_delta:.2f}% + RSI {rsi:.1f} → Market dikompres 1-12 jam sebelum eksplosi +5-12%!",
+                    "phase": "COMPRESSION_ZONE"}
+        return {"is_compression": False, "bias": "NEUTRAL", "confidence": "LOW", "reason": "Normal", "phase": "NORMAL"}
+
+class LiquidityBaitDetectorV87:
+    @staticmethod
+    def analyze(short_dist: float, long_dist: float, flow: float, agg_ratio: float, oi_delta: float) -> Dict:
+        is_bait = short_dist < LBD_SHORT_DIST_MAX and flow < LBD_FLOW_MAX and agg_ratio < LBD_AGG_MAX and abs(oi_delta) < LBD_OI_DELTA_MAX
+        if is_bait:
+            return {"is_bait": True, "bias": "SHORT", "confidence": "HIGH",
+                    "reason": f"LBD_LIQUIDITY_BAIT: Short Liq {short_dist:.2f}% (TERLALU DEKAT!) + Flow {flow:.2f}x + Agg {agg_ratio:.2f}x → FAKE MAGNET! MM akan pump dulu baru dump!",
+                    "phase": "BAIT_ZONE", "warning": "DO NOT ENTRY - WAIT FOR REAL SWEEP"}
+        return {"is_bait": False, "bias": "NEUTRAL", "confidence": "LOW", "reason": "Normal", "phase": "NORMAL"}
+
+class LiquidityImbalanceMomentumV87:
+    @staticmethod
+    def analyze(short_gradient: float, long_gradient: float, oi_velocity: float, agg_ratio: float) -> Dict:
+        safe_oi = max(abs(oi_velocity), 0.1)
+        safe_agg = max(agg_ratio, 0.1)
+        long_score = long_gradient * safe_oi / safe_agg
+        short_score = short_gradient * safe_oi / safe_agg
+        if long_score > short_score * 1.2:
+            return {"long_score": long_score, "short_score": short_score, "bias": "LONG",
+                    "reason": f"LIM_LONG_IMBALANCE: Long Score {long_score:.2f} >> Short {short_score:.2f} → Short liq imbalance building!",
+                    "imbalance_ratio": long_score/max(short_score,0.01), "phase": "IMBALANCE_BUILDING"}
+        elif short_score > long_score * 1.2:
+            return {"long_score": long_score, "short_score": short_score, "bias": "SHORT",
+                    "reason": f"LIM_SHORT_IMBALANCE: Short Score {short_score:.2f} >> Long {long_score:.2f} → Long liq imbalance building!",
+                    "imbalance_ratio": short_score/max(long_score,0.01), "phase": "IMBALANCE_BUILDING"}
+        return {"long_score": long_score, "short_score": short_score, "bias": "NEUTRAL",
+                "reason": f"LIM_BALANCED: Scores equal → Wait", "imbalance_ratio": 1.0, "phase": "BALANCED"}
+
+class StealthAccumulationDetectorV87:
+    @staticmethod
+    def analyze(agg_ratio: float, change_5m: float, oi_delta: float, wmi: float) -> Dict:
+        is_stealth = agg_ratio < SAD_AGG_MAX and abs(change_5m) < SAD_CHANGE_MAX and wmi > SAD_WMI_MIN and oi_delta < SAD_OI_DELTA_MAX
+        if is_stealth:
+            return {"is_active": True, "bias": "LONG", "confidence": "SUPREME",
+                    "reason": f"SAD_STEALTH: Agg {agg_ratio}x (Ghosting) + Change {change_5m:.2f}% + WMI {wmi:.1f}x + OI Δ {oi_delta:.2f}% → Whale Short Covering via Limit Buy! SPRING LOADING!",
+                    "phase": "STEALTH_PUMP_LOADING"}
+        return {"is_active": False, "bias": "NEUTRAL", "confidence": "LOW", "reason": "Normal", "phase": "NORMAL"}
+
+class ConflictResolverV87:
+    @staticmethod
+    def resolve(sad_result, zas_result, lcd_result, lbd_result, lim_result, zgh_result=None, odf_result=None, otf_result=None) -> Dict:
+        if sad_result and sad_result.get('is_active'):
+            return {"bias": "LONG", "confidence": "SUPREME", "reason": f"V87_SAD: {sad_result['reason']}", "phase": "STEALTH_PUMP_LOADING", "ttk_info": {"estimated_minutes": 540, "urgency": "LOADING"}}
+        if zas_result and zas_result.get('is_squeeze'):
+            return {"bias": "LONG", "confidence": "SUPREME", "reason": f"V87_ZAS: {zas_result['reason']}", "phase": "LIQUIDITY_FREEZE", "ttk_info": {"estimated_minutes": 90, "urgency": "BUILDING"}}
+        if lcd_result and lcd_result.get('is_compression'):
+            return {"bias": "LONG", "confidence": "HIGH", "reason": f"V87_LCD: {lcd_result['reason']}", "phase": "COMPRESSION_ZONE", "ttk_info": {"estimated_minutes": 360, "urgency": "COMPRESSING"}}
+        if lbd_result and lbd_result.get('is_bait'):
+            return {"bias": "NEUTRAL", "confidence": "HIGH", "reason": f"V87_LBD: {lbd_result['reason']} - WAIT!", "phase": "BAIT_ZONE", "ttk_info": {"estimated_minutes": 120, "urgency": "WAITING"}, "warning": "DO NOT ENTRY"}
+        if lim_result and lim_result.get('bias') != 'NEUTRAL':
+            ratio = lim_result.get('imbalance_ratio', 1.0)
+            return {"bias": lim_result['bias'], "confidence": "HIGH" if ratio > 2.0 else "MEDIUM", "reason": f"V87_LIM: {lim_result['reason']}", "phase": lim_result.get('phase', 'IMBALANCE_BUILDING'), "ttk_info": {"estimated_minutes": 30}}
+        if zgh_result and zgh_result.get('is_ceiling'):
+            return {"bias": zgh_result['bias'], "confidence": zgh_result['confidence'], "reason": f"V86_ZGH: {zgh_result['reason']}", "phase": "DISTRIBUTION_TOP"}
+        if odf_result and odf_result.get('active'):
+            return {"bias": odf_result['bias'], "confidence": "ABSOLUTE", "reason": f"V86_ODF: {odf_result['reason']}", "phase": "ZERO_GRAVITY_HORIZON"}
+        if otf_result and otf_result.get('is_trap'):
+            return {"bias": otf_result['bias'], "confidence": "ABSOLUTE", "reason": f"V85_OTF: {otf_result['reason']}", "phase": "ANTI_LIQUIDITY_TRAP"}
+        return {"bias": "NEUTRAL", "confidence": "LOW", "reason": "No V87/V86 signature", "phase": "NORMAL"}
+
+class OutputFormatterV87:
+    @staticmethod
+    def print_header():
+        print("\n" + "="*80)
+        print("🔥 BINANCE LIQUIDATION HUNTER V87 - GHOST IN THE SHELL EDITION")
+        print("="*80)
+        print("\n🎯 HIERARKI MUTLAK V87: SAD → ZAS → LCD → LBD → LIM → V86 Modules")
+        print("🧠 KAIDAH EMAS: Agg=0 TIDAK SELALU weak momentum - itu SELLER EXHAUSTION!")
+        print("="*80 + "\n")
+
+    @staticmethod
+    def format_signal(symbol: str, result: Dict) -> Dict:
+        return {"symbol": symbol, "timestamp": result.get('timestamp', ''), "bias": result.get('bias', 'NEUTRAL'),
+                "confidence": result.get('confidence', 'LOW'), "reason": result.get('reason', ''),
+                "phase": result.get('phase', 'NORMAL'), "entry_status": "READY" if result.get('confidence') in ['SUPREME','ABSOLUTE','HIGH'] else "WAIT",
+                "hold_status": "HOLD POSITION" if result.get('confidence') in ['SUPREME','ABSOLUTE'] else "NO POSITION"}
