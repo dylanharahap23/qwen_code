@@ -207,6 +207,62 @@ import math
 # Nonaktifkan SSL warning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ================= V88: WHALE DOMINANCE INDEX (WDI) =================
+class WhaleDominanceV88:
+    """
+    V88: Menghancurkan manipulasi LIM.
+    Jika WMI > 90 (Massive Short Pool) DAN Jarak Short < 2.0%,
+    maka MM TIDAK AKAN DUMP. MM bakal narik harga secara linear (Squeeze).
+    Kaidah: MM lebih milih makan 'Ikan Paus' (WMI Tinggi) daripada 'Ikan Teri' (Imbalance Kecil).
+    """
+    @staticmethod
+    def analyze(wmi: float, short_dist: float, oi_delta: float) -> Dict:
+        if wmi > 90 and short_dist < 2.0:
+            # Jika OI Turun saat harga mau naik = Short Covering (Bensin Squeeze)
+            if oi_delta < 0:
+                return {
+                    "is_veto": True,
+                    "bias": "LONG",
+                    "reason": f"WDI_VETO: WMI {wmi}x (SHORT_LIQ_WHALE) terdeteksi! Jarak {short_dist}% terlalu lezat untuk MM. OI turun ({oi_delta}%) adalah bukti SHORT COVERING. DILARANG SHORT!"
+                }
+        return {"is_veto": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V88: CONFLICT RESOLVER HIERARCHY (FINAL PATCH) =================
+class ConflictResolverV88:
+    """
+    URUTAN PRIORITAS MUTLAK V88:
+    1. WDI (Whale Dominance) -> Hak Veto Tertinggi (Anti-RIVER Trap) ⭐ NEW!
+    2. ZGH (Zero Gravity) -> Anti-TRIA (Pucuk 0.00%)
+    3. OTF (Oversold Trap) -> Anti-UAI (Dasar Neraka)
+    4. SAD (Stealth Accumulation) -> Anti-Sideway (Agg 0.00)
+    5. LIM (Imbalance Momentum) -> Sinyal serang jika WMI Normal
+    """
+    @staticmethod
+    def resolve(wdi, zgh, otf, sad, lim, sniper=None):
+        # 🐳 1. WHALE DOMINANCE VETO (Raja V88)
+        if wdi['is_veto']:
+            return {"bias": wdi['bias'], "confidence": "ABSOLUTE", "reason": wdi['reason'], "phase": "WHALE_HUNT"}
+
+        # 🔴 2. PLAFON CHECK
+        if zgh['is_ceiling']:
+            return {"bias": "SHORT", "confidence": "ABSOLUTE", "reason": zgh['reason']}
+
+        # 🟢 3. DASAR CHECK
+        if otf['is_trap']:
+            return {"bias": "LONG", "confidence": "ABSOLUTE", "reason": otf['reason']}
+
+        # 🕵️‍♂️ 4. STEALTH CHECK
+        if sad['is_active']:
+            return {"bias": "LONG", "confidence": "SUPREME", "reason": sad['reason']}
+
+        # ⚖️ 5. LIQUIDITY IMBALANCE (Hanya jika WMI netral < 90)
+        if abs(lim.get('imbalance_ratio', 0)) > 5:
+            return {"bias": lim['bias'], "confidence": "HIGH", "reason": lim['reason']}
+
+        return {"bias": "NEUTRAL", "confidence": "LOW", "reason": "No Whale Signature detected."}
+
+
 # ================= CONFIG V83 (THE LIQUIDITY SNIPER) =================
 # 🔥 V83 NEW MODULES - MICROSECOND LIQUIDITY RADAR
 
@@ -8260,10 +8316,10 @@ class OutputFormatterV87:
     @staticmethod
     def print_header():
         print("\n" + "="*80)
-        print("🔥 BINANCE LIQUIDATION HUNTER V87 - GHOST IN THE SHELL EDITION")
+        print("🔥 BINANCE LIQUIDATION HUNTER V88 - WHALE DOMINANCE EDITION")
         print("="*80)
-        print("\n🎯 HIERARKI MUTLAK V87: SAD → ZAS → LCD → LBD → LIM → V86 Modules")
-        print("🧠 KAIDAH EMAS: Agg=0 TIDAK SELALU weak momentum - itu SELLER EXHAUSTION!")
+        print("\n🎯 HIERARKI MUTLAK V88: WDI → ZGH → OTF → SAD → LIM")
+        print("🐳 KAIDAH EMAS V88: 'Jangan pernah melawan WMI di atas 90 jika jaraknya kurang dari 2%.'")
         print("="*80 + "\n")
 
     @staticmethod
@@ -8351,6 +8407,13 @@ class OutputFormatterV87:
 
         if result['entry_ready']:
             print(f"\n{'✅'*10} ENTRY READY! {'✅'*10}")
+
+        # V88 WDI Metrics (TERTINGGI!)
+        print(f"\n{'='*40}")
+        print("🐋 V88 WHALE DOMINANCE INDEX (WDI):")
+        print(f"🐋 WDI: {'ACTIVE (VETO!)' if result.get('wdi', {}).get('is_veto') else 'INACTIVE'}")
+        if result.get('wdi', {}).get('is_veto'):
+            print(f"   📌 {result['wdi']['reason']}")
 
         # V87 Metrics
         print(f"\n{'='*40}")
@@ -8454,6 +8517,10 @@ class BinanceAnalyzerV87:
         
         # V87: New Conflict Resolver (PRIORITAS TERTINGGI!)
         self.conflict_resolver_v87 = ConflictResolverV87()
+        
+        # V88: NEW MODULES - WHALE DOMINANCE INDEX
+        self.wdi = WhaleDominanceV88()  # V88 baru!
+        self.conflict_resolver_v88 = ConflictResolverV88()  # V88 baru!
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
@@ -8644,6 +8711,13 @@ class BinanceAnalyzerV87:
             # WMI Calculation
             wmi_ratio = self.fetcher.calculate_wmi(liq['short_dist'], liq['long_dist'],
                                                 liq['short_vol'], liq['long_vol'])
+
+            # ================= V88: WHALE DOMINANCE INDEX =================
+            wdi_result = self.wdi.analyze(
+                wmi=wmi_ratio, 
+                short_dist=liq['short_dist'], 
+                oi_delta=oi_delta_5m
+            )
 
             # === V82: Fuel Ignition Detector (FID) ===
             fid_result = self.fid.analyze(oi_delta_5m, rsi6, wmi_ratio)
@@ -8995,30 +9069,19 @@ class BinanceAnalyzerV87:
 
             vbt_result = self.vbt.analyze(price, self.state_mgr.price_history, volume_ratio)
 
-            # 🔥 PRIORITAS UTAMA: Gunakan ConflictResolverV87 untuk keputusan final!
-            # PASTIKAN SEMUA V87 RESULTS DIKIRIM KE RESOLVER!
-            final_v87 = self.conflict_resolver_v87.resolve(
-                sad_result=sad_result,
-                zas_result=zas_result,
-                lcd_result=lcd_result,
-                lbd_result=lbd_result,
-                lim_result=lim_result,
-                # Sertakan modul V86/V85 sebagai fallback
-                zgh_result=zgh_result,
-                odf_result=odf_result,
-                otf_result=otf_result,
-                ier_result=ier_result,
-                rmg_result=rmg_result,
-                fmv_result=fmv_result,
-                nzs_result=nzs_result,
-                pfd_result=pfd_result,
-                fed_v85_result=fed_v85_result,
-                lrd_result=lrd_result
+            # 🔥 PRIORITAS UTAMA V88: Gunakan ConflictResolverV88 untuk keputusan final!
+            final_decision = self.conflict_resolver_v88.resolve(
+                wdi=wdi_result,
+                zgh=zgh_result,
+                otf=otf_result,
+                sad=sad_result,
+                lim=lim_result,
+                sniper=None  # optional
             )
 
-            entry_ready = self.state_mgr.update_entry(final_v87['bias'])
-            if entry_ready and self.state_mgr.can_enter(final_v87['bias'], market_phase['phase']):
-                self.state_mgr.execute_entry(final_v87['bias'], price, rsi6)
+            entry_ready = self.state_mgr.update_entry(final_decision['bias'])
+            if entry_ready and self.state_mgr.can_enter(final_decision['bias'], market_phase['phase']):
+                self.state_mgr.execute_entry(final_decision['bias'], price, rsi6)
                 entry_status = "✅ READY TO ENTRY!"
             else:
                 entry_status = f"⏳ WAITING ({len(self.state_mgr.entry_signals)}/{CONFIRM_DEFAULT})"
@@ -9030,7 +9093,7 @@ class BinanceAnalyzerV87:
             else:
                 hold_status = "🔓 HOLD FREE"
 
-            ttk_info = final_v87.get('ttk_info', {"estimated_minutes": 45, "urgency": "PREPARING", "fuel_ready": "NO"})
+            ttk_info = final_decision.get('ttk_info', {"estimated_minutes": 45, "urgency": "PREPARING", "fuel_ready": "NO"})
 
             result = {
                 "timestamp": datetime.now().strftime("%H:%M:%S.%f")[:-3],
@@ -9464,15 +9527,22 @@ class BinanceAnalyzerV87:
                 "energy_score": energy['score'],
                 "energy_type": energy['type'],
                 "mpe_bias": mpe_result['bias'],
-                # Final Decision from V87
-                "bias": final_v87['bias'],
-                "confidence": final_v87['confidence'],
-                "reason": final_v87['reason'],
-                "phase_v87": final_v87.get('phase', 'NORMAL'),
+                # Final Decision from V88
+                "bias": final_decision['bias'],
+                "confidence": final_decision['confidence'],
+                "reason": final_decision['reason'],
+                "phase_v88": final_decision.get('phase', 'NORMAL'),
                 "entry_status": entry_status,
                 "hold_status": hold_status,
                 "entry_ready": entry_ready,
                 "accumulation_detected": accumulation_detected
+            }
+
+            # Tambahkan V88 WDI results ke output
+            result["wdi"] = {
+                "is_veto": wdi_result['is_veto'],
+                "bias": wdi_result['bias'],
+                "reason": wdi_result['reason']
             }
 
             # Tambahkan V86 results ke output
