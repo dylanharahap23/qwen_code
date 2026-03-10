@@ -198,6 +198,17 @@ import time
 import json
 from collections import deque
 import math
+
+# Import V87 Modules
+from v87_modules import (
+    ZeroAggressionSqueezeV87,
+    LiquidityCompressionDetectorV87,
+    LiquidityBaitDetectorV87,
+    LiquidityImbalanceMomentumV87,
+    StealthAccumulationDetectorV87,
+    ConflictResolverV87,
+    OutputFormatterV87
+)
 # Nonaktifkan SSL warning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
