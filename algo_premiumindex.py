@@ -392,6 +392,138 @@ class ConflictResolverV92:
         }
 
 
+# ================= V93: OI DRAIN CONDEMNATION (ODC) - ANTI-PLAY TRAP =================
+class OIDrainCondemnationV93:
+    """
+    🔥 V93: OI DRAIN CONDEMNATION - ANTI-EVENT HORIZON BAIT 🔥
+    
+    Kasus PLAYUSDT:
+    - WMI 99.8x (Magnetic Singularity) → bot kira LONG
+    - OI Drop -3.67% + RSI 93.6 → ternyata SHORT -9%
+    
+    Prinsip: Singularitas WMI 99 hanya valid jika bensin (OI) stabil atau naik.
+    Jika OI dikuras habis (>3%) di puncak RSI (>90), itu bukan squeeze, itu FLUSH!
+    """
+    @staticmethod
+    def analyze(oi_delta: float, rsi: float, wmi: float) -> Dict:
+        if oi_delta < ODC_OI_DRAIN_THRESHOLD and rsi > ODC_RSI_CEILING:
+            return {
+                "active": True,
+                "bias": "SHORT",
+                "reason": f"ODC_VACUUM_FLUSH: OI Amblas {oi_delta:.2f}% (DRAIN) di RSI {rsi:.1f}. "
+                         f"MM cabut jaring! WMI {wmi:.1f}x adalah umpan palsu. "
+                         f"Harga akan terjun bebas (Flush) ke kolam Long bawah!"
+            }
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V93: ORDERBOOK PULL DETECTOR (OPD) - BARU! =================
+class OrderbookPullDetectorV93:
+    """
+    🔥 V93: ORDERBOOK PULL DETECTOR - ANTI-LIQUIDITY VACUUM FLUSH 🔥
+    
+    Deteksi ketika Whale menarik bid wall (support) secara tiba-tiba.
+    Ini lebih penting dari WMI! Karena manipulasi orderbook adalah senjata utama HFT.
+    
+    Kasus PLAY: BID WALL HILANG + OI drop = vacuum flush
+    """
+    @staticmethod
+    def analyze(bid_vacuum_speed: float, ask_vacuum_speed: float, oi_delta: float) -> Dict:
+        # Jika bid hilang lebih cepat dari ask (2x lipat) dan OI drop
+        if bid_vacuum_speed > ask_vacuum_speed * OPD_BID_VACUUM_RATIO and oi_delta < OPD_OI_DROP_THRESHOLD:
+            return {
+                "active": True,
+                "bias": "SHORT",
+                "reason": f"OPD_VACUUM_PULL: Bid liquidity ditarik ({bid_vacuum_speed:.2f} > {ask_vacuum_speed:.2f}x) "
+                         f"dan OI drop {oi_delta:.2f}%. Whale cabut jaring support! Market kehilangan penahan → gravity dump!"
+            }
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V93: WMI SINGULARITY EXHAUSTION FILTER - BARU! =================
+class WMISingularityExhaustionV93:
+    """
+    🔥 V93: WMI SINGULARITY EXHAUSTION - ANTI-TRAP DETECTOR 🔥
+    
+    WMI 99 sebenarnya tidak selalu squeeze. Ada dua kondisi:
+    1. WMI 99 + OI stabil → squeeze
+    2. WMI 99 + OI crash → trap (exhausted)
+    
+    Kasus PLAY: WMI 99.8 + OI -3.67% + RSI 93.6 = exhausted!
+    """
+    @staticmethod
+    def analyze(wmi: float, oi_delta: float, rsi: float) -> Dict:
+        if wmi > WMI_EXHAUST_THRESHOLD and oi_delta < WMI_EXHAUST_OI_THRESHOLD and rsi > WMI_EXHAUST_RSI_THRESHOLD:
+            return {
+                "active": True,
+                "bias": "SHORT",
+                "reason": f"WMI_EXHAUSTED: Singularitas WMI {wmi:.1f}x kehilangan bahan bakar! "
+                         f"OI crash {oi_delta:.2f}% di RSI {rsi:.1f}. Whale exit sebelum squeeze! FLUSH INCOMING!"
+            }
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V93: CASCADE TIME ESTIMATOR - BARU! =================
+class CascadeTimeEstimatorV93:
+    """
+    🔥 V93: CASCADE TIME ESTIMATOR - JALUR TERCEPAT UNTUK CASCADE 🔥
+    
+    Market maker sering memilih target berdasarkan waktu cascade, bukan jarak.
+    Formula: cascade_time = liquidity_size / orderbook_depth
+    
+    Jika orderbook kosong, cascade_time mendekati 0 (instan)!
+    
+    Kasus PLAY: Orderbook kosong + long liq besar = cascade cepat ke bawah
+    """
+    @staticmethod
+    def estimate(liq_size: float, orderbook_depth: float, liq_distance: float) -> Dict:
+        # Hindari division by zero
+        safe_depth = max(orderbook_depth, CASCADE_MIN_DEPTH)
+        
+        # Estimasi waktu cascade (dalam satuan relatif)
+        cascade_time = liq_size / safe_depth
+        
+        # Faktor jarak (semakin dekat, semakin cepat)
+        distance_factor = 1 / max(liq_distance, 0.1)
+        effective_time = cascade_time * distance_factor
+        
+        return {
+            "cascade_time": round(cascade_time, 2),
+            "effective_time": round(effective_time, 2),
+            "is_fast": effective_time < 1.0
+        }
+    
+    @staticmethod
+    def compare_paths(
+        long_liq_size: float, short_liq_size: float,
+        long_dist: float, short_dist: float,
+        bid_depth: float, ask_depth: float
+    ) -> Dict:
+        """
+        Membandingkan dua jalur: cascade ke atas (short liq) vs ke bawah (long liq)
+        """
+        # Cascade time ke atas (butuh ask depth sebagai hambatan)
+        up_time = CascadeTimeEstimatorV93.estimate(short_liq_size, ask_depth, short_dist)
+        
+        # Cascade time ke bawah (butuh bid depth sebagai hambatan)
+        down_time = CascadeTimeEstimatorV93.estimate(long_liq_size, bid_depth, long_dist)
+        
+        if down_time["effective_time"] < up_time["effective_time"]:
+            return {
+                "bias": "SHORT",
+                "reason": f"CASCADE_TIME: Down faster ({down_time['effective_time']:.2f}) vs Up ({up_time['effective_time']:.2f}). MM pilih cascade ke bawah!",
+                "down_time": down_time["effective_time"],
+                "up_time": up_time["effective_time"]
+            }
+        else:
+            return {
+                "bias": "LONG",
+                "reason": f"CASCADE_TIME: Up faster ({up_time['effective_time']:.2f}) vs Down ({down_time['effective_time']:.2f}). MM pilih squeeze ke atas!",
+                "down_time": down_time["effective_time"],
+                "up_time": up_time["effective_time"]
+            }
+
+
 # ================= V88: WHALE DOMINANCE INDEX (WDI) =================
 class WhaleDominanceV88:
     """
@@ -556,6 +688,176 @@ class ConflictResolverV91:
             "bias": "NEUTRAL",
             "confidence": "LOW",
             "reason": "Market in Equilibrium. No strong signal detected.",
+            "phase": "NEUTRAL"
+        }
+
+
+# ================= V93: CONFLICT RESOLVER (THE ULTIMATE HIERARCHY) =================
+class ConflictResolverV93:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V93 (DENGAN VACUUM FLUSH DETECTORS) 🔥
+    
+    HIERARKI FINAL:
+    1️⃣ MARKET PHASE (V91) - Konteks market (paling penting!)
+    2️⃣ ODC (OI Drain Condemnation) (V93) ⭐ - OI >3% drop + RSI >90 → FLUSH!
+    3️⃣ OPD (Orderbook Pull Detector) (V93) ⭐ - Bid wall hilang + OI drop → VACUUM!
+    4️⃣ WMI EXHAUST (Singularity Exhaustion) (V93) ⭐ - WMI 99 + OI crash → TRAP!
+    5️⃣ CASCADE TIME (V93) ⭐ - Jalur cascade tercepat
+    6️⃣ EXECUTION ENERGY (V92) - Jalur termurah
+    7️⃣ AGGRESSION DEATH (V92) - Market mati
+    8️⃣ LGD (Void Drain) (V91) - Void trap
+    9️⃣ WSC (Whale Singularity) (V89)
+    🔟 SAT (Liquidity Saturation) (V90)
+    1️⃣1️⃣ PET (Position Expansion Trap) (V90)
+    1️⃣2️⃣ ZGH (Zero Gravity) (V86)
+    1️⃣3️⃣ OTF (Oversold Trap) (V85)
+    1️⃣4️⃣ LIM (Liquidity Imbalance) (V87)
+    """
+    @staticmethod
+    def resolve(
+        phase_res: Dict,           # V91 Market Phase
+        odc_res: Dict,              # V93 OI Drain Condemnation ⭐
+        opd_res: Dict,              # V93 Orderbook Pull Detector ⭐
+        wmi_exhaust_res: Dict,      # V93 WMI Exhaustion ⭐
+        cascade_res: Dict,          # V93 Cascade Time Estimator ⭐
+        energy_res: Dict,           # V92 Execution Energy
+        death_res: Dict,            # V92 Aggression Death
+        lgd_res: Dict,              # V91 Liquidity Gravity Drain
+        wsc_res: Dict,              # V89 Whale Singularity
+        sat_res: Dict,              # V90 Liquidity Saturation
+        pet_res: Dict,              # V90 Position Expansion Trap
+        zgh_res: Dict,              # V86 Zero Gravity Horizon
+        otf_res: Dict,              # V85 Oversold Trap Filter
+        lim_res: Dict               # V87 Liquidity Imbalance
+    ) -> Dict:
+        
+        # 🎯 1. MARKET PHASE VETO (Raja - Paling Penting!)
+        if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
+            return {
+                "bias": phase_res.get('signal', phase_res['bias']),
+                "confidence": phase_res['priority'],
+                "reason": f"PHASE_OVERRIDE: {phase_res['reason']}",
+                "phase": phase_res['phase']
+            }
+        
+        # 💧 2. OI DRAIN CONDEMNATION (V93) - PLAY type flush
+        if odc_res.get('active'):
+            return {
+                "bias": odc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_ODC: {odc_res['reason']}",
+                "phase": "VACUUM_FLUSH"
+            }
+        
+        # 🧲 3. ORDERBOOK PULL DETECTOR (V93) - Bid wall hilang
+        if opd_res.get('active'):
+            return {
+                "bias": opd_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_OPD: {opd_res['reason']}",
+                "phase": "LIQUIDITY_VACUUM"
+            }
+        
+        # 💀 4. WMI SINGULARITY EXHAUSTION (V93) - WMI 99 trap
+        if wmi_exhaust_res.get('active'):
+            return {
+                "bias": wmi_exhaust_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V93_WMI_EXHAUST: {wmi_exhaust_res['reason']}",
+                "phase": "SINGULARITY_TRAP"
+            }
+        
+        # ⏱️ 5. CASCADE TIME ESTIMATOR (V93) - Jalur tercepat
+        if cascade_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": cascade_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V93_CASCADE: {cascade_res['reason']}",
+                "phase": "CASCADE_PATH"
+            }
+        
+        # ⚡ 6. EXECUTION ENERGY (V92)
+        if energy_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": energy_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V92_ENERGY: {energy_res['reason']}",
+                "phase": "EXECUTION_ENERGY"
+            }
+        
+        # 💀 7. AGGRESSION DEATH (V92)
+        if death_res.get('active'):
+            # Death filter butuh data gravity - fallback ke LGD
+            pass
+        
+        # 🕳️ 8. LIQUIDITY GRAVITY DRAIN (V91)
+        if lgd_res.get('active'):
+            return {
+                "bias": lgd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V91_LGD: {lgd_res['reason']}",
+                "phase": "VOID_DRAIN"
+            }
+        
+        # 🌌 9. WHALE SINGULARITY (V89)
+        if wsc_res.get('is_active'):
+            return {
+                "bias": wsc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V89_WSC: {wsc_res['reason']}",
+                "phase": "SINGULARITY_EXECUTION"
+            }
+        
+        # ⚡ 10. LIQUIDITY SATURATION (V90)
+        if sat_res.get('active'):
+            return {
+                "bias": sat_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_SAT: {sat_res['reason']}",
+                "phase": "SATURATION_SQUEEZE"
+            }
+        
+        # 🔥 11. POSITION EXPANSION TRAP (V90)
+        if pet_res.get('active'):
+            return {
+                "bias": pet_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_PET: {pet_res['reason']}",
+                "phase": "EXPANSION_TRAP"
+            }
+        
+        # 🔴 12. ZERO GRAVITY HORIZON (V86)
+        if zgh_res.get('is_ceiling'):
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "reason": f"V86_ZGH: {zgh_res['reason']}",
+                "phase": "ZERO_GRAVITY"
+            }
+        
+        # 🟢 13. OVERSOLD TRAP (V85)
+        if otf_res.get('is_trap'):
+            return {
+                "bias": "LONG" if otf_res.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND' else otf_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V85_OTF: {otf_res['reason']}",
+                "phase": "OVERSOLD_TRAP"
+            }
+        
+        # ⚖️ 14. LIQUIDITY IMBALANCE (V87)
+        if lim_res.get('bias') != "NEUTRAL" and lim_res.get('imbalance_ratio', 1.0) > 10:
+            return {
+                "bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V87_LIM: {lim_res['reason']}",
+                "phase": "IMBALANCE_MOMENTUM"
+            }
+        
+        # Fallback
+        return {
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected.",
             "phase": "NEUTRAL"
         }
 
@@ -8224,6 +8526,24 @@ PET_AGG_MAX = 1.0                    # Aggressive ratio < 1.0 (rendah = limit bu
 PET_FLOW_MIN = 2.0                   # Trade flow > 2.0
 
 
+# ================= V93 CONFIG - LIQUIDITY VACUUM DETECTOR =================
+# ODC - OI Drain Condemnation (Saran 1 - PLAYUSDT)
+ODC_OI_DRAIN_THRESHOLD = -3.0          # OI amblas > 3%
+ODC_RSI_CEILING = 90                   # RSI > 90
+
+# OPD - Orderbook Pull Detector (Saran 2 - Baru!)
+OPD_BID_VACUUM_RATIO = 2.0              # bid_vacuum > ask_vacuum * 2
+OPD_OI_DROP_THRESHOLD = -2.0             # OI drop < -2%
+
+# WMI Exhaustion Filter (Saran 2 - Baru!)
+WMI_EXHAUST_THRESHOLD = 95               # WMI > 95
+WMI_EXHAUST_OI_THRESHOLD = -3.0          # OI < -3%
+WMI_EXHAUST_RSI_THRESHOLD = 85           # RSI > 85
+
+# Cascade Time Estimator (Saran 2 - Baru!)
+CASCADE_MIN_DEPTH = 0.1                   # Minimal orderbook depth
+
+
 # ================= V87: ZERO AGGRESSION SQUEEZE (ZAS) =================
 class ZeroAggressionSqueezeV87:
     """
@@ -9038,6 +9358,19 @@ class OutputFormatterV87:
         if result.get('aggression_death', {}).get('active'):
             print(f"💀 DEATH: ACTIVE - {result['aggression_death']['reason']}")
         
+        # ===== V93 NEW MODULES - THE VACUUM FLUSH DETECTORS =====
+        if result.get('odc', {}).get('active'):
+            print(f"💧 ODC: ACTIVE - {result['odc']['reason']}")
+
+        if result.get('opd', {}).get('active'):
+            print(f"🧲 OPD: ACTIVE - {result['opd']['reason']}")
+
+        if result.get('wmi_exhaust', {}).get('active'):
+            print(f"💀 WMI_EXHAUST: ACTIVE - {result['wmi_exhaust']['reason']}")
+
+        if result.get('cascade', {}).get('bias') != 'NEUTRAL':
+            print(f"⏱️ CASCADE: {result['cascade']['bias']} - {result['cascade']['reason']}")
+        
         # V82
         if result.get('lmg', {}).get('is_death_magnet'):
             print(f"💀 LMG: ACTIVE - {result['lmg']['reason']}")
@@ -9140,6 +9473,13 @@ class BinanceAnalyzerV87:
         self.energy_v92 = ExecutionEnergyV92()     # V92 baru! ⭐
         self.aggression_death = AggressionDeathV92() # V92 baru! ⭐
         self.conflict_resolver_v92 = ConflictResolverV92()  # V92 baru! ⭐
+        
+        # ===== V93: NEW MODULES - THE VACUUM FLUSH DETECTORS =====
+        self.odc = OIDrainCondemnationV93()                 # V93 baru! (Saran 1 - PLAY)
+        self.opd = OrderbookPullDetectorV93()                # V93 baru! (Saran 2)
+        self.wmi_exhaust = WMISingularityExhaustionV93()     # V93 baru! (Saran 2)
+        self.cascade_time = CascadeTimeEstimatorV93()        # V93 baru! (Saran 2)
+        self.conflict_resolver_v93 = ConflictResolverV93()   # V93 baru! ⭐
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
@@ -9764,18 +10104,58 @@ class BinanceAnalyzerV87:
                 flow=trades['ratio']
             )
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V92 (ENERGY + DEATH + LGD)
-            final_decision = self.conflict_resolver_v92.resolve(
+            # ================= V93: OI DRAIN CONDEMNATION (ODC) =================
+            odc_result = self.odc.analyze(
+                oi_delta=oi_delta_5m,
+                rsi=rsi6,
+                wmi=wmi_ratio
+            )
+
+            # ================= V93: ORDERBOOK PULL DETECTOR (OPD) =================
+            # Gunakan ovs_result untuk mendapatkan vacuum speeds
+            opd_result = self.opd.analyze(
+                bid_vacuum_speed=ovs_result.get('bid_vacuum_speed', 0),
+                ask_vacuum_speed=ovs_result.get('ask_vacuum_speed', 0),
+                oi_delta=oi_delta_5m
+            )
+
+            # ================= V93: WMI SINGULARITY EXHAUSTION =================
+            wmi_exhaust_result = self.wmi_exhaust.analyze(
+                wmi=wmi_ratio,
+                oi_delta=oi_delta_5m,
+                rsi=rsi6
+            )
+
+            # ================= V93: CASCADE TIME ESTIMATOR =================
+            # Dapatkan orderbook depth dari OVS atau dari data orderbook
+            bid_depth = ovs_result.get('current_bid_vol', bid_vol)
+            ask_depth = ovs_result.get('current_ask_vol', ask_vol)
+
+            cascade_result = self.cascade_time.compare_paths(
+                long_liq_size=liq['long_vol'],
+                short_liq_size=liq['short_vol'],
+                long_dist=liq['long_dist'],
+                short_dist=liq['short_dist'],
+                bid_depth=bid_depth,
+                ask_depth=ask_depth
+            )
+            
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V93 (VACUUM FLUSH DETECTORS)
+            final_decision = self.conflict_resolver_v93.resolve(
                 phase_res=phase_result,        # V91 Market Phase - PALING PENTING!
-                energy_res=energy_result,       # V92 Execution Energy ⭐ BARU!
-                death_res=death_result,         # V92 Aggression Death ⭐ BARU!
-                lgd_res=lgd_result,             # V91 Liquidity Gravity Drain ⭐ BARU!
-                wsc_res=wsc_result,            # V89 Whale Singularity
-                sat_res=sat_result,            # V90 Liquidity Saturation
-                pet_res=pet_result,            # V90 Position Expansion Trap
-                zgh_res=zgh_result,            # V86 Zero Gravity Horizon
-                otf_res=otf_result,            # V85 Oversold Trap Filter
-                lim_res=lim_result             # V87 Liquidity Imbalance
+                odc_res=odc_result,             # V93 OI Drain Condemnation ⭐
+                opd_res=opd_result,             # V93 Orderbook Pull Detector ⭐
+                wmi_exhaust_res=wmi_exhaust_result, # V93 WMI Exhaustion ⭐
+                cascade_res=cascade_result,     # V93 Cascade Time Estimator ⭐
+                energy_res=energy_result,       # V92 Execution Energy
+                death_res=death_result,         # V92 Aggression Death
+                lgd_res=lgd_result,             # V91 Liquidity Gravity Drain
+                wsc_res=wsc_result,             # V89 Whale Singularity
+                sat_res=sat_result,             # V90 Liquidity Saturation
+                pet_res=pet_result,             # V90 Position Expansion Trap
+                zgh_res=zgh_result,             # V86 Zero Gravity Horizon
+                otf_res=otf_result,             # V85 Oversold Trap Filter
+                lim_res=lim_result              # V87 Liquidity Imbalance
             )
 
             entry_ready = self.state_mgr.update_entry(final_decision['bias'])
@@ -10304,6 +10684,32 @@ class BinanceAnalyzerV87:
                 "active": death_result.get('active', False),
                 "bias": death_result.get('bias', 'NEUTRAL'),
                 "reason": death_result.get('reason', '')
+            }
+
+            # ===== V93 RESULTS - THE VACUUM FLUSH DETECTORS =====
+            result["odc"] = {
+                "active": odc_result.get('active', False),
+                "bias": odc_result.get('bias', 'NEUTRAL'),
+                "reason": odc_result.get('reason', '')
+            }
+
+            result["opd"] = {
+                "active": opd_result.get('active', False),
+                "bias": opd_result.get('bias', 'NEUTRAL'),
+                "reason": opd_result.get('reason', '')
+            }
+
+            result["wmi_exhaust"] = {
+                "active": wmi_exhaust_result.get('active', False),
+                "bias": wmi_exhaust_result.get('bias', 'NEUTRAL'),
+                "reason": wmi_exhaust_result.get('reason', '')
+            }
+
+            result["cascade"] = {
+                "bias": cascade_result.get('bias', 'NEUTRAL'),
+                "reason": cascade_result.get('reason', ''),
+                "up_time": cascade_result.get('up_time', 0),
+                "down_time": cascade_result.get('down_time', 0)
             }
 
             return result
