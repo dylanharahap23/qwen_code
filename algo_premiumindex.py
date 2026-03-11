@@ -220,6 +220,28 @@ PBD_WMI_MAX = 80                  # WMI tidak ekstrim (<80)
 OID_OI_THRESHOLD = 3.0            # OI > 3%
 OID_PRICE_DROP_THRESHOLD = -1.0    # Price drop > 1%
 
+# ================= V83: LIQUIDITY SNIPER CONFIG =================
+LHG_CASCADE_MULTIPLIER = 5.0               # Multiplier untuk cascade detection
+OVS_TIME_WINDOW_MS = 100                    # Time window dalam milliseconds ⭐ INI YANG HILANG!
+OVS_VACUUM_THRESHOLD = 0.3                  # Threshold vacuum speed (>0.3 = fast vacuum)
+ADV_SPIKE_THRESHOLD = 2.0                   # Velocity spike threshold (>2x = whale attack)
+ADV_HISTORY_SIZE = 10                        # History size untuk velocity calculation
+TBD_BURST_COUNT_MIN = 40                     # Minimal trades untuk burst detection
+TBD_TIME_WINDOW_MS = 200                      # Time window dalam milliseconds
+TBD_RETAIL_MIN = 10                           # Minimal trades untuk retail
+TBD_NOISE_MAX = 9                             # Maksimal trades untuk noise
+OIA_ACCEL_THRESHOLD = 1.0                     # Threshold untuk OI acceleration
+OIA_TIME_WINDOW_MS = 1000                      # Time window dalam milliseconds
+LSP_SWEEP_THRESHOLD = 0.7                      # Threshold untuk sweep probability (>0.7 = sweep likely)
+V83_LONG_SCORE_THRESHOLD = 65                  # Threshold untuk LONG sniper score
+V83_SHORT_SCORE_THRESHOLD = 65                 # Threshold untuk SHORT sniper score
+
+# ================= V82: AGGRESSION DIVERGENCE CONFIG =================
+API_AGGRESSION_MIN = 5.0
+API_RSI_BULL_MAX = 50
+API_RSI_BEAR_MIN = 50
+API_PRICE_CHANGE_MAX = 0.1
+
 # ================= V91: LIQUIDITY GRAVITY DRAIN (LGD) - ANTI-VOID TRAP =================
 class LiquidityGravityDrainV91:
     """
