@@ -207,6 +207,191 @@ import math
 # Nonaktifkan SSL warning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ================= V91: LIQUIDITY GRAVITY DRAIN (LGD) - ANTI-VOID TRAP =================
+class LiquidityGravityDrainV91:
+    """
+    V91: Mendeteksi 'Void Trap' seperti kasus ROBOUSDT.
+    Kasus: Imbalance Short raksasa (241x) TAPI Jarak Long tipis (<0.1%) + Agg mati (<0.2x)
+    """
+    @staticmethod
+    def analyze(short_dist: float, long_dist: float, agg: float, imbalance: float) -> Dict:
+        # Jika ada likuidasi yang jaraknya super mampet (< 0.1%)
+        if abs(long_dist) < 0.1 and agg < 0.2:
+            return {
+                "active": True,
+                "bias": "SHORT",
+                "reason": f"LGD_VOID_DRAIN: Long Liq jarak {long_dist}% (SUPER TIPIS) + Agg {agg}x (BUYER MATI). MM akan pilih jalur terjun bebas (Cascade) daripada nge-squeeze imbalance {imbalance:.1f}x di atas!"
+            }
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V92: EXECUTION ENERGY MODEL =================
+class ExecutionEnergyV92:
+    """
+    V92: Mendeteksi jalur termurah untuk Market Maker.
+    MM pilih target = liquidity / energy_required, BUKAN liquidity terbesar.
+    """
+    @staticmethod
+    def analyze(flow: float, agg: float, long_dist: float, short_dist: float, imbalance: float) -> Dict:
+        # Estimasi energi yang dibutuhkan
+        energy_up = abs(short_dist) * (1 + imbalance/50)
+        energy_down = abs(long_dist) * (1 + (1/ max(agg,0.01)))
+        
+        if energy_down < energy_up:
+            return {
+                "bias": "SHORT",
+                "reason": f"LOW_ENERGY_PATH: Downside energy {energy_down:.3f} < Upside {energy_up:.3f}. MM pilih jalur paling murah (Cascade ke bawah)."
+            }
+        else:
+            return {
+                "bias": "LONG",
+                "reason": f"LOW_ENERGY_PATH: Upside energy {energy_up:.3f} < Downside {energy_down:.3f}. MM pilih squeeze ke atas."
+            }
+
+
+# ================= V92: AGGRESSION DEATH FILTER =================
+class AggressionDeathV92:
+    """
+    V92: Mendeteksi market mati seperti ROBO.
+    Ketika market mati, price mengikuti gravity, bukan squeeze.
+    """
+    @staticmethod
+    def analyze(agg: float, flow: float) -> Dict:
+        if agg < 0.2 and flow < 1:
+            return {
+                "active": True,
+                "bias": "FOLLOW_GRAVITY",
+                "reason": f"AGGRESSION_DEAD: Tidak ada buyer/seller (Agg {agg}x, Flow {flow}x). Harga mengikuti jalur likuidasi terdekat."
+            }
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V92: CONFLICT RESOLVER (ENERGY + DEATH + LGD) =================
+class ConflictResolverV92:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V92 (DENGAN ENERGY + DEATH FILTERS) 🔥
+    
+    HIERARKI BARU V92:
+    1️⃣ MARKET PHASE (V91) ← PALING PENTING! Menentukan konteks market
+    2️⃣ EXECUTION ENERGY (V92) ⭐ BARU! - Jalur termurah untuk MM
+    3️⃣ AGGRESSION DEATH (V92) ⭐ BARU! - Market mati, ikuti gravity
+    4️⃣ LGD (Void Drain) (V91) ⭐ BARU! - Void trap detector
+    5️⃣ WSC (Whale Singularity) - WMI > 99 + Short Dist < 0.5%
+    6️⃣ SAT (Liquidity Saturation) - Imbalance > 50x
+    7️⃣ PET (Position Expansion Trap) - OI naik + Agg rendah
+    8️⃣ ZGH (Zero Gravity) - RSI > 90 + OI naik + Agg rendah
+    9️⃣ OTF (Oversold Trap) - RSI < 15 + WMI ekstrim
+    """
+    @staticmethod
+    def resolve(
+        phase_res: Dict,           # V91 Market Phase
+        energy_res: Dict,           # V92 Execution Energy ⭐ BARU!
+        death_res: Dict,            # V92 Aggression Death ⭐ BARU!
+        lgd_res: Dict,              # V91 Liquidity Gravity Drain ⭐ BARU!
+        wsc_res: Dict,
+        sat_res: Dict,
+        pet_res: Dict,
+        zgh_res: Dict,
+        otf_res: Dict,
+        lim_res: Dict
+    ) -> Dict:
+        
+        # 🎯 1. MARKET PHASE VETO (Raja - Paling Penting!)
+        if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
+            return {
+                "bias": phase_res.get('signal', phase_res['bias']),
+                "confidence": phase_res['priority'],
+                "reason": f"PHASE_OVERRIDE: {phase_res['reason']}",
+                "phase": phase_res['phase']
+            }
+        
+        # ⚡ 2. EXECUTION ENERGY (V92) - Jalur termurah untuk MM
+        if energy_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": energy_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"ENERGY_PATH: {energy_res['reason']}",
+                "phase": "EXECUTION_ENERGY"
+            }
+        
+        # 💀 3. AGGRESSION DEATH (V92) - Market mati, ikuti gravity
+        if death_res.get('active'):
+            # Death filter butuh data gravity dari mana? Ikuti nearest liquidation
+            # Ini akan di-handle oleh LGD atau fallback
+            pass  # LGD akan menangani ini
+        
+        # 🕳️ 4. LIQUIDITY GRAVITY DRAIN (V91) - Void trap
+        if lgd_res.get('active'):
+            return {
+                "bias": lgd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": lgd_res['reason'],
+                "phase": "VOID_DRAIN"
+            }
+        
+        # 🌌 5. WHALE SINGULARITY (V89)
+        if wsc_res.get('is_active'):
+            return {
+                "bias": wsc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": wsc_res['reason'],
+                "phase": "SINGULARITY_EXECUTION"
+            }
+        
+        # ⚡ 6. LIQUIDITY SATURATION (V90)
+        if sat_res.get('active'):
+            return {
+                "bias": sat_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": sat_res['reason'],
+                "phase": "SATURATION_SQUEEZE"
+            }
+        
+        # 🔥 7. POSITION EXPANSION TRAP (V90)
+        if pet_res.get('active'):
+            return {
+                "bias": pet_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": pet_res['reason'],
+                "phase": "EXPANSION_TRAP"
+            }
+        
+        # 🔴 8. ZERO GRAVITY HORIZON (V86)
+        if zgh_res.get('is_ceiling'):
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "reason": zgh_res['reason'],
+                "phase": "ZERO_GRAVITY"
+            }
+        
+        # 🟢 9. OVERSOLD TRAP (V85)
+        if otf_res.get('is_trap'):
+            return {
+                "bias": "LONG" if otf_res.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND' else otf_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": otf_res['reason'],
+                "phase": "OVERSOLD_TRAP"
+            }
+        
+        # ⚖️ 10. LIQUIDITY IMBALANCE (V87)
+        if lim_res.get('bias') != "NEUTRAL" and lim_res.get('imbalance_ratio', 1.0) > 10:
+            return {
+                "bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": lim_res['reason'],
+                "phase": "IMBALANCE_MOMENTUM"
+            }
+        
+        # Fallback
+        return {
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected.",
+            "phase": "NEUTRAL"
+        }
+
+
 # ================= V88: WHALE DOMINANCE INDEX (WDI) =================
 class WhaleDominanceV88:
     """
@@ -8841,6 +9026,18 @@ class OutputFormatterV87:
         if result.get('pet', {}).get('active'):
             print(f"🔥 PET: ACTIVE - {result['pet']['reason']}")
         
+        # V91: LIQUIDITY GRAVITY DRAIN (LGD)
+        if result.get('lgd', {}).get('active'):
+            print(f"🕳️ LGD: ACTIVE - {result['lgd']['reason']}")
+        
+        # V92: EXECUTION ENERGY
+        if result.get('energy_v92', {}).get('bias') != 'NEUTRAL':
+            print(f"⚡ ENERGY: {result['energy_v92']['bias']} - {result['energy_v92']['reason']}")
+        
+        # V92: AGGRESSION DEATH
+        if result.get('aggression_death', {}).get('active'):
+            print(f"💀 DEATH: ACTIVE - {result['aggression_death']['reason']}")
+        
         # V82
         if result.get('lmg', {}).get('is_death_magnet'):
             print(f"💀 LMG: ACTIVE - {result['lmg']['reason']}")
@@ -8935,6 +9132,14 @@ class BinanceAnalyzerV87:
         self.liquidity_drain_detector = LiquidityDrainDetectorV91()   # V91 baru!
         self.liquidity_vacuum_detector = LiquidityVacuumDetectorV91() # V91 baru!
         self.conflict_resolver_v91 = ConflictResolverV91()       # V91 baru!
+        
+        # V91: NEW MODULES - LIQUIDITY GRAVITY DRAIN (Anti-ROBO Trap)
+        self.lgd = LiquidityGravityDrainV91()      # V91 baru! ⭐
+        
+        # V92: NEW MODULES - EXECUTION ENERGY (Anti-ROBO Trap)
+        self.energy_v92 = ExecutionEnergyV92()     # V92 baru! ⭐
+        self.aggression_death = AggressionDeathV92() # V92 baru! ⭐
+        self.conflict_resolver_v92 = ConflictResolverV92()  # V92 baru! ⭐
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
@@ -9536,9 +9741,35 @@ class BinanceAnalyzerV87:
                 agg=trades['aggressive_ratio']
             )
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V91
-            final_decision = self.conflict_resolver_v91.resolve(
+            # ================= V91: LIQUIDITY GRAVITY DRAIN (LGD) =================
+            lgd_result = self.lgd.analyze(
+                short_dist=liq['short_dist'],
+                long_dist=liq['long_dist'],
+                agg=trades['aggressive_ratio'],
+                imbalance=lim_result.get('imbalance_ratio', 1.0)
+            )
+
+            # ================= V92: EXECUTION ENERGY =================
+            energy_result = self.energy_v92.analyze(
+                flow=trades['ratio'],
+                agg=trades['aggressive_ratio'],
+                long_dist=liq['long_dist'],
+                short_dist=liq['short_dist'],
+                imbalance=lim_result.get('imbalance_ratio', 1.0)
+            )
+
+            # ================= V92: AGGRESSION DEATH =================
+            death_result = self.aggression_death.analyze(
+                agg=trades['aggressive_ratio'],
+                flow=trades['ratio']
+            )
+            
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V92 (ENERGY + DEATH + LGD)
+            final_decision = self.conflict_resolver_v92.resolve(
                 phase_res=phase_result,        # V91 Market Phase - PALING PENTING!
+                energy_res=energy_result,       # V92 Execution Energy ⭐ BARU!
+                death_res=death_result,         # V92 Aggression Death ⭐ BARU!
+                lgd_res=lgd_result,             # V91 Liquidity Gravity Drain ⭐ BARU!
                 wsc_res=wsc_result,            # V89 Whale Singularity
                 sat_res=sat_result,            # V90 Liquidity Saturation
                 pet_res=pet_result,            # V90 Position Expansion Trap
@@ -10053,6 +10284,26 @@ class BinanceAnalyzerV87:
                 "bias": otf_result.get('bias', 'NEUTRAL'),
                 "reason": otf_result.get('reason', ''),
                 "scenario": otf_result.get('scenario', 'NORMAL')
+            }
+
+            # V91: LIQUIDITY GRAVITY DRAIN (LGD) - ANTI-VOID TRAP
+            result["lgd"] = {
+                "active": lgd_result.get('active', False),
+                "bias": lgd_result.get('bias', 'NEUTRAL'),
+                "reason": lgd_result.get('reason', '')
+            }
+
+            # V92: EXECUTION ENERGY MODEL
+            result["energy_v92"] = {
+                "bias": energy_result.get('bias', 'NEUTRAL'),
+                "reason": energy_result.get('reason', '')
+            }
+
+            # V92: AGGRESSION DEATH FILTER
+            result["aggression_death"] = {
+                "active": death_result.get('active', False),
+                "bias": death_result.get('bias', 'NEUTRAL'),
+                "reason": death_result.get('reason', '')
             }
 
             return result
