@@ -1428,6 +1428,331 @@ class ConflictResolverV95:
         }
 
 
+# ================= V95: ENERGY SPOOF TRACKER (EST) - ANTI-PIXEL TROJAN TRAP =================
+class EnergySpoofTrackerV95:
+    """
+    🔥 V95: ENERGY SPOOF TRACKER - MENDETEKSI 'TEMBOK KERTAS' MM 🔥
+    
+    Kasus PIXEL:
+    - Downside Energy: 478.7 (SANGAT EKSTRIM!)
+    - OI Delta: -1.44% (TURUN)
+    - WMI: 78.2x (Short Liq Whale di atas)
+    
+    Interpretasi:
+    Tembok bawah 478.7 itu PALSU. Whale pasang Limit Buy raksasa cuma buat
+    nakutin bot supaya gak berani SHORT, sementara mereka sendiri jualan
+    (Distribution) pake Agg 0.00x. Begitu bot masuk LONG, mereka cabut temboknya,
+    harga jatuh bebas ke target Long Liq -4.74%.
+    
+    Rule: Jika Energy > 100 DAN OI Delta NEGATIF (modal ditarik), maka SPOOF!
+    """
+    @staticmethod
+    def analyze(up_energy: float, down_energy: float, oi_delta: float, wmi: float) -> Dict:
+        # Cek tembok bawah yang mencurigakan
+        if down_energy > EST_ENERGY_SPOOF_THRESHOLD and oi_delta < EST_OI_DELTA_NEGATIVE:
+            # Validasi dengan WMI (ada target short di atas atau target long di bawah?)
+            if wmi > 0:  # WMI positif = target short di atas (MM butuh harga turun untuk makan long di bawah)
+                return {
+                    "is_spoof": True,
+                    "bias": "SHORT",
+                    "reason": f"EST_ENERGY_SPOOF: Tembok bawah ({down_energy:.1f}) terdeteksi PALSU! "
+                             f"OI Δ {oi_delta:.2f}% (Turun) membuktikan Whale sedang nyabut jaring. "
+                             f"Tembok itu cuma umpan supaya bot lo LONG. SIAP FLUSH KE BAWAH!"
+                }
+        
+        # Cek tembok atas yang mencurigakan (jarang, tapi bisa terjadi)
+        if up_energy > EST_ENERGY_SPOOF_THRESHOLD and oi_delta < EST_OI_DELTA_NEGATIVE:
+            if wmi < 0:  # WMI negatif = target long di bawah (MM butuh harga naik untuk makan short di atas)
+                return {
+                    "is_spoof": True,
+                    "bias": "LONG",
+                    "reason": f"EST_ENERGY_SPOOF: Tembok atas ({up_energy:.1f}) terdeteksi PALSU! "
+                             f"OI Δ {oi_delta:.2f}% (Turun) membuktikan Whale sedang nyabut jaring. "
+                             f"Tembok itu cuma umpan supaya bot lo SHORT. SIAP SQUEEZE KE ATAS!"
+                }
+        
+        return {"is_spoof": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V96: PASSIVE DISTRIBUTION DETECTOR (PDD) - ANTI-STEALTH TRAP =================
+class PassiveDistributionDetectorV96:
+    """
+    🔥 V96: PASSIVE DISTRIBUTION DETECTOR - WHALE JUAL DIAM-DIAM 🔥
+    
+    Kasus PIXEL:
+    - Agg: 0.00x (mati)
+    - Flow: 1.5x (masih ada volume)
+    - OI: -1.44% (turun)
+    - RSI: 39 (<50)
+    - Price Change: turun/stagnan
+    
+    Ini BUKAN stealth accumulation! Ini PASSIVE DISTRIBUTION.
+    Whale jualan via limit orders tanpa bikin agresi (Agg 0),
+    tapi volume tetap mengalir (Flow > 1.2).
+    
+    Rule: OI turun + Flow tinggi + RSI < 50 + harga tidak naik = SHORT
+    """
+    @staticmethod
+    def analyze(oi_delta: float, flow: float, rsi: float, price_change: float) -> Dict:
+        if (oi_delta < PDD_OI_DELTA_MIN and 
+            flow > PDD_FLOW_MIN and 
+            rsi < PDD_RSI_MAX and 
+            price_change <= PDD_PRICE_CHANGE_MAX):
+            
+            return {
+                "active": True,
+                "bias": "SHORT",
+                "reason": f"PDD_PASSIVE_DISTRIBUTION: OI turun {oi_delta:.2f}% + Flow {flow:.2f}x (masih ada volume) + "
+                         f"RSI {rsi:.1f} < 50 + Price {price_change:+.2f}% (tidak naik). "
+                         f"Whale selling via limit orders! JANGAN LONG!"
+            }
+        
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V96: REAL SHORT COVERING FILTER (RSC) - VALIDASI SAD =================
+class RealShortCoveringFilterV96:
+    """
+    🔥 V96: REAL SHORT COVERING FILTER - MEMBEDAKAN SHORT COVERING ASLI 🔥
+    
+    SAD logic: OI turun + Agg 0 = short covering.
+    Tapi di PIXEL, OI turun + Agg 0 + price turun = BUKAN short covering!
+    
+    Short covering asli: OI turun + PRICE NAIK (karena short seller beli untuk tutup posisi).
+    Jika price tidak naik, itu bisa jadi:
+    - Long liquidation
+    - Position closing kedua sisi
+    - Passive distribution
+    
+    Rule: Jika OI turun tapi price tidak naik, SAD harus diabaikan.
+    """
+    @staticmethod
+    def analyze(oi_delta: float, price_change: float) -> Dict:
+        if oi_delta < 0 and price_change > 0:
+            return {
+                "is_valid": True,
+                "reason": "REAL_SHORT_COVERING: OI turun + Price naik = Short covering asli!"
+            }
+        else:
+            return {
+                "is_valid": False,
+                "reason": f"OI_DROP_NOT_COVERING: OI turun {oi_delta:.2f}% TAPI price {price_change:+.2f}% (tidak naik). "
+                         f"Ini BUKAN short covering! Bisa jadi long liquidation atau passive distribution."
+            }
+
+
+# ================= V96: CONFLICT RESOLVER (THE ANTI-SPOOF HIERARCHY) =================
+class ConflictResolverV96:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V96 (DENGAN EST, PDD, RSC) 🔥
+    
+    HIERARKI FINAL (LENGKAP):
+    1️⃣ MARKET PHASE (V91) - Konteks market (paling penting!)
+    2️⃣ EST (Energy Spoof Tracker) (V95) ⭐ - Energy >100 + OI turun = SPOOF!
+    3️⃣ ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
+    4️⃣ PDD (Passive Distribution Detector) (V96) ⭐ - OI turun + Flow tinggi + RSI <50 = Distribution!
+    5️⃣ LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
+    6️⃣ PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati → stealth accumulation!
+    7️⃣ OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop → VACUUM!
+    8️⃣ WMI EXHAUST (Singularity Exhaustion) (V93) - WMI 99 + OI crash → TRAP!
+    9️⃣ CASCADE TIME (V93) - Jalur cascade tercepat
+    🔟 EXECUTION ENERGY (V92) - Jalur termurah
+    1️⃣1️⃣ AGGRESSION DEATH (V92) - Market mati
+    1️⃣2️⃣ LGD (Void Drain) (V91) - Void trap
+    1️⃣3️⃣ WSC (Whale Singularity) (V89)
+    1️⃣4️⃣ SAT (Liquidity Saturation) (V90)
+    1️⃣5️⃣ PET (Position Expansion Trap) (V90)
+    1️⃣6️⃣ ZGH (Zero Gravity) (V86)
+    1️⃣7️⃣ OTF (Oversold Trap) (V85)
+    1️⃣8️⃣ LIM (Liquidity Imbalance) (V87)
+    """
+    @staticmethod
+    def resolve(
+        phase_res: Dict,           # V91 Market Phase
+        est_res: Dict,               # V95 Energy Spoof Tracker ⭐
+        odc_res: Dict,              # V93 OI Drain Condemnation
+        pdd_res: Dict,                # V96 Passive Distribution Detector ⭐
+        lep_res: Dict,              # V94 Low Energy Path
+        plr_res: Dict,               # V94 Passive Liquidity Reload
+        opd_res: Dict,              # V93 Orderbook Pull Detector
+        wmi_exhaust_res: Dict,      # V93 WMI Exhaustion
+        cascade_res: Dict,          # V93 Cascade Time Estimator
+        energy_res: Dict,           # V92 Execution Energy
+        death_res: Dict,            # V92 Aggression Death
+        lgd_res: Dict,              # V91 Liquidity Gravity Drain
+        wsc_res: Dict,              # V89 Whale Singularity
+        sat_res: Dict,              # V90 Liquidity Saturation
+        pet_res: Dict,              # V90 Position Expansion Trap
+        zgh_res: Dict,              # V86 Zero Gravity Horizon
+        otf_res: Dict,              # V85 Oversold Trap Filter
+        lim_res: Dict               # V87 Liquidity Imbalance
+    ) -> Dict:
+        
+        # 🎯 1. MARKET PHASE VETO (Raja - Paling Penting!)
+        if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
+            return {
+                "bias": phase_res.get('signal', phase_res['bias']),
+                "confidence": phase_res['priority'],
+                "reason": f"PHASE_OVERRIDE: {phase_res['reason']}",
+                "phase": phase_res['phase']
+            }
+        
+        # 🛡️ 2. ENERGY SPOOF TRACKER (V95) - Energy >100 + OI turun = SPOOF!
+        if est_res.get('is_spoof'):
+            return {
+                "bias": est_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V95_EST: {est_res['reason']}",
+                "phase": "SPOOF_COLLAPSE"
+            }
+        
+        # 💧 3. OI DRAIN CONDEMNATION (V93)
+        if odc_res.get('active'):
+            return {
+                "bias": odc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_ODC: {odc_res['reason']}",
+                "phase": "VACUUM_FLUSH"
+            }
+        
+        # 📉 4. PASSIVE DISTRIBUTION DETECTOR (V96) - Whale jual diam-diam
+        if pdd_res.get('active'):
+            return {
+                "bias": pdd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V96_PDD: {pdd_res['reason']}",
+                "phase": "PASSIVE_DISTRIBUTION"
+            }
+        
+        # ⚡ 5. LOW ENERGY PATH (V94) - Energy ratio >10x veto!
+        if lep_res.get('is_active'):
+            return {
+                "bias": lep_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V94_LEP: {lep_res['reason']}",
+                "phase": "ENERGY_PATH_VETO"
+            }
+        
+        # 🔄 6. PASSIVE LIQUIDITY RELOAD (V94)
+        if plr_res.get('active'):
+            return {
+                "bias": plr_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V94_PLR: {plr_res['reason']}",
+                "phase": "STEALTH_ACCUMULATION"
+            }
+        
+        # 🧲 7. ORDERBOOK PULL DETECTOR (V93)
+        if opd_res.get('active'):
+            return {
+                "bias": opd_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_OPD: {opd_res['reason']}",
+                "phase": "LIQUIDITY_VACUUM"
+            }
+        
+        # 💀 8. WMI SINGULARITY EXHAUSTION (V93)
+        if wmi_exhaust_res.get('active'):
+            return {
+                "bias": wmi_exhaust_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V93_WMI_EXHAUST: {wmi_exhaust_res['reason']}",
+                "phase": "SINGULARITY_TRAP"
+            }
+        
+        # ⏱️ 9. CASCADE TIME ESTIMATOR (V93)
+        if cascade_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": cascade_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V93_CASCADE: {cascade_res['reason']}",
+                "phase": "CASCADE_PATH"
+            }
+        
+        # ⚡ 10. EXECUTION ENERGY (V92)
+        if energy_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": energy_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V92_ENERGY: {energy_res['reason']}",
+                "phase": "EXECUTION_ENERGY"
+            }
+        
+        # 💀 11. AGGRESSION DEATH (V92)
+        # (akan di-handle oleh LGD)
+        
+        # 🕳️ 12. LIQUIDITY GRAVITY DRAIN (V91)
+        if lgd_res.get('active'):
+            return {
+                "bias": lgd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V91_LGD: {lgd_res['reason']}",
+                "phase": "VOID_DRAIN"
+            }
+        
+        # 🌌 13. WHALE SINGULARITY (V89)
+        if wsc_res.get('is_active'):
+            return {
+                "bias": wsc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V89_WSC: {wsc_res['reason']}",
+                "phase": "SINGULARITY_EXECUTION"
+            }
+        
+        # ⚡ 14. LIQUIDITY SATURATION (V90)
+        if sat_res.get('active'):
+            return {
+                "bias": sat_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_SAT: {sat_res['reason']}",
+                "phase": "SATURATION_SQUEEZE"
+            }
+        
+        # 🔥 15. POSITION EXPANSION TRAP (V90)
+        if pet_res.get('active'):
+            return {
+                "bias": pet_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_PET: {pet_res['reason']}",
+                "phase": "EXPANSION_TRAP"
+            }
+        
+        # 🔴 16. ZERO GRAVITY HORIZON (V86)
+        if zgh_res.get('is_ceiling'):
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "reason": f"V86_ZGH: {zgh_res['reason']}",
+                "phase": "ZERO_GRAVITY"
+            }
+        
+        # 🟢 17. OVERSOLD TRAP (V85)
+        if otf_res.get('is_trap'):
+            return {
+                "bias": "LONG" if otf_res.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND' else otf_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V85_OTF: {otf_res['reason']}",
+                "phase": "OVERSOLD_TRAP"
+            }
+        
+        # ⚖️ 18. LIQUIDITY IMBALANCE (V87)
+        if lim_res.get('bias') != "NEUTRAL" and lim_res.get('imbalance_ratio', 1.0) > 10:
+            return {
+                "bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V87_LIM: {lim_res['reason']}",
+                "phase": "IMBALANCE_MOMENTUM"
+            }
+        
+        # Fallback
+        return {
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected.",
+            "phase": "NEUTRAL"
+        }
+
+
 # ================= CONFIG V83 (THE LIQUIDITY SNIPER) =================
 # 🔥 V83 NEW MODULES - MICROSECOND LIQUIDITY RADAR
 
@@ -9131,6 +9456,21 @@ LID_OI_DELTA_MIN = 1.0                       # OI naik > 1.0% (short build)
 LID_FLOW_MAX = 0.6                           # Flow < 0.6 (no panic sell)
 LID_WMI_MIN = 50                              # WMI > 50 (ada target short)
 
+# ================= V95 CONFIG - ENERGY SPOOF TRACKER =================
+# EST - Energy Spoof Tracker (Anti-PIXEL Trojan Trap)
+EST_ENERGY_SPOOF_THRESHOLD = 100.0        # Energy > 100 = suspicious
+EST_OI_DELTA_NEGATIVE = 0                    # OI harus negatif (< 0)
+
+# ================= V96 CONFIG - PASSIVE DISTRIBUTION & SHORT COVERING FILTER =================
+# PDD - Passive Distribution Detector
+PDD_OI_DELTA_MIN = -1.0                     # OI turun > 1.0%
+PDD_FLOW_MIN = 1.2                          # Flow > 1.2 (masih ada volume)
+PDD_RSI_MAX = 50                             # RSI < 50 (tidak overbought)
+PDD_PRICE_CHANGE_MAX = 0                     # Price change <= 0 (tidak naik)
+
+# RSC - Real Short Covering Filter
+RSC_PRICE_CHANGE_MIN = 0                     # Price change > 0 untuk valid short covering
+
 
 # ================= V87: ZERO AGGRESSION SQUEEZE (ZAS) =================
 class ZeroAggressionSqueezeV87:
@@ -9974,6 +10314,20 @@ class OutputFormatterV87:
         if result.get('lid', {}).get('active'):
             print(f"🔥 LID: ACTIVE - {result['lid']['reason']}")
         
+        # ===== V95: ENERGY SPOOF TRACKER =====
+        if result.get('est', {}).get('is_spoof'):
+            print(f"🛡️ EST: ACTIVE - {result['est']['reason']}")
+        
+        # ===== V96: PASSIVE DISTRIBUTION & SHORT COVERING FILTER =====
+        if result.get('pdd', {}).get('active'):
+            print(f"📉 PDD: ACTIVE - {result['pdd']['reason']}")
+        
+        if result.get('rsc', {}).get('is_valid') is not None:
+            if result['rsc']['is_valid']:
+                print(f"✅ RSC: {result['rsc']['reason']}")
+            else:
+                print(f"⚠️ RSC: {result['rsc']['reason']}")
+        
         # V82
         if result.get('lmg', {}).get('is_death_magnet'):
             print(f"💀 LMG: ACTIVE - {result['lmg']['reason']}")
@@ -10092,7 +10446,14 @@ class BinanceAnalyzerV87:
         # ===== V95: NEW MODULE - LIQUIDITY IGNITION DETECTOR =====
         self.lid = LiquidityIgnitionDetectorV95()         # V95 baru! (Short Squeeze Setup)
         
-        self.conflict_resolver_v95 = ConflictResolverV95  # V95 resolver ⭐
+        # ===== V95: NEW MODULE - ENERGY SPOOF TRACKER =====
+        self.est = EnergySpoofTrackerV95()                # V95 baru! (Energy Spoof Tracker)
+        
+        # ===== V96: NEW MODULES - PASSIVE DISTRIBUTION & SHORT COVERING FILTER =====
+        self.pdd = PassiveDistributionDetectorV96()       # V96 baru! (Passive Distribution)
+        self.rsc = RealShortCoveringFilterV96()           # V96 baru! (Real Short Covering)
+        
+        self.conflict_resolver_v96 = ConflictResolverV96  # V96 resolver ⭐
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
@@ -10794,13 +11155,46 @@ class BinanceAnalyzerV87:
                 wmi=wmi_ratio
             )
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V95 (ENERGY GRAVITY & LID)
-            final_decision = self.conflict_resolver_v95.resolve(
+            # ================= V95: ENERGY SPOOF TRACKER (EST) =================
+            est_result = self.est.analyze(
+                up_energy=up_energy,
+                down_energy=down_energy,
+                oi_delta=oi_delta_5m,
+                wmi=wmi_ratio
+            )
+            
+            # ================= V96: PASSIVE DISTRIBUTION DETECTOR (PDD) =================
+            pdd_result = self.pdd.analyze(
+                oi_delta=oi_delta_5m,
+                flow=trades['ratio'],
+                rsi=rsi6,
+                price_change=change_5m
+            )
+            
+            # ================= V96: REAL SHORT COVERING FILTER (RSC) =================
+            rsc_result = self.rsc.analyze(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m
+            )
+            
+            # VALIDASI SAD: Jika RSC bilang ini bukan short covering, SAD harus dineutralkan
+            if sad_result.get('is_active', False) and not rsc_result.get('is_valid', False):
+                # Override SAD - ini bukan short covering asli
+                sad_result = {
+                    "is_active": False,
+                    "bias": "NEUTRAL",
+                    "reason": "SAD_OVERRIDE: " + rsc_result['reason'],
+                    "confidence": "LOW"
+                }
+                print(f"⚠️ SAD OVERRIDE: {rsc_result['reason']}")
+            
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V96 (ANTI-SPOOF)
+            final_decision = self.conflict_resolver_v96.resolve(
                 phase_res=phase_result,        # V91 Market Phase - PALING PENTING!
-                lep_res=lep_result,             # V94 Low Energy Path
-                egr_res=egr_result,              # V94 Energy Gravity Rule ⭐
-                lid_res=lid_result,               # V95 Liquidity Ignition Detector ⭐
+                est_res=est_result,              # V95 Energy Spoof Tracker ⭐
                 odc_res=odc_result,             # V93 OI Drain Condemnation
+                pdd_res=pdd_result,              # V96 Passive Distribution Detector ⭐
+                lep_res=lep_result,             # V94 Low Energy Path
                 plr_res=plr_result,              # V94 Passive Liquidity Reload
                 opd_res=opd_result,             # V93 Orderbook Pull Detector
                 wmi_exhaust_res=wmi_exhaust_result, # V93 WMI Exhaustion
@@ -11395,6 +11789,26 @@ class BinanceAnalyzerV87:
                 "active": lid_result.get('active', False),
                 "bias": lid_result.get('bias', 'NEUTRAL'),
                 "reason": lid_result.get('reason', '')
+            }
+            
+            # ===== V95: ENERGY SPOOF TRACKER =====
+            result["est"] = {
+                "is_spoof": est_result.get('is_spoof', False),
+                "bias": est_result.get('bias', 'NEUTRAL'),
+                "reason": est_result.get('reason', '')
+            }
+            
+            # ===== V96: PASSIVE DISTRIBUTION DETECTOR =====
+            result["pdd"] = {
+                "active": pdd_result.get('active', False),
+                "bias": pdd_result.get('bias', 'NEUTRAL'),
+                "reason": pdd_result.get('reason', '')
+            }
+            
+            # ===== V96: REAL SHORT COVERING FILTER =====
+            result["rsc"] = {
+                "is_valid": rsc_result.get('is_valid', False),
+                "reason": rsc_result.get('reason', '')
             }
 
             return result
