@@ -1541,54 +1541,200 @@ class RealShortCoveringFilterV96:
             }
 
 
-# ================= V96: CONFLICT RESOLVER (THE ANTI-SPOOF HIERARCHY) =================
+# ================= V94: BAITING PRICE FILTER (BPF) - ANTI-AINU BAIT =================
+class BaitingPriceFilterV94:
+    """
+    V94: Mendeteksi dump palsu (Baiting).
+    Jika harga dump < 4% TAPI Energy Jalur Atas jauh lebih murah (< 3x Jalur Bawah),
+    maka dump tersebut adalah BAIT (Umpan).
+    """
+    @staticmethod
+    def analyze(energy_up: float, energy_down: float, price_change: float) -> Dict:
+        # Jalur atas jauh lebih murah daripada jalur bawah
+        if energy_up > 0 and (energy_down / energy_up) > BPF_ENERGY_RATIO:
+            if BPF_DUMP_MIN < price_change < BPF_DUMP_MAX:  # Dump tanggung (-4% sampai 0%)
+                return {
+                    "is_bait": True,
+                    "bias": "LONG",
+                    "reason": f"BPF_BAIT_DETECTED: Dump {price_change:.2f}% adalah umpan! "
+                             f"Energy atas ({energy_up:.2f}) jauh lebih murah dari bawah ({energy_down:.2f}). "
+                             f"MM sedang mancing SHORT seller sebelum REBOUND NUKLIR!"
+                }
+        return {"is_bait": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V94: ENERGY GRAVITY RULE (EGR) =================
+class EnergyGravityRuleV94:
+    """
+    V94: Energy Gravity Rule - Memveto Cascade Time jika energy tidak seimbang.
+    Jika jalur bawah > 3x lebih mahal dari atas, veto sinyal SHORT.
+    """
+    @staticmethod
+    def analyze(up_energy: float, down_energy: float, wmi: float, cascade_bias: str) -> Dict:
+        # Hitung rasio energi
+        if up_energy > 0:
+            energy_ratio = down_energy / up_energy
+        else:
+            energy_ratio = 999.0
+        
+        # Jika hambatan bawah > 3x lebih besar, dan cascade bilang SHORT
+        if energy_ratio > EGR_ENERGY_RATIO_THRESHOLD and cascade_bias == "SHORT":
+            # Validasi dengan WMI (ada target short di atas)
+            if wmi > EGR_WMI_MIN:
+                return {
+                    "is_veto": True,
+                    "bias": "LONG",
+                    "reason": f"EGR_ENERGY_VETO: Jalur bawah {energy_ratio:.1f}x lebih mahal "
+                             f"({down_energy:.2f} vs {up_energy:.2f}). "
+                             f"Abaikan Cascade Time SHORT! MM pilih Squeeze murah ke target WMI {wmi:.1f}x!"
+                }
+        
+        # Kasus sebaliknya (jarang)
+        if (1/energy_ratio) > EGR_ENERGY_RATIO_THRESHOLD and cascade_bias == "LONG":
+            if wmi < -EGR_WMI_MIN:
+                return {
+                    "is_veto": True,
+                    "bias": "SHORT",
+                    "reason": f"EGR_ENERGY_VETO: Jalur atas {(1/energy_ratio):.1f}x lebih mahal "
+                             f"({up_energy:.2f} vs {down_energy:.2f}). "
+                             f"Abaikan Cascade Time LONG! MM pilih Dump murah ke target WMI {wmi:.1f}x!"
+                }
+        
+        return {"is_veto": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V95: LIQUIDATION GAP DETECTOR (LGD) =================
+class LiquidationGapDetectorV95:
+    """
+    V95: Mendeteksi gap antara cluster likuidasi.
+    Jika gap bawah > 2x lebih besar dari atas, price prefer squeeze upward.
+    """
+    @staticmethod
+    def analyze(short_dist: float, long_dist: float) -> Dict:
+        # Hindari division by zero
+        safe_short = max(abs(short_dist), 0.01)
+        safe_long = max(abs(long_dist), 0.01)
+        
+        gap_ratio = safe_long / safe_short
+        
+        if gap_ratio > LGD_GAP_RATIO:
+            return {
+                "bias": "LONG",
+                "reason": f"LGD_GAP_SQUEEZE: Downside gap {gap_ratio:.2f}x lebih besar. "
+                         f"Price prefer squeeze upward karena tidak ada target menarik di bawah."
+            }
+        
+        if gap_ratio < (1 / LGD_GAP_RATIO):
+            return {
+                "bias": "SHORT",
+                "reason": f"LGD_GAP_DUMP: Upside gap {(1/gap_ratio):.2f}x lebih besar. "
+                         f"Price prefer cascade downward."
+            }
+        
+        return {"bias": "NEUTRAL", "reason": "Gap seimbang"}
+
+
+# ================= V95: SHORT COVERING RULE =================
+class ShortCoveringRuleV95:
+    """
+    V95: Deteksi short covering asli.
+    Jika RSI > 90, OI turun, dan harga naik = short covering rally.
+    """
+    @staticmethod
+    def analyze(rsi: float, oi_delta: float, price_change: float) -> Dict:
+        if rsi > LGD_SHORT_COVERING_RSI and oi_delta < 0 and price_change > 0:
+            return {
+                "is_active": True,
+                "bias": "LONG",
+                "reason": f"RSC_SHORT_COVERING: RSI {rsi:.1f} > 90 + OI Δ {oi_delta:.2f}% (turun) + "
+                         f"Price {price_change:+.2f}% (naik) = SHORT COVERING RALLY! Forced buy dari short seller!"
+            }
+        return {"is_active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V96: CONFLICT RESOLVER (UPDATED WITH BPF + LGD) =================
 class ConflictResolverV96:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V96 (DENGAN EST, PDD, RSC) 🔥
+    🔥 URUTAN PRIORITAS MUTLAK V96 (DENGAN LOGIC DOSEN 1 & 2) 🔥
     
-    HIERARKI FINAL (LENGKAP):
-    1️⃣ MARKET PHASE (V91) - Konteks market (paling penting!)
-    2️⃣ EST (Energy Spoof Tracker) (V95) ⭐ - Energy >100 + OI turun = SPOOF!
-    3️⃣ ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
-    4️⃣ PDD (Passive Distribution Detector) (V96) ⭐ - OI turun + Flow tinggi + RSI <50 = Distribution!
-    5️⃣ LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
-    6️⃣ PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati → stealth accumulation!
-    7️⃣ OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop → VACUUM!
-    8️⃣ WMI EXHAUST (Singularity Exhaustion) (V93) - WMI 99 + OI crash → TRAP!
-    9️⃣ CASCADE TIME (V93) - Jalur cascade tercepat
-    🔟 EXECUTION ENERGY (V92) - Jalur termurah
-    1️⃣1️⃣ AGGRESSION DEATH (V92) - Market mati
-    1️⃣2️⃣ LGD (Void Drain) (V91) - Void trap
-    1️⃣3️⃣ WSC (Whale Singularity) (V89)
-    1️⃣4️⃣ SAT (Liquidity Saturation) (V90)
-    1️⃣5️⃣ PET (Position Expansion Trap) (V90)
-    1️⃣6️⃣ ZGH (Zero Gravity) (V86)
-    1️⃣7️⃣ OTF (Oversold Trap) (V85)
-    1️⃣8️⃣ LIM (Liquidity Imbalance) (V87)
+    HIERARKI FINAL:
+    1️⃣ RSC (Short Covering Rule) - RSI >90 + OI turun + price naik = LONG MUTLAK ⭐ NEW!
+    2️⃣ BPF (Baiting Price Filter) - Anti-AINU Bait (dump palsu 2-4%) ⭐ NEW!
+    3️⃣ LGD (Liquidation Gap Detector) - Gap structure analysis ⭐ NEW!
+    4️⃣ EGR (Energy Gravity Rule) - Energy veto (dari Dosen 1) ⭐ NEW!
+    5️⃣ MARKET PHASE (V91) - Konteks market
+    6️⃣ EST (Energy Spoof Tracker) (V95)
+    7️⃣ ODC (OI Drain Condemnation) (V93)
+    8️⃣ PDD (Passive Distribution Detector) (V96)
+    9️⃣ LEP (Low Energy Path) (V94)
+    🔟 PLR (Passive Liquidity Reload) (V94)
     """
     @staticmethod
     def resolve(
-        phase_res: Dict,           # V91 Market Phase
-        est_res: Dict,               # V95 Energy Spoof Tracker ⭐
-        odc_res: Dict,              # V93 OI Drain Condemnation
-        pdd_res: Dict,                # V96 Passive Distribution Detector ⭐
-        lep_res: Dict,              # V94 Low Energy Path
-        plr_res: Dict,               # V94 Passive Liquidity Reload
-        opd_res: Dict,              # V93 Orderbook Pull Detector
-        wmi_exhaust_res: Dict,      # V93 WMI Exhaustion
-        cascade_res: Dict,          # V93 Cascade Time Estimator
-        energy_res: Dict,           # V92 Execution Energy
-        death_res: Dict,            # V92 Aggression Death
-        lgd_res: Dict,              # V91 Liquidity Gravity Drain
-        wsc_res: Dict,              # V89 Whale Singularity
-        sat_res: Dict,              # V90 Liquidity Saturation
-        pet_res: Dict,              # V90 Position Expansion Trap
-        zgh_res: Dict,              # V86 Zero Gravity Horizon
-        otf_res: Dict,              # V85 Oversold Trap Filter
-        lim_res: Dict               # V87 Liquidity Imbalance
+        # NEW MODULES - PRIORITAS TERTINGGI!
+        rsc_res: Dict,              # V95 Short Covering Rule ⭐
+        bpf_res: Dict,               # V94 Baiting Price Filter ⭐
+        lgd_res: Dict,               # V95 Liquidation Gap Detector ⭐
+        egr_res: Dict,               # V94 Energy Gravity Rule ⭐
+        
+        # Existing modules (dari kodinganmu)
+        phase_res: Dict,
+        est_res: Dict,
+        odc_res: Dict,
+        pdd_res: Dict,
+        lep_res: Dict,
+        plr_res: Dict,
+        opd_res: Dict,
+        wmi_exhaust_res: Dict,
+        cascade_res: Dict,
+        energy_res: Dict,
+        death_res: Dict,
+        lgd_void_res: Dict,          # V91 Liquidity Gravity Drain (renamed)
+        wsc_res: Dict,
+        sat_res: Dict,
+        pet_res: Dict,
+        zgh_res: Dict,
+        otf_res: Dict,
+        lim_res: Dict
     ) -> Dict:
         
-        # 🎯 1. MARKET PHASE VETO (Raja - Paling Penting!)
+        # 🔥 1. SHORT COVERING RULE (PALING PENTING!)
+        if rsc_res.get('is_active'):
+            return {
+                "bias": rsc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V95_RSC: {rsc_res['reason']}",
+                "phase": "SHORT_COVERING_RALLY"
+            }
+        
+        # 🎣 2. BAITING PRICE FILTER (Anti-AINU Trap)
+        if bpf_res.get('is_bait'):
+            return {
+                "bias": bpf_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V94_BPF: {bpf_res['reason']}",
+                "phase": "ANTI_BAIT_REBOUND"
+            }
+        
+        # 🕳️ 3. LIQUIDATION GAP DETECTOR (Gap Structure)
+        if lgd_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": lgd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V95_LGD: {lgd_res['reason']}",
+                "phase": "GAP_SQUEEZE"
+            }
+        
+        # ⚡ 4. ENERGY GRAVITY RULE (Veto Cascade Time)
+        if egr_res.get('is_veto'):
+            return {
+                "bias": egr_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V94_EGR: {egr_res['reason']}",
+                "phase": "ENERGY_GRAVITY_VETO"
+            }
+        
+        # 🎯 5. MARKET PHASE VETO
         if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
             return {
                 "bias": phase_res.get('signal', phase_res['bias']),
@@ -1597,7 +1743,7 @@ class ConflictResolverV96:
                 "phase": phase_res['phase']
             }
         
-        # 🛡️ 2. ENERGY SPOOF TRACKER (V95) - Energy >100 + OI turun = SPOOF!
+        # 🛡️ 6. ENERGY SPOOF TRACKER
         if est_res.get('is_spoof'):
             return {
                 "bias": est_res['bias'],
@@ -1606,7 +1752,7 @@ class ConflictResolverV96:
                 "phase": "SPOOF_COLLAPSE"
             }
         
-        # 💧 3. OI DRAIN CONDEMNATION (V93)
+        # 💧 7. OI DRAIN CONDEMNATION
         if odc_res.get('active'):
             return {
                 "bias": odc_res['bias'],
@@ -1615,7 +1761,7 @@ class ConflictResolverV96:
                 "phase": "VACUUM_FLUSH"
             }
         
-        # 📉 4. PASSIVE DISTRIBUTION DETECTOR (V96) - Whale jual diam-diam
+        # 📉 8. PASSIVE DISTRIBUTION DETECTOR
         if pdd_res.get('active'):
             return {
                 "bias": pdd_res['bias'],
@@ -1624,7 +1770,7 @@ class ConflictResolverV96:
                 "phase": "PASSIVE_DISTRIBUTION"
             }
         
-        # ⚡ 5. LOW ENERGY PATH (V94) - Energy ratio >10x veto!
+        # ⚡ 9. LOW ENERGY PATH
         if lep_res.get('is_active'):
             return {
                 "bias": lep_res['bias'],
@@ -1633,7 +1779,7 @@ class ConflictResolverV96:
                 "phase": "ENERGY_PATH_VETO"
             }
         
-        # 🔄 6. PASSIVE LIQUIDITY RELOAD (V94)
+        # 🔄 10. PASSIVE LIQUIDITY RELOAD
         if plr_res.get('active'):
             return {
                 "bias": plr_res['bias'],
@@ -1642,7 +1788,7 @@ class ConflictResolverV96:
                 "phase": "STEALTH_ACCUMULATION"
             }
         
-        # 🧲 7. ORDERBOOK PULL DETECTOR (V93)
+        # 🧲 11. ORDERBOOK PULL DETECTOR
         if opd_res.get('active'):
             return {
                 "bias": opd_res['bias'],
@@ -1651,7 +1797,7 @@ class ConflictResolverV96:
                 "phase": "LIQUIDITY_VACUUM"
             }
         
-        # 💀 8. WMI SINGULARITY EXHAUSTION (V93)
+        # 💀 12. WMI SINGULARITY EXHAUSTION
         if wmi_exhaust_res.get('active'):
             return {
                 "bias": wmi_exhaust_res['bias'],
@@ -1660,7 +1806,7 @@ class ConflictResolverV96:
                 "phase": "SINGULARITY_TRAP"
             }
         
-        # ⏱️ 9. CASCADE TIME ESTIMATOR (V93)
+        # ⏱️ 13. CASCADE TIME ESTIMATOR
         if cascade_res.get('bias') != "NEUTRAL":
             return {
                 "bias": cascade_res['bias'],
@@ -1669,7 +1815,7 @@ class ConflictResolverV96:
                 "phase": "CASCADE_PATH"
             }
         
-        # ⚡ 10. EXECUTION ENERGY (V92)
+        # ⚡ 14. EXECUTION ENERGY
         if energy_res.get('bias') != "NEUTRAL":
             return {
                 "bias": energy_res['bias'],
@@ -1678,19 +1824,16 @@ class ConflictResolverV96:
                 "phase": "EXECUTION_ENERGY"
             }
         
-        # 💀 11. AGGRESSION DEATH (V92)
-        # (akan di-handle oleh LGD)
-        
-        # 🕳️ 12. LIQUIDITY GRAVITY DRAIN (V91)
-        if lgd_res.get('active'):
+        # 🕳️ 15. LIQUIDITY GRAVITY DRAIN (Void trap)
+        if lgd_void_res.get('active'):
             return {
-                "bias": lgd_res['bias'],
+                "bias": lgd_void_res['bias'],
                 "confidence": "SUPREME",
-                "reason": f"V91_LGD: {lgd_res['reason']}",
+                "reason": f"V91_LGD: {lgd_void_res['reason']}",
                 "phase": "VOID_DRAIN"
             }
         
-        # 🌌 13. WHALE SINGULARITY (V89)
+        # 🌌 16. WHALE SINGULARITY
         if wsc_res.get('is_active'):
             return {
                 "bias": wsc_res['bias'],
@@ -1699,7 +1842,7 @@ class ConflictResolverV96:
                 "phase": "SINGULARITY_EXECUTION"
             }
         
-        # ⚡ 14. LIQUIDITY SATURATION (V90)
+        # ⚡ 17. LIQUIDITY SATURATION
         if sat_res.get('active'):
             return {
                 "bias": sat_res['bias'],
@@ -1708,7 +1851,7 @@ class ConflictResolverV96:
                 "phase": "SATURATION_SQUEEZE"
             }
         
-        # 🔥 15. POSITION EXPANSION TRAP (V90)
+        # 🔥 18. POSITION EXPANSION TRAP
         if pet_res.get('active'):
             return {
                 "bias": pet_res['bias'],
@@ -1717,7 +1860,7 @@ class ConflictResolverV96:
                 "phase": "EXPANSION_TRAP"
             }
         
-        # 🔴 16. ZERO GRAVITY HORIZON (V86)
+        # 🔴 19. ZERO GRAVITY HORIZON
         if zgh_res.get('is_ceiling'):
             return {
                 "bias": "SHORT",
@@ -1726,7 +1869,7 @@ class ConflictResolverV96:
                 "phase": "ZERO_GRAVITY"
             }
         
-        # 🟢 17. OVERSOLD TRAP (V85)
+        # 🟢 20. OVERSOLD TRAP
         if otf_res.get('is_trap'):
             return {
                 "bias": "LONG" if otf_res.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND' else otf_res['bias'],
@@ -1735,7 +1878,7 @@ class ConflictResolverV96:
                 "phase": "OVERSOLD_TRAP"
             }
         
-        # ⚖️ 18. LIQUIDITY IMBALANCE (V87)
+        # ⚖️ 21. LIQUIDITY IMBALANCE
         if lim_res.get('bias') != "NEUTRAL" and lim_res.get('imbalance_ratio', 1.0) > 10:
             return {
                 "bias": lim_res['bias'],
@@ -9471,6 +9614,19 @@ PDD_PRICE_CHANGE_MAX = 0                     # Price change <= 0 (tidak naik)
 # RSC - Real Short Covering Filter
 RSC_PRICE_CHANGE_MIN = 0                     # Price change > 0 untuk valid short covering
 
+# ================= V94: BAITING PRICE FILTER (BPF) CONFIG =================
+BPF_DUMP_MIN = -4.0           # Dump minimal untuk bait detection
+BPF_DUMP_MAX = 0.0            # Dump maksimal (negative)
+BPF_ENERGY_RATIO = 3.0        # Rasio energy untuk deteksi bait
+
+# ================= V94: ENERGY GRAVITY RULE (EGR) CONFIG =================
+EGR_ENERGY_RATIO_THRESHOLD = 3.0  # Rasio energy > 3x = veto
+EGR_WMI_MIN = 50                  # Minimal WMI untuk validasi
+
+# ================= V95: LIQUIDATION GAP DETECTOR (LGD) CONFIG =================
+LGD_GAP_RATIO = 2.0               # Rasio gap untuk deteksi squeeze
+LGD_SHORT_COVERING_RSI = 90       # RSI threshold untuk short covering
+
 
 # ================= V87: ZERO AGGRESSION SQUEEZE (ZAS) =================
 class ZeroAggressionSqueezeV87:
@@ -10328,6 +10484,18 @@ class OutputFormatterV87:
             else:
                 print(f"⚠️ RSC: {result['rsc']['reason']}")
         
+        # ===== V94: BAITING PRICE FILTER =====
+        if result.get('bpf', {}).get('is_bait'):
+            print(f"🎣 BPF: ACTIVE - {result['bpf']['reason']}")
+        
+        # ===== V95: LIQUIDATION GAP DETECTOR =====
+        if result.get('lgd_gap', {}).get('bias') != 'NEUTRAL':
+            print(f"🕳️ LGD_GAP: {result['lgd_gap']['bias']} - {result['lgd_gap']['reason']}")
+        
+        # ===== V95: SHORT COVERING RULE =====
+        if result.get('rsc_short_covering', {}).get('is_active'):
+            print(f"🔥 RSC_SHORT_COVERING: ACTIVE - {result['rsc_short_covering']['reason']}")
+        
         # V82
         if result.get('lmg', {}).get('is_death_magnet'):
             print(f"💀 LMG: ACTIVE - {result['lmg']['reason']}")
@@ -11145,6 +11313,34 @@ class BinanceAnalyzerV87:
                 cascade_bias=cascade_result.get('bias', 'NEUTRAL')
             )
             
+            # ================= V94: BAITING PRICE FILTER (BPF) - DOSEN 1 =====
+            bpf_result = BaitingPriceFilterV94.analyze(
+                energy_up=up_energy,
+                energy_down=down_energy,
+                price_change=change_5m
+            )
+            
+            # ================= V94: ENERGY GRAVITY RULE (EGR) - DOSEN 1 =====
+            egr_result = EnergyGravityRuleV94.analyze(
+                up_energy=up_energy,
+                down_energy=down_energy,
+                wmi=wmi_ratio,
+                cascade_bias=cascade_result.get('bias', 'NEUTRAL')
+            )
+            
+            # ================= V95: LIQUIDATION GAP DETECTOR (LGD) - DOSEN 2 =====
+            lgd_gap_result = LiquidationGapDetectorV95.analyze(
+                short_dist=liq['short_dist'],
+                long_dist=liq['long_dist']
+            )
+            
+            # ================= V95: SHORT COVERING RULE (RSC) - DOSEN 2 =====
+            rsc_short_covering_result = ShortCoveringRuleV95.analyze(
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                price_change=change_5m
+            )
+            
             # ================= V95: LIQUIDITY IGNITION DETECTOR (LID) =================
             lid_result = self.lid.analyze(
                 rsi=rsi6,
@@ -11188,9 +11384,16 @@ class BinanceAnalyzerV87:
                 }
                 print(f"⚠️ SAD OVERRIDE: {rsc_result['reason']}")
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V96 (ANTI-SPOOF)
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V96 (UPDATED WITH BPF + LGD)
             final_decision = self.conflict_resolver_v96.resolve(
-                phase_res=phase_result,        # V91 Market Phase - PALING PENTING!
+                # NEW MODULES - PRIORITAS TERTINGGI
+                rsc_res=rsc_short_covering_result,   # V95 Short Covering Rule ⭐
+                bpf_res=bpf_result,                   # V94 Baiting Price Filter ⭐
+                lgd_res=lgd_gap_result,               # V95 Liquidation Gap Detector ⭐
+                egr_res=egr_result,                   # V94 Energy Gravity Rule ⭐
+                
+                # Existing modules
+                phase_res=phase_result,        # V91 Market Phase
                 est_res=est_result,              # V95 Energy Spoof Tracker ⭐
                 odc_res=odc_result,             # V93 OI Drain Condemnation
                 pdd_res=pdd_result,              # V96 Passive Distribution Detector ⭐
@@ -11201,7 +11404,7 @@ class BinanceAnalyzerV87:
                 cascade_res=cascade_result,     # V93 Cascade Time Estimator
                 energy_res=energy_result,       # V92 Execution Energy
                 death_res=death_result,         # V92 Aggression Death
-                lgd_res=lgd_result,             # V91 Liquidity Gravity Drain
+                lgd_void_res=lgd_result,        # V91 Liquidity Gravity Drain (renamed)
                 wsc_res=wsc_result,             # V89 Whale Singularity
                 sat_res=sat_result,             # V90 Liquidity Saturation
                 pet_res=pet_result,             # V90 Position Expansion Trap
@@ -11809,6 +12012,33 @@ class BinanceAnalyzerV87:
             result["rsc"] = {
                 "is_valid": rsc_result.get('is_valid', False),
                 "reason": rsc_result.get('reason', '')
+            }
+            
+            # ===== V94: BAITING PRICE FILTER =====
+            result["bpf"] = {
+                "is_bait": bpf_result.get('is_bait', False),
+                "bias": bpf_result.get('bias', 'NEUTRAL'),
+                "reason": bpf_result.get('reason', '')
+            }
+            
+            # ===== V94: ENERGY GRAVITY RULE =====
+            result["egr"] = {
+                "is_veto": egr_result.get('is_veto', False),
+                "bias": egr_result.get('bias', 'NEUTRAL'),
+                "reason": egr_result.get('reason', '')
+            }
+            
+            # ===== V95: LIQUIDATION GAP DETECTOR =====
+            result["lgd_gap"] = {
+                "bias": lgd_gap_result.get('bias', 'NEUTRAL'),
+                "reason": lgd_gap_result.get('reason', '')
+            }
+            
+            # ===== V95: SHORT COVERING RULE =====
+            result["rsc_short_covering"] = {
+                "is_active": rsc_short_covering_result.get('is_active', False),
+                "bias": rsc_short_covering_result.get('bias', 'NEUTRAL'),
+                "reason": rsc_short_covering_result.get('reason', '')
             }
 
             return result
