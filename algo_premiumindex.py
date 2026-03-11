@@ -1833,24 +1833,115 @@ class OIDominanceRuleV96:
         return {"active": False, "bias": "NEUTRAL", "reason": ""}
 
 
-# ================= V96: CONFLICT RESOLVER (UPDATED WITH PBD + LEP) =================
+# ================= V95: RETAIL POSITIONING TRAP (RPT) =================
+class RetailPositioningTrapV95:
+    """
+    🔥 V95: RETAIL POSITIONING TRAP - ANTI-CROWDED TRAP
+    
+    Kasus OGN & DEGO:
+    - Bot pilih SHORT karena jalur murah
+    - Tapi retail terlalu kompak di sisi SHORT (imbalance > 10x)
+    - MM sengaja pilih jalur mahal (Energy Vengeance) untuk sweep retail
+    
+    Prinsip:
+        Jika retail terlalu crowded di satu sisi, MM akan counter-trend
+        meskipun harus keluar energi lebih besar.
+    """
+    @staticmethod
+    def analyze(imbalance_ratio: float, energy_diff_ratio: float, wmi: float) -> Dict:
+        """
+        Args:
+            imbalance_ratio: Rasio imbalance retail (>10x = crowded)
+            energy_diff_ratio: Selisih energi jalur murah vs mahal (>3x = signifikan)
+            wmi: Whale Migration Index (untuk menentukan arah)
+        
+        Returns:
+            Dict dengan is_trap, bias, reason
+        """
+        # Jika retail terlalu numpuk (>10x) di jalur yang dianggap murah
+        if imbalance_ratio > RPT_IMBALANCE_THRESHOLD and energy_diff_ratio > RPT_ENERGY_DIFF_THRESHOLD:
+            return {
+                "is_trap": True,
+                "bias": "LONG" if wmi < 0 else "SHORT",  # Lawan arah retail yang numpuk
+                "reason": f"RPT_CROWDED_TRAP: Retail terlalu kompak ({imbalance_ratio:.1f}x) di jalur murah. "
+                         f"MM bakal lakuin 'Energy Vengeance' (Pilih jalur mahal) buat Liquidasi massal! "
+                         f"JANGAN IKUT ARAH MURAH!"
+            }
+        return {"is_trap": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V96: EXECUTION COMPLETION DETECTOR (ECD) =================
+class ExecutionCompletionDetectorV96:
+    """
+    🔥 V96: EXECUTION COMPLETION DETECTOR - ANTI-LATE ENTRY TRAP
+    
+    Kasus NFP:
+    - RSI = 100, OI = +3.9, WMI = 99
+    - Bot membaca: singularity squeeze → LONG
+    - Realita: execution already finished → market masuk fase distribusi
+    
+    Prinsip:
+        Market maker bekerja dalam phase:
+        1. Accumulation
+        2. Trap
+        3. Execution
+        4. Distribution
+        
+        Bot kamu sudah bisa baca trap & execution, tapi belum bisa baca
+        kapan execution selesai dan masuk fase distribusi.
+    
+    Tanda execution selesai:
+        - RSI > 95 (extreme overbought)
+        - Price spike > 5% (sudah terjadi likuidasi besar)
+        - OI delta > 2% (posisi baru masuk = distribusi)
+    """
+    @staticmethod
+    def analyze(rsi: float, price_change: float, oi_delta: float) -> Dict:
+        """
+        Args:
+            rsi: RSI value (>95 = extreme)
+            price_change: Perubahan harga dalam 5 menit (>5% = spike)
+            oi_delta: OI delta (>2% = new positions)
+        
+        Returns:
+            Dict dengan completed, bias, reason
+        """
+        if rsi > ECD_RSI_THRESHOLD and price_change > ECD_PRICE_SPIKE_MIN and oi_delta > ECD_OI_DELTA_MIN:
+            return {
+                "completed": True,
+                "bias": "REVERSAL",
+                "direction": "SHORT" if rsi > 95 else "LONG",  # Jika RSI > 95, reversal SHORT
+                "reason": f"ECD_EXECUTION_COMPLETE: RSI {rsi:.1f} > 95 + Price spike {price_change:+.2f}% + "
+                         f"OI Δ +{oi_delta:.2f}% (new positions). Likuidasi sudah selesai, MM mulai distribusi! "
+                         f"JANGAN FOLLOW ARAH SEBELUMNYA!"
+            }
+        return {"completed": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V96: CONFLICT RESOLVER (UPDATED WITH PBD + LEP + RPT + ECD) =================
 class ConflictResolverV96:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V96 (DENGAN POSITION BUILD + ENERGY SUPREMACY) 🔥
+    🔥 URUTAN PRIORITAS MUTLAK V96 (DENGAN POSITION BUILD + ENERGY SUPREMACY + RETAIL TRAP + EXECUTION COMPLETION) 🔥
     
     HIERARKI FINAL:
-    1️⃣ PBD (Position Build Detector) - OI naik + price move = POSITION BUILD ⭐ NEW!
-    2️⃣ OID (OI-Directional Conflict) - OI meledak + price turun = REAL SHORTING ⭐ NEW!
-    3️⃣ ODR (OI Dominance Rule) - OI dominance dengan WMI normal ⭐ NEW!
-    4️⃣ RSC (Short Covering Rule) - RSI >90 + OI turun + price naik
-    5️⃣ LEP (Low Energy Priority) - Energy supremacy atas Cascade Time ⭐ NEW!
-    6️⃣ BPF (Baiting Price Filter) - Anti dump palsu
-    7️⃣ LGD (Liquidation Gap Detector) - Gap structure
-    8️⃣ EGR (Energy Gravity Rule) - Energy veto
-    9️⃣ MARKET PHASE (V91) - Konteks market
+    1️⃣ ECD (Execution Completion Detector) (V96) ⭐ BARU! - Deteksi fase distribusi
+    2️⃣ RPT (Retail Positioning Trap) (V95) ⭐ BARU! - Anti-crowded trap
+    3️⃣ PBD (Position Build Detector) - OI naik + price move = POSITION BUILD ⭐ NEW!
+    4️⃣ OID (OI-Directional Conflict) - OI meledak + price turun = REAL SHORTING ⭐ NEW!
+    5️⃣ ODR (OI Dominance Rule) - OI dominance dengan WMI normal ⭐ NEW!
+    6️⃣ RSC (Short Covering Rule) - RSI >90 + OI turun + price naik
+    7️⃣ LEP (Low Energy Priority) - Energy supremacy atas Cascade Time ⭐ NEW!
+    8️⃣ BPF (Baiting Price Filter) - Anti dump palsu
+    9️⃣ LGD (Liquidation Gap Detector) - Gap structure
+    🔟 EGR (Energy Gravity Rule) - Energy veto
+    1️⃣1️⃣ MARKET PHASE (V91) - Konteks market
     """
     @staticmethod
     def resolve(
+        # NEW MODULES V95/V96 - PRIORITAS TERTINGGI!
+        ecd_res: Dict,               # V96 Execution Completion Detector ⭐ BARU!
+        rpt_res: Dict,                # V95 Retail Positioning Trap ⭐ BARU!
+        
         # NEW MODULES V96 - PRIORITAS TERTINGGI!
         pbd_res: Dict,               # V96 Position Build Detector ⭐
         oid_res: Dict,                # V95 OI-Directional Conflict ⭐
@@ -1885,7 +1976,27 @@ class ConflictResolverV96:
         lim_res: Dict
     ) -> Dict:
         
-        # 🏗️ 1. POSITION BUILD DETECTOR (PALING PENTING! - Kasus LYN)
+        # 🎯 1. EXECUTION COMPLETION DETECTOR (TERTINGGI!)
+        # Jika eksekusi sudah selesai, jangan entry searah!
+        if ecd_res.get('completed'):
+            return {
+                "bias": ecd_res['direction'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_ECD: {ecd_res['reason']}",
+                "phase": "DISTRIBUTION_PHASE"
+            }
+        
+        # 🎯 2. RETAIL POSITIONING TRAP (PRIORITAS KEDUA)
+        # Jika retail terlalu crowded, lawan arah mereka!
+        if rpt_res.get('is_trap'):
+            return {
+                "bias": rpt_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V95_RPT: {rpt_res['reason']}",
+                "phase": "ENERGY_VENGEANCE"
+            }
+        
+        # 🏗️ 3. POSITION BUILD DETECTOR (PALING PENTING! - Kasus LYN)
         if pbd_res.get('active'):
             return {
                 "bias": pbd_res['bias'],
@@ -1894,7 +2005,7 @@ class ConflictResolverV96:
                 "phase": "POSITION_BUILD_PHASE"
             }
         
-        # 💧 2. OI-DIRECTIONAL CONFLICT (Real Shorting/Longing)
+        # 💧 4. OI-DIRECTIONAL CONFLICT (Real Shorting/Longing)
         if oid_res.get('active'):
             return {
                 "bias": oid_res['bias'],
@@ -1903,7 +2014,7 @@ class ConflictResolverV96:
                 "phase": "REAL_POSITIONING"
             }
         
-        # 👑 3. OI DOMINANCE RULE (Price follows OI)
+        # 👑 5. OI DOMINANCE RULE (Price follows OI)
         if odr_res.get('active'):
             return {
                 "bias": odr_res['bias'],
@@ -1912,7 +2023,7 @@ class ConflictResolverV96:
                 "phase": "OI_DOMINANCE"
             }
         
-        # 🔥 4. SHORT COVERING RULE
+        # 🔥 6. SHORT COVERING RULE
         if rsc_res.get('is_active'):
             return {
                 "bias": rsc_res['bias'],
@@ -2216,33 +2327,39 @@ class SilentDistributionDetectorV97:
 # ================= V97: CONFLICT RESOLVER (THE GHOST WALL HIERARCHY) =================
 class ConflictResolverV97:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V97 (DENGAN GWC, LVD, SDD) 🔥
+    🔥 URUTAN PRIORITAS MUTLAK V97 (DENGAN GWC, LVD, SDD, ECD, RPT) 🔥
     
     HIERARKI FINAL (LENGKAP):
-    1️⃣ MARKET PHASE (V91) - Konteks market (paling penting!)
-    2️⃣ GWC (Ghost Wall Condemnation) (V96) ⭐ - Flow <0.05 + Energy >150 = GHOST WALL!
-    3️⃣ LVD (Liquidity Vacuum Detector) (V97) ⭐ - Flow <0.05 + Agg <0.1 + RSI >75 = VACUUM DUMP!
-    4️⃣ SDD (Silent Distribution Detector) (V97) ⭐ - RSI >80 + OI >0 + Flow <0.5 = DISTRIBUTION!
-    5️⃣ EST (Energy Spoof Tracker) (V95) - Energy >100 + OI turun = SPOOF!
-    6️⃣ ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
-    7️⃣ PDD (Passive Distribution Detector) (V96) - OI turun + Flow tinggi + RSI <50
-    8️⃣ LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
-    9️⃣ PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati
-    🔟 OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop
-    1️⃣1️⃣ WMI EXHAUST (V93) - WMI 99 + OI crash
-    1️⃣2️⃣ CASCADE TIME (V93) - Jalur cascade tercepat
-    1️⃣3️⃣ EXECUTION ENERGY (V92) - Jalur termurah
-    1️⃣4️⃣ AGGRESSION DEATH (V92) - Market mati
-    1️⃣5️⃣ LGD (Void Drain) (V91) - Void trap
-    1️⃣6️⃣ WSC (Whale Singularity) (V89)
-    1️⃣7️⃣ SAT (Liquidity Saturation) (V90)
-    1️⃣8️⃣ PET (Position Expansion Trap) (V90)
-    1️⃣9️⃣ ZGH (Zero Gravity) (V86)
-    2️⃣0️⃣ OTF (Oversold Trap) (V85)
-    2️⃣1️⃣ LIM (Liquidity Imbalance) (V87)
+    1️⃣ ECD (Execution Completion Detector) (V96) ⭐ BARU! - Deteksi fase distribusi
+    2️⃣ RPT (Retail Positioning Trap) (V95) ⭐ BARU! - Anti-crowded trap
+    3️⃣ MARKET PHASE (V91) - Konteks market (paling penting!)
+    4️⃣ GWC (Ghost Wall Condemnation) (V96) ⭐ - Flow <0.05 + Energy >150 = GHOST WALL!
+    5️⃣ LVD (Liquidity Vacuum Detector) (V97) ⭐ - Flow <0.05 + Agg <0.1 + RSI >75 = VACUUM DUMP!
+    6️⃣ SDD (Silent Distribution Detector) (V97) ⭐ - RSI >80 + OI >0 + Flow <0.5 = DISTRIBUTION!
+    7️⃣ EST (Energy Spoof Tracker) (V95) - Energy >100 + OI turun = SPOOF!
+    8️⃣ ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
+    9️⃣ PDD (Passive Distribution Detector) (V96) - OI turun + Flow tinggi + RSI <50
+    🔟 LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
+    1️⃣1️⃣ PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati
+    1️⃣2️⃣ OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop
+    1️⃣3️⃣ WMI EXHAUST (V93) - WMI 99 + OI crash
+    1️⃣4️⃣ CASCADE TIME (V93) - Jalur cascade tercepat
+    1️⃣5️⃣ EXECUTION ENERGY (V92) - Jalur termudah
+    1️⃣6️⃣ AGGRESSION DEATH (V92) - Market mati
+    1️⃣7️⃣ LGD (Void Drain) (V91) - Void trap
+    1️⃣8️⃣ WSC (Whale Singularity) (V89)
+    1️⃣9️⃣ SAT (Liquidity Saturation) (V90)
+    2️⃣0️⃣ PET (Position Expansion Trap) (V90)
+    2️⃣1️⃣ ZGH (Zero Gravity) (V86)
+    2️⃣2️⃣ OTF (Oversold Trap) (V85)
+    2️⃣3️⃣ LIM (Liquidity Imbalance) (V87)
     """
     @staticmethod
     def resolve(
+        # NEW MODULES V95/V96 - PRIORITAS TERTINGGI!
+        ecd_res: Dict,               # V96 Execution Completion Detector ⭐ BARU!
+        rpt_res: Dict,                # V95 Retail Positioning Trap ⭐ BARU!
+        
         phase_res: Dict,           # V91 Market Phase
         gwc_res: Dict,               # V96 Ghost Wall Condemnation ⭐
         lvd_res: Dict,                # V97 Liquidity Vacuum Detector ⭐
@@ -2266,7 +2383,27 @@ class ConflictResolverV97:
         lim_res: Dict               # V87 Liquidity Imbalance
     ) -> Dict:
         
-        # 🎯 1. MARKET PHASE VETO (Raja - Paling Penting!)
+        # 🎯 1. EXECUTION COMPLETION DETECTOR (TERTINGGI!)
+        # Jika eksekusi sudah selesai, jangan entry searah!
+        if ecd_res.get('completed'):
+            return {
+                "bias": ecd_res['direction'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_ECD: {ecd_res['reason']}",
+                "phase": "DISTRIBUTION_PHASE"
+            }
+        
+        # 🎯 2. RETAIL POSITIONING TRAP (PRIORITAS KEDUA)
+        # Jika retail terlalu crowded, lawan arah mereka!
+        if rpt_res.get('is_trap'):
+            return {
+                "bias": rpt_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V95_RPT: {rpt_res['reason']}",
+                "phase": "ENERGY_VENGEANCE"
+            }
+        
+        # 🎯 3. MARKET PHASE VETO (Raja - Paling Penting!)
         if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
             return {
                 "bias": phase_res.get('signal', phase_res['bias']),
@@ -10124,6 +10261,15 @@ LID_WMI_MIN = 50                              # WMI > 50 (ada target short)
 EST_ENERGY_SPOOF_THRESHOLD = 100.0        # Energy > 100 = suspicious
 EST_OI_DELTA_NEGATIVE = 0                    # OI harus negatif (< 0)
 
+# ================= V95 CONFIG - RETAIL POSITIONING TRAP =================
+RPT_IMBALANCE_THRESHOLD = 10.0      # Imbalance > 10x = retail crowded
+RPT_ENERGY_DIFF_THRESHOLD = 3.0      # Energy diff > 3x untuk validasi
+
+# ================= V96 CONFIG - EXECUTION COMPLETION DETECTOR =================
+ECD_RSI_THRESHOLD = 95                # RSI > 95 = extreme overbought
+ECD_PRICE_SPIKE_MIN = 5.0              # Price spike > 5%
+ECD_OI_DELTA_MIN = 2.0                  # OI delta > 2%
+
 # ================= V96 CONFIG - PASSIVE DISTRIBUTION & SHORT COVERING FILTER =================
 # PDD - Passive Distribution Detector
 PDD_OI_DELTA_MIN = -1.0                     # OI turun > 1.0%
@@ -11152,6 +11298,10 @@ class BinanceAnalyzerV87:
         self.pdd = PassiveDistributionDetectorV96()       # V96 baru! (Passive Distribution)
         self.rsc = RealShortCoveringFilterV96()           # V96 baru! (Real Short Covering)
         
+        # ===== V95/V96: NEW MODULES - RETAIL TRAP & EXECUTION COMPLETION =====
+        self.rpt = RetailPositioningTrapV95()             # V95 baru! (Retail Positioning Trap) ⭐
+        self.ecd = ExecutionCompletionDetectorV96()       # V96 baru! (Execution Completion Detector) ⭐
+        
         self.conflict_resolver_v96 = ConflictResolverV96  # V96 resolver ⭐
         
         # ===== V96: NEW MODULE - GHOST WALL CONDEMNATION =====
@@ -11910,6 +12060,24 @@ class BinanceAnalyzerV87:
                 lim_bias=lim_result.get('bias', 'NEUTRAL')
             )
             
+            # ================= V95/V96: RETAIL TRAP & EXECUTION COMPLETION =================
+            # RPT - Retail Positioning Trap
+            imbalance_ratio = lim_result.get('imbalance_ratio', 1.0)
+            energy_diff_ratio = max(up_energy, down_energy) / min(up_energy, down_energy) if min(up_energy, down_energy) > 0 else 1.0
+            
+            rpt_result = self.rpt.analyze(
+                imbalance_ratio=imbalance_ratio,
+                energy_diff_ratio=energy_diff_ratio,
+                wmi=wmi_ratio
+            )
+            
+            # ECD - Execution Completion Detector
+            ecd_result = self.ecd.analyze(
+                rsi=rsi6,
+                price_change=change_5m,
+                oi_delta=oi_delta_5m
+            )
+            
             # ================= V95: LIQUIDITY IGNITION DETECTOR (LID) =================
             lid_result = self.lid.analyze(
                 rsi=rsi6,
@@ -11975,8 +12143,12 @@ class BinanceAnalyzerV87:
                 flow=trades['ratio']
             )
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V97 (THE GHOST WALL HIERARCHY)
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V97 (THE GHOST WALL HIERARCHY - DENGAN ECD + RPT)
             final_decision = self.conflict_resolver_v97.resolve(
+                # NEW MODULES V95/V96 - PRIORITAS TERTINGGI!
+                ecd_res=ecd_result,               # V96 Execution Completion Detector ⭐ BARU!
+                rpt_res=rpt_result,                # V95 Retail Positioning Trap ⭐ BARU!
+                
                 phase_res=phase_result,           # V91 Market Phase
                 gwc_res=gwc_result,                 # V96 Ghost Wall Condemnation ⭐
                 lvd_res=lvd_result,                  # V97 Liquidity Vacuum Detector ⭐
@@ -12586,6 +12758,19 @@ class BinanceAnalyzerV87:
                 "is_spoof": est_result.get('is_spoof', False),
                 "bias": est_result.get('bias', 'NEUTRAL'),
                 "reason": est_result.get('reason', '')
+            }
+            
+            # ===== V95/V96: RETAIL TRAP & EXECUTION COMPLETION =====
+            result["rpt"] = {
+                "is_trap": rpt_result.get('is_trap', False),
+                "bias": rpt_result.get('bias', 'NEUTRAL'),
+                "reason": rpt_result.get('reason', '')
+            }
+            
+            result["ecd"] = {
+                "completed": ecd_result.get('completed', False),
+                "bias": ecd_result.get('direction', 'NEUTRAL'),
+                "reason": ecd_result.get('reason', '')
             }
             
             # ===== V96: PASSIVE DISTRIBUTION DETECTOR =====
