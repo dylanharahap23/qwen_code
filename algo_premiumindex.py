@@ -242,6 +242,23 @@ API_RSI_BULL_MAX = 50
 API_RSI_BEAR_MIN = 50
 API_PRICE_CHANGE_MAX = 0.1
 
+# ================= V96 CONFIG - GHOST WALL CONDEMNATION =================
+# GWC - Ghost Wall Condemnation (Anti-LYN Illusion Trap)
+GWC_FLOW_MAX = 0.05                          # Flow < 0.05 = market freeze
+GWC_ENERGY_DOWN_MIN = 150.0                   # Downside Energy > 150 = suspicious
+GWC_RSI_OVERBOUGHT_MIN = 70                    # RSI > 70 (opsional, untuk validasi)
+
+# ================= V97 CONFIG - LIQUIDITY VACUUM & SILENT DISTRIBUTION =================
+# LVD - Liquidity Vacuum Detector
+LVD_FLOW_MAX = 0.05                           # Flow < 0.05 = freeze
+LVD_AGG_MAX = 0.1                              # Agg < 0.1 = no aggression
+LVD_RSI_MIN = 75                                # RSI > 75 = overbought
+
+# SDD - Silent Distribution Detector
+SDD_RSI_MIN = 80                                # RSI > 80 = extreme overbought
+SDD_OI_DELTA_MIN = 0                             # OI > 0 (naik)
+SDD_FLOW_MAX = 0.5                               # Flow < 0.5 = low flow
+
 # ================= V91: LIQUIDITY GRAVITY DRAIN (LGD) - ANTI-VOID TRAP =================
 class LiquidityGravityDrainV91:
     """
@@ -2091,6 +2108,353 @@ class ConflictResolverV96:
             "reason": "No strong signal detected.",
             "phase": "NEUTRAL"
         }
+
+
+# ================= V96: GHOST WALL CONDEMNATION (GWC) - ANTI-LYN ILLUSION TRAP =================
+class GhostWallCondemnationV96:
+    """
+    🔥 V96: GHOST WALL CONDEMNATION - MENDETEKSI 'TEMBOK HANTU' 🔥
+    
+    Kasus LYNUSDT:
+    - Flow: 0.02x (FREEZE! Nggak ada transaksi)
+    - Downside Energy: 303.0 (SANGAT EKSTRIM!)
+    - RSI: 86 (Overbought)
+    
+    Interpretasi:
+    Tembok bawah 303.0 itu 100% PALSU (Ghost Wall). MM cuma naruh order
+    buat nakutin SHORT seller & mancing LONG buyer. Begitu LONG masuk,
+    tembok dicabut -> FREE FALL 7% karena orderbook bawah kosong.
+    
+    Rule: Jika Flow < 0.05 (freeze) DAN Downside Energy > 150, maka GHOST WALL!
+    """
+    @staticmethod
+    def analyze(flow: float, agg: float, down_energy: float, rsi: float) -> Dict:
+        # Cek kondisi market freeze dengan tembok raksasa
+        if flow < GWC_FLOW_MAX and down_energy > GWC_ENERGY_DOWN_MIN:
+            # Validasi dengan RSI (harga di area tinggi)
+            if rsi > GWC_RSI_OVERBOUGHT_MIN:
+                return {
+                    "is_ghost_wall": True,
+                    "bias": "SHORT",
+                    "reason": f"GWC_GHOST_WALL: Flow mati ({flow}x) TAPI Energy Downside ({down_energy:.1f}) meledak. "
+                             f"RSI {rsi:.1f} overbought. Ini GHOST WALL! Whale siap cabut jaring beli. "
+                             f"JANGAN LONG, bensin Dump sedang disiapkan!"
+                }
+            else:
+                # Ghost wall di area netral (tetap spoof, tapi kurang yakin)
+                return {
+                    "is_ghost_wall": True,
+                    "bias": "SHORT",
+                    "reason": f"GWC_GHOST_WALL_SUSPECT: Flow mati ({flow}x) TAPI Energy Downside ({down_energy:.1f}) besar. "
+                             f"Ini kemungkinan GHOST WALL. Waspada potensi dump!"
+                }
+        
+        return {"is_ghost_wall": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V97: LIQUIDITY VACUUM DETECTOR (LVD) - DETEKSI VACUUM DUMP =================
+class LiquidityVacuumDetectorV97:
+    """
+    🔥 V97: LIQUIDITY VACUUM DETECTOR - PREDIKSI DUMP CEPAT 🔥
+    
+    Kasus LYNUSDT:
+    - Flow: 0.02x (freeze)
+    - Agg: 0.0x (mati)
+    - RSI: 86 (overbought)
+    - Energy Downside besar (tapi palsu)
+    
+    Ini bukan cuma ghost wall. Ini fase sebelum LIQUIDITY VACUUM DROP.
+    Orderbook bawah kosong. Ketika whale cancel bid wall, tidak ada liquidity
+    untuk menahan price. Hasilnya: price free fall 7% tanpa resistance.
+    
+    Rule: Flow < 0.05 + Agg < 0.1 + RSI > 75 = VACUUM DUMP!
+    """
+    @staticmethod
+    def analyze(flow: float, agg: float, rsi: float) -> Dict:
+        if flow < LVD_FLOW_MAX and agg < LVD_AGG_MAX and rsi > LVD_RSI_MIN:
+            return {
+                "active": True,
+                "bias": "SHORT",
+                "reason": f"LVD_VACUUM: Market freeze (Flow {flow}x, Agg {agg}x) + RSI {rsi:.1f} overbought. "
+                         f"Orderbook kemungkinan kosong! Dump cascade incoming tanpa hambatan!"
+            }
+        
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V97: SILENT DISTRIBUTION DETECTOR (SDD) - ANTI-DISTRIBUTION TOP =================
+class SilentDistributionDetectorV97:
+    """
+    🔥 V97: SILENT DISTRIBUTION DETECTOR - WHALE JUAL PELAN TANPA MARKET SELL 🔥
+    
+    Kasus LYNUSDT:
+    - RSI: 86 (extreme overbought)
+    - OI: +1.47% (naik - posisi baru masuk)
+    - Flow: 0.02x (mati)
+    
+    Ini pattern klasik DISTRIBUTION TOP:
+    1. MM pump harga (RSI tinggi)
+    2. Jual via limit orders (Agg = 0 karena pakai limit sell)
+    3. OI naik (short building atau posisi baru)
+    4. Flow mati (transaksi sepi)
+    
+    Rule: RSI > 80 + OI > 0 + Flow < 0.5 = SILENT DISTRIBUTION!
+    """
+    @staticmethod
+    def analyze(rsi: float, oi_delta: float, flow: float) -> Dict:
+        if rsi > SDD_RSI_MIN and oi_delta > SDD_OI_DELTA_MIN and flow < SDD_FLOW_MAX:
+            return {
+                "active": True,
+                "bias": "SHORT",
+                "reason": f"SDD_DISTRIBUTION: RSI {rsi:.1f} extreme + OI Δ {oi_delta:+.2f}% (rising) + Flow {flow}x (low). "
+                         f"Whale distributing positions via limit orders. DISTRIBUTION TOP! SIAP DUMP!"
+            }
+        
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V97: CONFLICT RESOLVER (THE GHOST WALL HIERARCHY) =================
+class ConflictResolverV97:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V97 (DENGAN GWC, LVD, SDD) 🔥
+    
+    HIERARKI FINAL (LENGKAP):
+    1️⃣ MARKET PHASE (V91) - Konteks market (paling penting!)
+    2️⃣ GWC (Ghost Wall Condemnation) (V96) ⭐ - Flow <0.05 + Energy >150 = GHOST WALL!
+    3️⃣ LVD (Liquidity Vacuum Detector) (V97) ⭐ - Flow <0.05 + Agg <0.1 + RSI >75 = VACUUM DUMP!
+    4️⃣ SDD (Silent Distribution Detector) (V97) ⭐ - RSI >80 + OI >0 + Flow <0.5 = DISTRIBUTION!
+    5️⃣ EST (Energy Spoof Tracker) (V95) - Energy >100 + OI turun = SPOOF!
+    6️⃣ ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
+    7️⃣ PDD (Passive Distribution Detector) (V96) - OI turun + Flow tinggi + RSI <50
+    8️⃣ LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
+    9️⃣ PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati
+    🔟 OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop
+    1️⃣1️⃣ WMI EXHAUST (V93) - WMI 99 + OI crash
+    1️⃣2️⃣ CASCADE TIME (V93) - Jalur cascade tercepat
+    1️⃣3️⃣ EXECUTION ENERGY (V92) - Jalur termurah
+    1️⃣4️⃣ AGGRESSION DEATH (V92) - Market mati
+    1️⃣5️⃣ LGD (Void Drain) (V91) - Void trap
+    1️⃣6️⃣ WSC (Whale Singularity) (V89)
+    1️⃣7️⃣ SAT (Liquidity Saturation) (V90)
+    1️⃣8️⃣ PET (Position Expansion Trap) (V90)
+    1️⃣9️⃣ ZGH (Zero Gravity) (V86)
+    2️⃣0️⃣ OTF (Oversold Trap) (V85)
+    2️⃣1️⃣ LIM (Liquidity Imbalance) (V87)
+    """
+    @staticmethod
+    def resolve(
+        phase_res: Dict,           # V91 Market Phase
+        gwc_res: Dict,               # V96 Ghost Wall Condemnation ⭐
+        lvd_res: Dict,                # V97 Liquidity Vacuum Detector ⭐
+        sdd_res: Dict,                # V97 Silent Distribution Detector ⭐
+        est_res: Dict,               # V95 Energy Spoof Tracker
+        odc_res: Dict,              # V93 OI Drain Condemnation
+        pdd_res: Dict,                # V96 Passive Distribution Detector
+        lep_res: Dict,              # V94 Low Energy Path
+        plr_res: Dict,               # V94 Passive Liquidity Reload
+        opd_res: Dict,              # V93 Orderbook Pull Detector
+        wmi_exhaust_res: Dict,      # V93 WMI Exhaustion
+        cascade_res: Dict,          # V93 Cascade Time Estimator
+        energy_res: Dict,           # V92 Execution Energy
+        death_res: Dict,            # V92 Aggression Death
+        lgd_res: Dict,              # V91 Liquidity Gravity Drain
+        wsc_res: Dict,              # V89 Whale Singularity
+        sat_res: Dict,              # V90 Liquidity Saturation
+        pet_res: Dict,              # V90 Position Expansion Trap
+        zgh_res: Dict,              # V86 Zero Gravity Horizon
+        otf_res: Dict,              # V85 Oversold Trap Filter
+        lim_res: Dict               # V87 Liquidity Imbalance
+    ) -> Dict:
+        
+        # 🎯 1. MARKET PHASE VETO (Raja - Paling Penting!)
+        if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
+            return {
+                "bias": phase_res.get('signal', phase_res['bias']),
+                "confidence": phase_res['priority'],
+                "reason": f"PHASE_OVERRIDE: {phase_res['reason']}",
+                "phase": phase_res['phase']
+            }
+        
+        # 👻 2. GHOST WALL CONDEMNATION (V96) - Flow mati + Energy raksasa
+        if gwc_res.get('is_ghost_wall'):
+            return {
+                "bias": gwc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_GWC: {gwc_res['reason']}",
+                "phase": "GHOST_WALL_COLLAPSE"
+            }
+        
+        # 💨 3. LIQUIDITY VACUUM DETECTOR (V97) - Freeze + RSI tinggi = vacuum dump
+        if lvd_res.get('active'):
+            return {
+                "bias": lvd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V97_LVD: {lvd_res['reason']}",
+                "phase": "VACUUM_DUMP"
+            }
+        
+        # 📊 4. SILENT DISTRIBUTION DETECTOR (V97) - RSI tinggi + OI naik + flow rendah
+        if sdd_res.get('active'):
+            return {
+                "bias": sdd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V97_SDD: {sdd_res['reason']}",
+                "phase": "SILENT_DISTRIBUTION"
+            }
+        
+        # 🛡️ 5. ENERGY SPOOF TRACKER (V95)
+        if est_res.get('is_spoof'):
+            return {
+                "bias": est_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V95_EST: {est_res['reason']}",
+                "phase": "SPOOF_COLLAPSE"
+            }
+        
+        # 💧 6. OI DRAIN CONDEMNATION (V93)
+        if odc_res.get('active'):
+            return {
+                "bias": odc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_ODC: {odc_res['reason']}",
+                "phase": "VACUUM_FLUSH"
+            }
+        
+        # 📉 7. PASSIVE DISTRIBUTION DETECTOR (V96)
+        if pdd_res.get('active'):
+            return {
+                "bias": pdd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V96_PDD: {pdd_res['reason']}",
+                "phase": "PASSIVE_DISTRIBUTION"
+            }
+        
+        # ⚡ 8. LOW ENERGY PATH (V94)
+        if lep_res.get('is_active'):
+            return {
+                "bias": lep_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V94_LEP: {lep_res['reason']}",
+                "phase": "ENERGY_PATH_VETO"
+            }
+        
+        # 🔄 9. PASSIVE LIQUIDITY RELOAD (V94)
+        if plr_res.get('active'):
+            return {
+                "bias": plr_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V94_PLR: {plr_res['reason']}",
+                "phase": "STEALTH_ACCUMULATION"
+            }
+        
+        # 🧲 10. ORDERBOOK PULL DETECTOR (V93)
+        if opd_res.get('active'):
+            return {
+                "bias": opd_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_OPD: {opd_res['reason']}",
+                "phase": "LIQUIDITY_VACUUM"
+            }
+        
+        # 💀 11. WMI SINGULARITY EXHAUSTION (V93)
+        if wmi_exhaust_res.get('active'):
+            return {
+                "bias": wmi_exhaust_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V93_WMI_EXHAUST: {wmi_exhaust_res['reason']}",
+                "phase": "SINGULARITY_TRAP"
+            }
+        
+        # ⏱️ 12. CASCADE TIME ESTIMATOR (V93)
+        if cascade_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": cascade_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V93_CASCADE: {cascade_res['reason']}",
+                "phase": "CASCADE_PATH"
+            }
+        
+        # ⚡ 13. EXECUTION ENERGY (V92)
+        if energy_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": energy_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V92_ENERGY: {energy_res['reason']}",
+                "phase": "EXECUTION_ENERGY"
+            }
+        
+        # 🕳️ 14. LIQUIDITY GRAVITY DRAIN (V91)
+        if lgd_res.get('active'):
+            return {
+                "bias": lgd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V91_LGD: {lgd_res['reason']}",
+                "phase": "VOID_DRAIN"
+            }
+        
+        # 🌌 15. WHALE SINGULARITY (V89)
+        if wsc_res.get('is_active'):
+            return {
+                "bias": wsc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V89_WSC: {wsc_res['reason']}",
+                "phase": "SINGULARITY_EXECUTION"
+            }
+        
+        # ⚡ 16. LIQUIDITY SATURATION (V90)
+        if sat_res.get('active'):
+            return {
+                "bias": sat_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_SAT: {sat_res['reason']}",
+                "phase": "SATURATION_SQUEEZE"
+            }
+        
+        # 🔥 17. POSITION EXPANSION TRAP (V90)
+        if pet_res.get('active'):
+            return {
+                "bias": pet_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_PET: {pet_res['reason']}",
+                "phase": "EXPANSION_TRAP"
+            }
+        
+        # 🔴 18. ZERO GRAVITY HORIZON (V86)
+        if zgh_res.get('is_ceiling'):
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "reason": f"V86_ZGH: {zgh_res['reason']}",
+                "phase": "ZERO_GRAVITY"
+            }
+        
+        # 🟢 19. OVERSOLD TRAP (V85)
+        if otf_res.get('is_trap'):
+            return {
+                "bias": "LONG" if otf_res.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND' else otf_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V85_OTF: {otf_res['reason']}",
+                "phase": "OVERSOLD_TRAP"
+            }
+        
+        # ⚖️ 20. LIQUIDITY IMBALANCE (V87)
+        if lim_res.get('bias') != "NEUTRAL" and lim_res.get('imbalance_ratio', 1.0) > 10:
+            return {
+                "bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V87_LIM: {lim_res['reason']}",
+                "phase": "IMBALANCE_MOMENTUM"
+            }
+        
+        # Fallback
+        return {
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected.",
+            "phase": "NEUTRAL"
+        }
+
+
 # V82 - LIQUIDITY MIRROR GUARD (LMG) - BARU!
 LMG_DEATH_DISTANCE_MAX = 0.05                   # Jarak kritis untuk Death Magnet (<0.05%)
 LMG_RSI_DEATH_LONG_MAX = 10                     # Maksimal RSI untuk Death Magnet LONG (<10)
@@ -10640,6 +11004,17 @@ class OutputFormatterV87:
             else:
                 print(f"⚠️ RSC: {result['rsc']['reason']}")
         
+        # ===== V96: GHOST WALL CONDEMNATION =====
+        if result.get('gwc', {}).get('is_ghost_wall'):
+            print(f"👻 GWC: ACTIVE - {result['gwc']['reason']}")
+        
+        # ===== V97: LIQUIDITY VACUUM & SILENT DISTRIBUTION =====
+        if result.get('lvd', {}).get('active'):
+            print(f"💨 LVD: ACTIVE - {result['lvd']['reason']}")
+        
+        if result.get('sdd', {}).get('active'):
+            print(f"📊 SDD: ACTIVE - {result['sdd']['reason']}")
+        
         # ===== V94: BAITING PRICE FILTER =====
         if result.get('bpf', {}).get('is_bait'):
             print(f"🎣 BPF: ACTIVE - {result['bpf']['reason']}")
@@ -10778,6 +11153,16 @@ class BinanceAnalyzerV87:
         self.rsc = RealShortCoveringFilterV96()           # V96 baru! (Real Short Covering)
         
         self.conflict_resolver_v96 = ConflictResolverV96  # V96 resolver ⭐
+        
+        # ===== V96: NEW MODULE - GHOST WALL CONDEMNATION =====
+        self.gwc = GhostWallCondemnationV96()            # V96 baru! (Ghost Wall)
+        
+        # ===== V97: NEW MODULES - LIQUIDITY VACUUM & SILENT DISTRIBUTION =====
+        self.lvd = LiquidityVacuumDetectorV97()          # V97 baru! (Liquidity Vacuum)
+        self.sdd = SilentDistributionDetectorV97()        # V97 baru! (Silent Distribution)
+        
+        # ===== V97: NEW CONFLICT RESOLVER (dengan hierarki terbaru) =====
+        self.conflict_resolver_v97 = ConflictResolverV97  # V97 resolver ⭐
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
@@ -11568,38 +11953,51 @@ class BinanceAnalyzerV87:
                 }
                 print(f"⚠️ SAD OVERRIDE: {rsc_result['reason']}")
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V96 (UPDATED WITH PBD + LEP)
-            final_decision = self.conflict_resolver_v96.resolve(
-                # NEW MODULES V96 - PRIORITAS TERTINGGI
-                pbd_res=pbd_result,          # V96 Position Build Detector ⭐
-                oid_res=oid_result,           # V95 OI-Directional Conflict ⭐
-                odr_res=odr_result,           # V96 OI Dominance Rule ⭐
-                lep_res=lep_result,           # V95 Low Energy Priority ⭐
-                
-                # Existing high priority modules
-                rsc_res=rsc_short_covering_result,   # V95 Short Covering Rule ⭐
-                bpf_res=bpf_result,                   # V94 Baiting Price Filter ⭐
-                lgd_res=lgd_gap_result,               # V95 Liquidation Gap Detector ⭐
-                egr_res=egr_result,                   # V94 Energy Gravity Rule ⭐
-                
-                # Existing modules
-                phase_res=phase_result,        # V91 Market Phase
-                est_res=est_result,              # V95 Energy Spoof Tracker ⭐
-                odc_res=odc_result,             # V93 OI Drain Condemnation
-                pdd_res=pdd_result,              # V96 Passive Distribution Detector ⭐
-                plr_res=plr_result,              # V94 Passive Liquidity Reload
-                opd_res=opd_result,             # V93 Orderbook Pull Detector
+            # ================= V96: GHOST WALL CONDEMNATION (GWC) =================
+            gwc_result = self.gwc.analyze(
+                flow=trades['ratio'],
+                agg=trades['aggressive_ratio'],
+                down_energy=down_energy,
+                rsi=rsi6
+            )
+            
+            # ================= V97: LIQUIDITY VACUUM DETECTOR (LVD) =================
+            lvd_result = self.lvd.analyze(
+                flow=trades['ratio'],
+                agg=trades['aggressive_ratio'],
+                rsi=rsi6
+            )
+            
+            # ================= V97: SILENT DISTRIBUTION DETECTOR (SDD) =================
+            sdd_result = self.sdd.analyze(
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                flow=trades['ratio']
+            )
+            
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V97 (THE GHOST WALL HIERARCHY)
+            final_decision = self.conflict_resolver_v97.resolve(
+                phase_res=phase_result,           # V91 Market Phase
+                gwc_res=gwc_result,                 # V96 Ghost Wall Condemnation ⭐
+                lvd_res=lvd_result,                  # V97 Liquidity Vacuum Detector ⭐
+                sdd_res=sdd_result,                  # V97 Silent Distribution Detector ⭐
+                est_res=est_result,                 # V95 Energy Spoof Tracker
+                odc_res=odc_result,                # V93 OI Drain Condemnation
+                pdd_res=pdd_result,                  # V96 Passive Distribution Detector
+                lep_res=lep_result,                # V94 Low Energy Path
+                plr_res=plr_result,                 # V94 Passive Liquidity Reload
+                opd_res=opd_result,                # V93 Orderbook Pull Detector
                 wmi_exhaust_res=wmi_exhaust_result, # V93 WMI Exhaustion
-                cascade_res=cascade_result,     # V93 Cascade Time Estimator
-                energy_res=energy_result,       # V92 Execution Energy
-                death_res=death_result,         # V92 Aggression Death
-                lgd_void_res=lgd_result,        # V91 Liquidity Gravity Drain (renamed)
-                wsc_res=wsc_result,             # V89 Whale Singularity
-                sat_res=sat_result,             # V90 Liquidity Saturation
-                pet_res=pet_result,             # V90 Position Expansion Trap
-                zgh_res=zgh_result,             # V86 Zero Gravity Horizon
-                otf_res=otf_result,             # V85 Oversold Trap Filter
-                lim_res=lim_result              # V87 Liquidity Imbalance
+                cascade_res=cascade_result,         # V93 Cascade Time Estimator
+                energy_res=energy_result,           # V92 Execution Energy
+                death_res=death_result,             # V92 Aggression Death
+                lgd_res=lgd_result,                 # V91 Liquidity Gravity Drain
+                wsc_res=wsc_result,                 # V89 Whale Singularity
+                sat_res=sat_result,                  # V90 Liquidity Saturation
+                pet_res=pet_result,                  # V90 Position Expansion Trap
+                zgh_res=zgh_result,                  # V86 Zero Gravity Horizon
+                otf_res=otf_result,                  # V85 Oversold Trap Filter
+                lim_res=lim_result                    # V87 Liquidity Imbalance
             )
 
             entry_ready = self.state_mgr.update_entry(final_decision['bias'])
@@ -12201,6 +12599,27 @@ class BinanceAnalyzerV87:
             result["rsc"] = {
                 "is_valid": rsc_result.get('is_valid', False),
                 "reason": rsc_result.get('reason', '')
+            }
+            
+            # ===== V96: GHOST WALL CONDEMNATION =====
+            result["gwc"] = {
+                "is_ghost_wall": gwc_result.get('is_ghost_wall', False),
+                "bias": gwc_result.get('bias', 'NEUTRAL'),
+                "reason": gwc_result.get('reason', '')
+            }
+            
+            # ===== V97: LIQUIDITY VACUUM DETECTOR =====
+            result["lvd"] = {
+                "active": lvd_result.get('active', False),
+                "bias": lvd_result.get('bias', 'NEUTRAL'),
+                "reason": lvd_result.get('reason', '')
+            }
+            
+            # ===== V97: SILENT DISTRIBUTION DETECTOR =====
+            result["sdd"] = {
+                "active": sdd_result.get('active', False),
+                "bias": sdd_result.get('bias', 'NEUTRAL'),
+                "reason": sdd_result.get('reason', '')
             }
             
             # ===== V94: BAITING PRICE FILTER =====
