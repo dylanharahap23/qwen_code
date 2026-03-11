@@ -1129,6 +1129,305 @@ class ConflictResolverV94:
         }
 
 
+# ================= V94: ENERGY GRAVITY RULE (EGR) - ANTI-PIXEL REBOUND TRAP =================
+class EnergyGravityRuleV94:
+    """
+    🔥 V94: ENERGY GRAVITY RULE - MENGHANCURKAN MANIPULASI CASCADE TIME 🔥
+    
+    Kasus PIXEL:
+    - Downside Energy: 7.6 (mahal)
+    - Upside Energy: 2.2 (murah)
+    - WMI: 71.3x (target short di atas)
+    - Cascade Time: SHORT (Down faster)
+    
+    Bot salah pilih SHORT karena percaya Cascade Time.
+    Padahal MM itu ekonomis: mereka pilih jalur termurah (Upside Energy 2.2)
+    untuk memanen Short Liquidity (WMI 71x).
+    
+    Rule: Jika Energy Ratio (Down/Up) > 3x dan cascade_bias = SHORT, VETO!
+    """
+    @staticmethod
+    def analyze(up_energy: float, down_energy: float, wmi: float, cascade_bias: str) -> Dict:
+        # Hitung rasio energi (hambatan bawah vs atas)
+        if up_energy > 0:
+            energy_ratio = down_energy / up_energy
+        else:
+            energy_ratio = 999.0  # Jika up_energy = 0, hambatan bawah tak terhingga
+        
+        # Jika hambatan bawah > 3x lebih besar dari atas, dan cascade bilang SHORT
+        if energy_ratio > EGR_ENERGY_RATIO_THRESHOLD and cascade_bias == "SHORT":
+            # Validasi dengan WMI (ada target short di atas)
+            if wmi > EGR_WMI_MIN:
+                return {
+                    "is_veto": True,
+                    "bias": "LONG",
+                    "reason": f"EGR_ENERGY_VETO: Jalur bawah {energy_ratio:.1f}x lebih mahal ({down_energy:.2f} vs {up_energy:.2f}). "
+                             f"Abaikan Cascade Time SHORT! MM pilih Squeeze murah ke target WMI {wmi:.1f}x!"
+                }
+        
+        # Kasus sebaliknya (jarang, tapi bisa terjadi)
+        if (1/energy_ratio) > EGR_ENERGY_RATIO_THRESHOLD and cascade_bias == "LONG":
+            if wmi < -EGR_WMI_MIN:  # WMI negatif = target long di bawah
+                return {
+                    "is_veto": True,
+                    "bias": "SHORT",
+                    "reason": f"EGR_ENERGY_VETO: Jalur atas {(1/energy_ratio):.1f}x lebih mahal ({up_energy:.2f} vs {down_energy:.2f}). "
+                             f"Abaikan Cascade Time LONG! MM pilih Dump murah ke target WMI {wmi:.1f}x!"
+                }
+        
+        return {"is_veto": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V95: LIQUIDITY IGNITION DETECTOR (LID) - SHORT SQUEEZE SETUP =================
+class LiquidityIgnitionDetectorV95:
+    """
+    🔥 V95: LIQUIDITY IGNITION DETECTOR - SHORT SQUEEZE PREDICTOR 🔥
+    
+    Deteksi kondisi sebelum short squeeze instan (seperti PIXEL +7% dalam 2 menit).
+    
+    Pattern klasik:
+    1. RSI oversold (<30) → harga murah
+    2. OI naik (>1.0%) → short build (retail mulai short)
+    3. Flow rendah (<0.6) → tidak ada panic sell (tenang)
+    4. Upside Energy < Downside Energy → jalur ke atas lebih murah
+    5. WMI > 50 → ada target short liquidation di atas
+    
+    Kombinasi ini = SHORT SQUEEZE SETUP!
+    """
+    @staticmethod
+    def analyze(rsi: float, oi_delta: float, flow: float, 
+                up_energy: float, down_energy: float, wmi: float) -> Dict:
+        
+        # Cek semua kondisi
+        if (rsi < LID_RSI_MAX and 
+            oi_delta > LID_OI_DELTA_MIN and 
+            flow < LID_FLOW_MAX and 
+            up_energy < down_energy and 
+            wmi > LID_WMI_MIN):
+            
+            return {
+                "active": True,
+                "bias": "LONG",
+                "reason": f"LID_IGNITION: RSI {rsi:.1f} oversold + OI Δ +{oi_delta:.2f}% (short build) + "
+                         f"Flow {flow:.2f}x (no panic) + Upside Energy {up_energy:.2f} < Downside {down_energy:.2f}. "
+                         f"Short squeeze ignition setup! WMI {wmi:.1f}x target di atas."
+            }
+        
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V95: CONFLICT RESOLVER (THE ULTIMATE PREDATOR HIERARCHY) =================
+class ConflictResolverV95:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V95 (DENGAN EGR & LID) 🔥
+    
+    HIERARKI FINAL (LENGKAP):
+    1️⃣ MARKET PHASE (V91) - Konteks market (paling penting!)
+    2️⃣ LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
+    3️⃣ EGR (Energy Gravity Rule) (V94) ⭐ - Energy ratio >3x + cascade SHORT → veto!
+    4️⃣ LID (Liquidity Ignition Detector) (V95) ⭐ - Short squeeze setup!
+    5️⃣ ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
+    6️⃣ PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati → stealth accumulation!
+    7️⃣ OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop → VACUUM!
+    8️⃣ WMI EXHAUST (Singularity Exhaustion) (V93) - WMI 99 + OI crash → TRAP!
+    9️⃣ CASCADE TIME (V93) - Jalur cascade tercepat
+    🔟 EXECUTION ENERGY (V92) - Jalur termurah
+    1️⃣1️⃣ AGGRESSION DEATH (V92) - Market mati
+    1️⃣2️⃣ LGD (Void Drain) (V91) - Void trap
+    1️⃣3️⃣ WSC (Whale Singularity) (V89)
+    1️⃣4️⃣ SAT (Liquidity Saturation) (V90)
+    1️⃣5️⃣ PET (Position Expansion Trap) (V90)
+    1️⃣6️⃣ ZGH (Zero Gravity) (V86)
+    1️⃣7️⃣ OTF (Oversold Trap) (V85)
+    1️⃣8️⃣ LIM (Liquidity Imbalance) (V87)
+    """
+    @staticmethod
+    def resolve(
+        phase_res: Dict,           # V91 Market Phase
+        lep_res: Dict,              # V94 Low Energy Path
+        egr_res: Dict,               # V94 Energy Gravity Rule ⭐
+        lid_res: Dict,                # V95 Liquidity Ignition Detector ⭐
+        odc_res: Dict,              # V93 OI Drain Condemnation
+        plr_res: Dict,               # V94 Passive Liquidity Reload
+        opd_res: Dict,              # V93 Orderbook Pull Detector
+        wmi_exhaust_res: Dict,      # V93 WMI Exhaustion
+        cascade_res: Dict,          # V93 Cascade Time Estimator
+        energy_res: Dict,           # V92 Execution Energy
+        death_res: Dict,            # V92 Aggression Death
+        lgd_res: Dict,              # V91 Liquidity Gravity Drain
+        wsc_res: Dict,              # V89 Whale Singularity
+        sat_res: Dict,              # V90 Liquidity Saturation
+        pet_res: Dict,              # V90 Position Expansion Trap
+        zgh_res: Dict,              # V86 Zero Gravity Horizon
+        otf_res: Dict,              # V85 Oversold Trap Filter
+        lim_res: Dict               # V87 Liquidity Imbalance
+    ) -> Dict:
+        
+        # 🎯 1. MARKET PHASE VETO (Raja - Paling Penting!)
+        if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
+            return {
+                "bias": phase_res.get('signal', phase_res['bias']),
+                "confidence": phase_res['priority'],
+                "reason": f"PHASE_OVERRIDE: {phase_res['reason']}",
+                "phase": phase_res['phase']
+            }
+        
+        # ⚡ 2. LOW ENERGY PATH (V94) - Energy ratio >10x veto!
+        if lep_res.get('is_active'):
+            return {
+                "bias": lep_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V94_LEP: {lep_res['reason']}",
+                "phase": "ENERGY_PATH_VETO"
+            }
+        
+        # ⚡ 3. ENERGY GRAVITY RULE (V94) - Energy ratio >3x veto cascade!
+        if egr_res.get('is_veto'):
+            return {
+                "bias": egr_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V94_EGR: {egr_res['reason']}",
+                "phase": "ENERGY_GRAVITY_VETO"
+            }
+        
+        # 🔥 4. LIQUIDITY IGNITION DETECTOR (V95) - Short squeeze setup!
+        if lid_res.get('active'):
+            return {
+                "bias": lid_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V95_LID: {lid_res['reason']}",
+                "phase": "SHORT_SQUEEZE_SETUP"
+            }
+        
+        # 💧 5. OI DRAIN CONDEMNATION (V93)
+        if odc_res.get('active'):
+            return {
+                "bias": odc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_ODC: {odc_res['reason']}",
+                "phase": "VACUUM_FLUSH"
+            }
+        
+        # 🔄 6. PASSIVE LIQUIDITY RELOAD (V94)
+        if plr_res.get('active'):
+            return {
+                "bias": plr_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V94_PLR: {plr_res['reason']}",
+                "phase": "STEALTH_ACCUMULATION"
+            }
+        
+        # 🧲 7. ORDERBOOK PULL DETECTOR (V93)
+        if opd_res.get('active'):
+            return {
+                "bias": opd_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_OPD: {opd_res['reason']}",
+                "phase": "LIQUIDITY_VACUUM"
+            }
+        
+        # 💀 8. WMI SINGULARITY EXHAUSTION (V93)
+        if wmi_exhaust_res.get('active'):
+            return {
+                "bias": wmi_exhaust_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V93_WMI_EXHAUST: {wmi_exhaust_res['reason']}",
+                "phase": "SINGULARITY_TRAP"
+            }
+        
+        # ⏱️ 9. CASCADE TIME ESTIMATOR (V93)
+        if cascade_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": cascade_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V93_CASCADE: {cascade_res['reason']}",
+                "phase": "CASCADE_PATH"
+            }
+        
+        # ⚡ 10. EXECUTION ENERGY (V92)
+        if energy_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": energy_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V92_ENERGY: {energy_res['reason']}",
+                "phase": "EXECUTION_ENERGY"
+            }
+        
+        # 💀 11. AGGRESSION DEATH (V92)
+        # (akan di-handle oleh LGD)
+        
+        # 🕳️ 12. LIQUIDITY GRAVITY DRAIN (V91)
+        if lgd_res.get('active'):
+            return {
+                "bias": lgd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V91_LGD: {lgd_res['reason']}",
+                "phase": "VOID_DRAIN"
+            }
+        
+        # 🌌 13. WHALE SINGULARITY (V89)
+        if wsc_res.get('is_active'):
+            return {
+                "bias": wsc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V89_WSC: {wsc_res['reason']}",
+                "phase": "SINGULARITY_EXECUTION"
+            }
+        
+        # ⚡ 14. LIQUIDITY SATURATION (V90)
+        if sat_res.get('active'):
+            return {
+                "bias": sat_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_SAT: {sat_res['reason']}",
+                "phase": "SATURATION_SQUEEZE"
+            }
+        
+        # 🔥 15. POSITION EXPANSION TRAP (V90)
+        if pet_res.get('active'):
+            return {
+                "bias": pet_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_PET: {pet_res['reason']}",
+                "phase": "EXPANSION_TRAP"
+            }
+        
+        # 🔴 16. ZERO GRAVITY HORIZON (V86)
+        if zgh_res.get('is_ceiling'):
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "reason": f"V86_ZGH: {zgh_res['reason']}",
+                "phase": "ZERO_GRAVITY"
+            }
+        
+        # 🟢 17. OVERSOLD TRAP (V85)
+        if otf_res.get('is_trap'):
+            return {
+                "bias": "LONG" if otf_res.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND' else otf_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V85_OTF: {otf_res['reason']}",
+                "phase": "OVERSOLD_TRAP"
+            }
+        
+        # ⚖️ 18. LIQUIDITY IMBALANCE (V87)
+        if lim_res.get('bias') != "NEUTRAL" and lim_res.get('imbalance_ratio', 1.0) > 10:
+            return {
+                "bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V87_LIM: {lim_res['reason']}",
+                "phase": "IMBALANCE_MOMENTUM"
+            }
+        
+        # Fallback
+        return {
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected.",
+            "phase": "NEUTRAL"
+        }
+
+
 # ================= CONFIG V83 (THE LIQUIDITY SNIPER) =================
 # 🔥 V83 NEW MODULES - MICROSECOND LIQUIDITY RADAR
 
@@ -8820,6 +9119,18 @@ PLR_OI_DELTA_MIN = 1.0                   # OI naik > 1%
 PLR_AGG_MAX = 0.2                        # Agg < 0.2 (mati)
 PLR_FLOW_MAX = 1.2                       # Flow < 1.2 (netral)
 
+# ================= V94 CONFIG - ENERGY GRAVITY RULE =================
+# EGR - Energy Gravity Rule (Anti-PIXEL Rebound Trap)
+EGR_ENERGY_RATIO_THRESHOLD = 3.0          # Ratio > 3x = veto cascade time
+EGR_WMI_MIN = 50                           # Minimal WMI untuk validasi target
+
+# ================= V95 CONFIG - LIQUIDITY IGNITION DETECTOR =================
+# LID - Liquidity Ignition Detector (Short Squeeze Setup)
+LID_RSI_MAX = 30                            # RSI < 30 (oversold)
+LID_OI_DELTA_MIN = 1.0                       # OI naik > 1.0% (short build)
+LID_FLOW_MAX = 0.6                           # Flow < 0.6 (no panic sell)
+LID_WMI_MIN = 50                              # WMI > 50 (ada target short)
+
 
 # ================= V87: ZERO AGGRESSION SQUEEZE (ZAS) =================
 class ZeroAggressionSqueezeV87:
@@ -9655,6 +9966,14 @@ class OutputFormatterV87:
         if result.get('plr', {}).get('active'):
             print(f"🔄 PLR: ACTIVE - {result['plr']['reason']}")
         
+        # ===== V94: ENERGY GRAVITY RULE =====
+        if result.get('egr', {}).get('is_veto'):
+            print(f"⚡ EGR: ACTIVE - {result['egr']['reason']}")
+        
+        # ===== V95: LIQUIDITY IGNITION DETECTOR =====
+        if result.get('lid', {}).get('active'):
+            print(f"🔥 LID: ACTIVE - {result['lid']['reason']}")
+        
         # V82
         if result.get('lmg', {}).get('is_death_magnet'):
             print(f"💀 LMG: ACTIVE - {result['lmg']['reason']}")
@@ -9768,7 +10087,12 @@ class BinanceAnalyzerV87:
         # ===== V94: NEW MODULES - ENERGY PATH & PASSIVE RELOAD =====
         self.lep = LowEnergyPathV94()                    # V94 baru! (PIXEL - Energy Path)
         self.plr = PassiveLiquidityReloadV94()            # V94 baru! (Passive Liquidity Reload)
-        self.conflict_resolver_v94 = ConflictResolverV94  # V94 baru! ⭐
+        self.egr = EnergyGravityRuleV94()                 # V94 baru! (Energy Gravity Rule)
+        
+        # ===== V95: NEW MODULE - LIQUIDITY IGNITION DETECTOR =====
+        self.lid = LiquidityIgnitionDetectorV95()         # V95 baru! (Short Squeeze Setup)
+        
+        self.conflict_resolver_v95 = ConflictResolverV95  # V95 resolver ⭐
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
@@ -10452,12 +10776,32 @@ class BinanceAnalyzerV87:
                 flow=trades['ratio']
             )
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V94 (ENERGY PATH & PASSIVE RELOAD)
-            final_decision = self.conflict_resolver_v94.resolve(
+            # ================= V94: ENERGY GRAVITY RULE (EGR) =================
+            egr_result = self.egr.analyze(
+                up_energy=up_energy,
+                down_energy=down_energy,
+                wmi=wmi_ratio,
+                cascade_bias=cascade_result.get('bias', 'NEUTRAL')
+            )
+            
+            # ================= V95: LIQUIDITY IGNITION DETECTOR (LID) =================
+            lid_result = self.lid.analyze(
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                flow=trades['ratio'],
+                up_energy=up_energy,
+                down_energy=down_energy,
+                wmi=wmi_ratio
+            )
+            
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V95 (ENERGY GRAVITY & LID)
+            final_decision = self.conflict_resolver_v95.resolve(
                 phase_res=phase_result,        # V91 Market Phase - PALING PENTING!
-                lep_res=lep_result,             # V94 Low Energy Path ⭐
+                lep_res=lep_result,             # V94 Low Energy Path
+                egr_res=egr_result,              # V94 Energy Gravity Rule ⭐
+                lid_res=lid_result,               # V95 Liquidity Ignition Detector ⭐
                 odc_res=odc_result,             # V93 OI Drain Condemnation
-                plr_res=plr_result,              # V94 Passive Liquidity Reload ⭐
+                plr_res=plr_result,              # V94 Passive Liquidity Reload
                 opd_res=opd_result,             # V93 Orderbook Pull Detector
                 wmi_exhaust_res=wmi_exhaust_result, # V93 WMI Exhaustion
                 cascade_res=cascade_result,     # V93 Cascade Time Estimator
@@ -11037,6 +11381,20 @@ class BinanceAnalyzerV87:
                 "active": plr_result.get('active', False),
                 "bias": plr_result.get('bias', 'NEUTRAL'),
                 "reason": plr_result.get('reason', '')
+            }
+            
+            # ===== V94: ENERGY GRAVITY RULE =====
+            result["egr"] = {
+                "is_veto": egr_result.get('is_veto', False),
+                "bias": egr_result.get('bias', 'NEUTRAL'),
+                "reason": egr_result.get('reason', '')
+            }
+            
+            # ===== V95: LIQUIDITY IGNITION DETECTOR =====
+            result["lid"] = {
+                "active": lid_result.get('active', False),
+                "bias": lid_result.get('bias', 'NEUTRAL'),
+                "reason": lid_result.get('reason', '')
             }
 
             return result
