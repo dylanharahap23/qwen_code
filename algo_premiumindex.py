@@ -2164,6 +2164,236 @@ class VacuumDetectorV98:
         return {"active": False, "bias": "NEUTRAL", "reason": ""}
 
 
+# ================= V99: SUPERIOR WHALE DOMINANCE PROTOCOL =================
+
+class SuperiorWDMVIP99:
+    """
+    🔥 V99: SUPERIOR WHALE DOMINANCE PROTOCOL - WMI ABSOLUTE VETO POWER
+    
+    Masalah HUMAUSDT:
+        - WMI = -80.9x (mendekati singularitas)
+        - LEP (Energy Path) memilih SHORT karena jalur down lebih murah
+        - Tapi real market: LONG! (karena Short Liquidation Pool raksasa di atas)
+    
+    Prinsip:
+        MM memilih profit tertinggi (Liquidity Reward), bukan effort termurah (Energy Cost),
+        jika likuidasinya memuakkan (WMI ekstrem).
+    
+    Rule:
+        Jika WMI > 95 atau < -95, Energy Calculation DILARANG OVERRIDE!
+        Target WMI jauh lebih 'bernutrisi' bagi MM dibanding efisiensi path.
+    """
+    @staticmethod
+    def check_override(wmi_ratio: float, lep_bias: str = None) -> Dict:
+        """
+        Args:
+            wmi_ratio: Whale Migration Index
+            lep_bias: Bias dari Low Energy Path (optional)
+        
+        Returns:
+            Dict dengan is_veto, bias, reason
+        """
+        # Kasus 1: WMI sangat negatif (< -95) = Massive Long LIQ Cluster ABOVE
+        # Artinya: Target squeeze ke atas (LONG)
+        if wmi_ratio < -WMI_SINGULARITY_VETO_THRESHOLD:
+            return {
+                "is_veto": True,
+                "bias": "LONG",
+                "reason": f"V99_WMI_VETO: WMI {wmi_ratio:.1f}x < -95 (Long LIQ Cluster RAKSASA di atas)! "
+                         f"MM akan pilih profit tertinggi (Squeeze Up) meskipun Energy Path bilang {lep_bias}. "
+                         f"Override LEP! DILARANG SHORT!"
+            }
+        
+        # Kasus 2: WMI sangat positif (> 95) = Massive Short LIQ Cluster BELOW
+        # Artinya: Target dump ke bawah (SHORT)
+        if wmi_ratio > WMI_SINGULARITY_VETO_THRESHOLD:
+            return {
+                "is_veto": True,
+                "bias": "SHORT",
+                "reason": f"V99_WMI_VETO: WMI {wmi_ratio:.1f}x > 95 (Short LIQ Cluster RAKSASA di bawah)! "
+                         f"MM akan pilih profit tertinggi (Dump Down) meskipun Energy Path bilang {lep_bias}. "
+                         f"Override LEP! DILARANG LONG!"
+            }
+        
+        return {"is_veto": False, "bias": "NEUTRAL", "reason": ""}
+
+
+class InternalTrapV99FMT:
+    """
+    🔥 V99: FAKE MOMENTUM / WASH TRADE DETECTOR - ANTI-ARIA TRAP
+    
+    Kasus ARIAUSDT:
+        - Flow = 3.55x (TINGGI!)
+        - Price Change = -0.12% (turun sedikit)
+        - RSI = 29.3 (rendah)
+        - Bot salah baca: Position Flip / Accumulation → LONG
+        - Realita: Distribution Top → SHORT
+    
+    Interpretasi:
+        Flow tinggi + Price turun + RSI rendah sering disalahartikan sebagai "Accumulation".
+        Padahal bisa jadi "Absorption Trap" atau "Internal Matching" buatan Exchange.
+        Whale sedang jual limit di atas, menyerap buying pressure.
+    
+    Rule:
+        IF Flow > 3.0 AND Price Change < -0.5% AND RSI < 40:
+            Ini BUKAN Bullish Absorption, ini BEARISH TRAP!
+            Bias = SHORT
+    """
+    @staticmethod
+    def detect(trade_flow: float, price_change_5m: float, rsi: float) -> Dict:
+        """
+        Args:
+            trade_flow: Trade Flow ratio (>3.0 = sangat tinggi)
+            price_change_5m: Perubahan harga 5 menit (< -0.5% = turun)
+            rsi: RSI value (<40 = rendah/oversold)
+        
+        Returns:
+            Dict dengan is_trap, bias, reason
+        """
+        if trade_flow > INTERNAL_TRAP_FLOW_MIN and price_change_5m < INTERNAL_TRAP_PRICE_MAX and rsi < INTERNAL_TRAP_RSI_MAX:
+            return {
+                "is_trap": True,
+                "bias": "SHORT",
+                "reason": f"V99_FMT_INTERNAL_TRAP: Flow {trade_flow:.2f}x (TINGGI!) + Price {price_change_5m:+.2f}% (turun) + "
+                         f"RSI {rsi:.1f} (rendah). Ini BUKAN Accumulation! Ini Internal Matching / Absorption Trap. "
+                         f"Whale distribusi via Limit Orders. DILARANG LONG!"
+            }
+        return {"is_trap": False, "bias": "NEUTRAL", "reason": ""}
+
+
+class OIAccelerationPhaseV99:
+    """
+    🔥 V99: OI ACCELERATION PHASE DETECTION - MEMBEDAKAN DISTRIBUTION VS VACUUM
+    
+    Masalah utama: Bot tidak membedakan "Distribution Drop" vs "Liquidity Vacuum Reset".
+    Sama-sama OI turun (negative delta), tapi artinya sangat berbeda.
+    
+    Kasus HUMAUSDT:
+        - OI turun -2.21%
+        - Harga relatif stabil
+        - Bot salah baca: Distribution / Exit
+        - Realita: Vacuum Reset sebelum Squeeze
+    
+    Logic Penyelesaian:
+        Jika OI turun drastis (< -1.0%):
+            - Jika harga turun > 2% + flow sepi = LIQUIDATION PANIC (SHORT)
+            - Jika harga stabil (±0.2%) + flow sepi = VACUUM RESET (LONG)
+            - Jika harga naik sedikit + OI turun = SHORT COVERING (LONG)
+    """
+    @staticmethod
+    def analyze(oi_delta: float, price_change: float, flow: float) -> Dict:
+        """
+        Args:
+            oi_delta: OI Delta 5 menit (< -1.0% = turun drastis)
+            price_change: Perubahan harga 5 menit
+            flow: Trade Flow (untuk validasi)
+        
+        Returns:
+            Dict dengan phase, bias, reason
+        """
+        if oi_delta < OI_ACCEL_PHASE_DROP_MIN:  # OI turun drastis
+            # KASUS 1: LIQUIDATION PANIC (harga turun > 2%)
+            if price_change < OI_ACCEL_PRICE_DUMP_MIN:
+                return {
+                    "phase": "LIQUIDATION_PANIC",
+                    "bias": "SHORT",
+                    "reason": f"V99_OAI_LIQUIDATION_PANIC: OI turun {oi_delta:.2f}% + Price crash {price_change:.2f}%. "
+                             f"Real sell pressure! Lanjutkan SHORT."
+                }
+            
+            # KASUS 2: VACUUM RESET (harga stabil)
+            if abs(price_change) < OI_ACCEL_PRICE_STABLE_MAX:
+                return {
+                    "phase": "VACUUM_RELOAD",
+                    "bias": "LONG",
+                    "reason": f"V99_OAI_VACUUM_RESET: OI turun {oi_delta:.2f}% + Price stabil {price_change:+.2f}%. "
+                             f"Whale bersihkan orderbook (Reset) sebelum SQUEEZE! SIAP LONG!"
+                }
+            
+            # KASUS 3: SHORT COVERING (harga naik)
+            if price_change > 0:
+                return {
+                    "phase": "SHORT_COVERING",
+                    "bias": "LONG",
+                    "reason": f"V99_OAI_SHORT_COVERING: OI turun {oi_delta:.2f}% + Price naik {price_change:+.2f}%. "
+                             f"Short seller tutup posisi! SIAP REBOUND!"
+                }
+        
+        return {"phase": "NORMAL", "bias": "NEUTRAL", "reason": ""}
+
+
+class LiquidityDensityCalculatorV99:
+    """
+    🔥 V99: LIQUIDITY DENSITY VS DISTANCE RATIO - PERBAIKAN LEP
+    
+    Modul LEP (Low Energy Path) hanya menghitung energi (jarak * imbalan),
+    tapi lupa menghitung KETAJAMAN TARGET (Liquidity Density).
+    
+    Bug: Jalur Down jarak 0.5% dengan likuidasi $1M dianggap lebih murah
+         daripada jalur Up jarak 2% dengan likuidasi $50M.
+    
+    Solusi: Masukkan faktor Value Risk Reward ke dalam perhitungan energi.
+    
+    Formula: path_efficiency = distance / liq_size
+    Semakin kecil nilai efficiency, semakin menarik target (sedikit effort, banyak reward).
+    """
+    @staticmethod
+    def calculate_path_efficiency(liq_size: float, distance: float) -> float:
+        """
+        Menghitung efisiensi path: Energy Cost / Liquidity Profit
+        Bukan cuma jarak, tapi JUMLAH BAHAN BAKAR yang didapat.
+        
+        Args:
+            liq_size: Ukuran likuidasi (dalam $)
+            distance: Jarak ke likuidasi (dalam %)
+        
+        Returns:
+            efficiency: Semakin kecil = semakin menarik
+        """
+        if liq_size <= 0 or distance <= 0:
+            return float('inf')
+        return distance / liq_size
+    
+    @staticmethod
+    def compare_paths(short_liq_size: float, short_dist: float,
+                      long_liq_size: float, long_dist: float) -> Dict:
+        """
+        Membandingkan dua jalur berdasarkan efisiensi (reward/effort).
+        
+        Returns:
+            Dict dengan better_path, bias, reason
+        """
+        short_efficiency = LiquidityDensityCalculatorV99.calculate_path_efficiency(short_liq_size, short_dist)
+        long_efficiency = LiquidityDensityCalculatorV99.calculate_path_efficiency(long_liq_size, long_dist)
+        
+        if short_efficiency < long_efficiency * 0.5:  # Short path 2x lebih efisien
+            return {
+                "better_path": "SHORT_LIQ",
+                "bias": "LONG",
+                "short_efficiency": round(short_efficiency, 6),
+                "long_efficiency": round(long_efficiency, 6),
+                "reason": f"V99_DENSITY: Short Liq Efficiency {short_efficiency:.6f} vs Long {long_efficiency:.6f}. "
+                         f"Short path {long_efficiency/short_efficiency:.1f}x lebih menguntungkan! MM pilih SQUEEZE UP!"
+            }
+        elif long_efficiency < short_efficiency * 0.5:  # Long path 2x lebih efisien
+            return {
+                "better_path": "LONG_LIQ",
+                "bias": "SHORT",
+                "short_efficiency": round(short_efficiency, 6),
+                "long_efficiency": round(long_efficiency, 6),
+                "reason": f"V99_DENSITY: Long Liq Efficiency {long_efficiency:.6f} vs Short {short_efficiency:.6f}. "
+                         f"Long path {short_efficiency/long_efficiency:.1f}x lebih menguntungkan! MM pilih DUMP DOWN!"
+            }
+        
+        return {
+            "better_path": "BALANCED",
+            "bias": "NEUTRAL",
+            "short_efficiency": round(short_efficiency, 6),
+            "long_efficiency": round(long_efficiency, 6),
+            "reason": "Efficiency seimbang."
+        }
+
+
 # ================= V96: CONFLICT RESOLVER (UPDATED WITH PBD + LEP + RPT + ECD + SVI + EVH) =================
 class ConflictResolverV96:
     """
@@ -3322,6 +3552,356 @@ def safe_div(a, b, default=1.0):
         return a / b
     except:
         return default
+
+# ================= V99: REVISED CONFLICT RESOLVER (THE ULTIMATE HIERARCHY) =================
+class ConflictResolverV99:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V99 (THE ULTIMATE HIERARCHY):
+    
+    1. V99 WMI Singularitas Veto - Jika WMI > 95 atau < -95 ⭐ TERTINGGI!
+    2. V99 Internal Trap (FMT) - Flow > 3 + Price turun + RSI rendah ⭐
+    3. V99 OI Acceleration Phase - Bedakan jenis OI drop ⭐
+    4. V99 Liquidity Density Calculator - Perbaiki LEP dengan density ⭐
+    5. V97 EHS (Event Horizon Singularity) - Energy Ratio > 20x + WMI > 95
+    6. V98 VAC (Vacuum Detector) - Agg < 0.2 + Flow > 1.5
+    7. V96 PBD (Position Build Detector) - OI > 3% + price move
+    8. V97 EVH (Event Horizon) - WMI > 95 + jarak < 0.3%
+    9. V96 SVI (Singularity Veto) - WMI > 99.5
+    10. V96 ECD (Execution Completion) - RSI > 95 + spike > 5% + OI > 2%
+    11. V95 RPT (Retail Positioning Trap) - Imbalance > 10x
+    12. V91 Market Phase Engine - Konteks market
+    13. V86 ZGH (Zero Gravity) - RSI > 90 + OI naik + Agg rendah
+    14. V94 LEP (Low Energy Path) - Energy ratio > 10x (TURUNKAN PRIORITAS!)
+    15. V93 Cascade Time - Jalur tercepat
+    16. dst...
+    """
+    @staticmethod
+    def resolve(
+        # NEW MODULES V99 - PRIORITAS TERTINGGI!
+        wmi_veto_res: Dict,           # V99 WMI Singularitas Veto ⭐
+        internal_trap_res: Dict,       # V99 Internal Trap (FMT) ⭐
+        oi_phase_res: Dict,            # V99 OI Acceleration Phase ⭐
+        density_res: Dict,             # V99 Liquidity Density Calculator ⭐
+        
+        # Existing modules (V97/V98)
+        ehs_res: Dict,
+        vac_res: Dict,
+        pbd_res: Dict,
+        evh_res: Dict,
+        svi_res: Dict,
+        ecd_res: Dict,
+        rpt_res: Dict,
+        phase_res: Dict,
+        gwc_res: Dict,
+        lvd_res: Dict,
+        sdd_res: Dict,
+        est_res: Dict,
+        odc_res: Dict,
+        pdd_res: Dict,
+        lep_res: Dict,
+        plr_res: Dict,
+        opd_res: Dict,
+        wmi_exhaust_res: Dict,
+        cascade_res: Dict,
+        energy_res: Dict,
+        death_res: Dict,
+        lgd_res: Dict,
+        wsc_res: Dict,
+        sat_res: Dict,
+        pet_res: Dict,
+        zgh_res: Dict,
+        otf_res: Dict,
+        lim_res: Dict
+    ) -> Dict:
+        
+        # 🎯 1. V99 WMI SINGULARITAS VETO (PRIORITAS TERTINGGI!)
+        # Jika WMI > 95 atau < -95, veto semua filter energi
+        if wmi_veto_res.get('is_veto'):
+            return {
+                "bias": wmi_veto_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V99_WMI_VETO: {wmi_veto_res['reason']}",
+                "phase": "WHALE_SINGULARITY_OVERRIDE"
+            }
+        
+        # 🎯 2. V99 INTERNAL TRAP (FMT) - Anti-ARIA Trap
+        if internal_trap_res.get('is_trap'):
+            return {
+                "bias": internal_trap_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V99_FMT: {internal_trap_res['reason']}",
+                "phase": "INTERNAL_MATCHING_TRAP"
+            }
+        
+        # 🎯 3. V99 OI ACCELERATION PHASE - Bedakan jenis OI drop
+        if oi_phase_res.get('phase') != 'NORMAL':
+            return {
+                "bias": oi_phase_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V99_OAI: {oi_phase_res['reason']}",
+                "phase": oi_phase_res['phase']
+            }
+        
+        # 🎯 4. V97 EVENT HORIZON SINGULARITY
+        if ehs_res.get('is_active'):
+            return {
+                "bias": ehs_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V97_EHS: {ehs_res['reason']}",
+                "phase": "EVENT_HORIZON_SUCTION"
+            }
+        
+        # 💨 5. VACUUM DETECTOR
+        if vac_res.get('active'):
+            return {
+                "bias": vac_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V98_VAC: {vac_res['reason']}",
+                "phase": "LIQUIDITY_VACUUM"
+            }
+        
+        # 🏗️ 6. POSITION BUILD DETECTOR
+        if pbd_res.get('active'):
+            return {
+                "bias": pbd_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_PBD: {pbd_res['reason']}",
+                "phase": "POSITION_BUILD_PHASE"
+            }
+        
+        # 🎯 7. EVENT HORIZON
+        if evh_res.get('active'):
+            return {
+                "bias": evh_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V97_EVH: {evh_res['reason']}",
+                "phase": "EVENT_HORIZON"
+            }
+        
+        # 🌌 8. SINGULARITY VETO
+        if svi_res.get('is_absolute_veto'):
+            return {
+                "bias": svi_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_SVI: {svi_res['reason']}",
+                "phase": "GOD_EXECUTION"
+            }
+        
+        # 🎯 9. EXECUTION COMPLETION DETECTOR
+        if ecd_res.get('completed'):
+            return {
+                "bias": ecd_res['direction'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_ECD: {ecd_res['reason']}",
+                "phase": "DISTRIBUTION_PHASE"
+            }
+        
+        # 🛡️ 10. RETAIL POSITIONING TRAP
+        if rpt_res.get('is_trap'):
+            return {
+                "bias": rpt_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V95_RPT: {rpt_res['reason']}",
+                "phase": "ENERGY_VENGEANCE"
+            }
+        
+        # 🎯 11. MARKET PHASE VETO
+        if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
+            return {
+                "bias": phase_res.get('signal', phase_res['bias']),
+                "confidence": phase_res['priority'],
+                "reason": f"PHASE_OVERRIDE: {phase_res['reason']}",
+                "phase": phase_res['phase']
+            }
+        
+        # 👻 12. GHOST WALL CONDEMNATION
+        if gwc_res.get('is_ghost_wall'):
+            return {
+                "bias": gwc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_GWC: {gwc_res['reason']}",
+                "phase": "GHOST_WALL_COLLAPSE"
+            }
+        
+        # 💨 13. LIQUIDITY VACUUM DETECTOR
+        if lvd_res.get('active'):
+            return {
+                "bias": lvd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V97_LVD: {lvd_res['reason']}",
+                "phase": "VACUUM_DUMP"
+            }
+        
+        # 📊 14. SILENT DISTRIBUTION DETECTOR
+        if sdd_res.get('active'):
+            return {
+                "bias": sdd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V97_SDD: {sdd_res['reason']}",
+                "phase": "SILENT_DISTRIBUTION"
+            }
+        
+        # 🛡️ 15. ENERGY SPOOF TRACKER
+        if est_res.get('is_spoof'):
+            return {
+                "bias": est_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V95_EST: {est_res['reason']}",
+                "phase": "SPOOF_COLLAPSE"
+            }
+        
+        # 💧 16. OI DRAIN CONDEMNATION
+        if odc_res.get('active'):
+            return {
+                "bias": odc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_ODC: {odc_res['reason']}",
+                "phase": "VACUUM_FLUSH"
+            }
+        
+        # 📉 17. PASSIVE DISTRIBUTION DETECTOR
+        if pdd_res.get('active'):
+            return {
+                "bias": pdd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V96_PDD: {pdd_res['reason']}",
+                "phase": "PASSIVE_DISTRIBUTION"
+            }
+        
+        # ⚡ 18. LOW ENERGY PATH (V94) - PRIORITAS DITURUNKAN!
+        if lep_res.get('is_active'):
+            # Cek dulu dengan density calculator
+            if density_res.get('better_path') != 'BALANCED':
+                # Density lebih penting dari energy
+                return {
+                    "bias": density_res['bias'],
+                    "confidence": "SUPREME",
+                    "reason": f"V99_DENSITY: {density_res['reason']} (override LEP)",
+                    "phase": "DENSITY_OVERRIDE"
+                }
+            return {
+                "bias": lep_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V94_LEP: {lep_res['reason']}",
+                "phase": "ENERGY_PATH_VETO"
+            }
+        
+        # 🔄 19. PASSIVE LIQUIDITY RELOAD
+        if plr_res.get('active'):
+            return {
+                "bias": plr_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V94_PLR: {plr_res['reason']}",
+                "phase": "STEALTH_ACCUMULATION"
+            }
+        
+        # 🧲 20. ORDERBOOK PULL DETECTOR
+        if opd_res.get('active'):
+            return {
+                "bias": opd_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V93_OPD: {opd_res['reason']}",
+                "phase": "LIQUIDITY_VACUUM"
+            }
+        
+        # 💀 21. WMI SINGULARITY EXHAUSTION
+        if wmi_exhaust_res.get('active'):
+            return {
+                "bias": wmi_exhaust_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V93_WMI_EXHAUST: {wmi_exhaust_res['reason']}",
+                "phase": "SINGULARITY_TRAP"
+            }
+        
+        # ⏱️ 22. CASCADE TIME ESTIMATOR
+        if cascade_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": cascade_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V93_CASCADE: {cascade_res['reason']}",
+                "phase": "CASCADE_PATH"
+            }
+        
+        # ⚡ 23. EXECUTION ENERGY
+        if energy_res.get('bias') != "NEUTRAL":
+            return {
+                "bias": energy_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V92_ENERGY: {energy_res['reason']}",
+                "phase": "EXECUTION_ENERGY"
+            }
+        
+        # 🕳️ 24. LIQUIDITY GRAVITY DRAIN
+        if lgd_res.get('active'):
+            return {
+                "bias": lgd_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V91_LGD: {lgd_res['reason']}",
+                "phase": "VOID_DRAIN"
+            }
+        
+        # 🌌 25. WHALE SINGULARITY
+        if wsc_res.get('is_active'):
+            return {
+                "bias": wsc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V89_WSC: {wsc_res['reason']}",
+                "phase": "SINGULARITY_EXECUTION"
+            }
+        
+        # ⚡ 26. LIQUIDITY SATURATION
+        if sat_res.get('active'):
+            return {
+                "bias": sat_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_SAT: {sat_res['reason']}",
+                "phase": "SATURATION_SQUEEZE"
+            }
+        
+        # 🔥 27. POSITION EXPANSION TRAP
+        if pet_res.get('active'):
+            return {
+                "bias": pet_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_PET: {pet_res['reason']}",
+                "phase": "EXPANSION_TRAP"
+            }
+        
+        # 🔴 28. ZERO GRAVITY HORIZON
+        if zgh_res.get('is_ceiling'):
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "reason": f"V86_ZGH: {zgh_res['reason']}",
+                "phase": "ZERO_GRAVITY"
+            }
+        
+        # 🟢 29. OVERSOLD TRAP
+        if otf_res.get('is_trap'):
+            return {
+                "bias": "LONG" if otf_res.get('scenario') == 'LIQUIDITY_VACUUM_REBOUND' else otf_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V85_OTF: {otf_res['reason']}",
+                "phase": "OVERSOLD_TRAP"
+            }
+        
+        # ⚖️ 30. LIQUIDITY IMBALANCE
+        if lim_res.get('bias') != "NEUTRAL" and lim_res.get('imbalance_ratio', 1.0) > 10:
+            return {
+                "bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V87_LIM: {lim_res['reason']}",
+                "phase": "IMBALANCE_MOMENTUM"
+            }
+        
+        # Fallback
+        return {
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected.",
+            "phase": "NEUTRAL"
+        }
+
 
 # ================= V82: ABSORPTION PRESSURE INDEX (API) - BARU! =================
 class AbsorptionPressureV82:
@@ -10620,6 +11200,24 @@ VAC_AGG_MAX = 0.2                        # Aggression < 0.2 = seller mati
 VAC_FLOW_MIN = 1.5                        # Flow > 1.5 = ada volume
 VAC_RSI_IGNORE = True                     # Abaikan RSI saat vacuum
 
+# ================= V99 CONFIG - SUPERIOR WHALE DOMINANCE PROTOCOL =================
+# WMI Absolute Veto Power
+WMI_SINGULARITY_VETO_THRESHOLD = 95.0    # WMI > 95 atau < -95 = veto mutlak
+SVI_WMI_THRESHOLD = 99.0                  # Turunkan dari 99.5 ke 99.0 (lebih sensitif)
+
+# Anti-IED Trap (Institutional Exit Dead)
+IER_EXIT_VALIDATION_THRESHOLD = -1.0      # Jangan percaya IER jika OI turun > -1%
+
+# Internal Trap Detection
+INTERNAL_TRAP_FLOW_MIN = 3.0               # Flow > 3.0
+INTERNAL_TRAP_PRICE_MAX = -0.5              # Price change < -0.5%
+INTERNAL_TRAP_RSI_MAX = 40                  # RSI < 40
+
+# OI Acceleration Phase Detection
+OI_ACCEL_PHASE_DROP_MIN = -1.0              # OI drop > 1%
+OI_ACCEL_PRICE_DUMP_MIN = -2.0               # Price dump > 2%
+OI_ACCEL_PRICE_STABLE_MAX = 0.2              # Price stabil < 0.2%
+
 # ================= V96 CONFIG - PASSIVE DISTRIBUTION & SHORT COVERING FILTER =================
 # PDD - Passive Distribution Detector
 PDD_OI_DELTA_MIN = -1.0                     # OI turun > 1.0%
@@ -11693,6 +12291,13 @@ class BinanceAnalyzerV87:
         # ===== V97: NEW CONFLICT RESOLVER (dengan hierarki terbaru) =====
         self.conflict_resolver_v97 = ConflictResolverV97  # V97 resolver ⭐
         
+        # ===== V99: SUPERIOR WHALE DOMINANCE PROTOCOL =====
+        self.wmi_veto = SuperiorWDMVIP99()           # V99 baru! (WMI Absolute Veto)
+        self.internal_trap = InternalTrapV99FMT()    # V99 baru! (Internal Trap)
+        self.oi_phase = OIAccelerationPhaseV99()     # V99 baru! (OI Phase Detection)
+        self.density_calc = LiquidityDensityCalculatorV99()  # V99 baru! (Density Calculator)
+        self.conflict_resolver_v99 = ConflictResolverV99()   # V99 resolver
+        
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
         
@@ -12559,40 +13164,72 @@ class BinanceAnalyzerV87:
                 flow=trades['ratio']
             )
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V97 (THE GHOST WALL HIERARCHY - DENGAN EHS + VAC + PBD + EVH + SVI + ECD + RPT)
-            final_decision = self.conflict_resolver_v97.resolve(
-                # NEW MODULES V97/V98 - PRIORITAS TERTINGGI!
-                ehs_res=ehs_result,                # V97 Event Horizon Singularity ⭐ BARU! (Anti-ARIA)
-                vac_res=vac_result,                 # V98 Vacuum Detector ⭐ BARU! (Orderbook Vacuum)
-                pbd_res=pbd_result,                  # V96 Position Build Detector ⭐ BARU!
+            # ================= V99: SUPERIOR WHALE DOMINANCE PROTOCOL =================
+            # WMI Veto - Prioritas Tertinggi!
+            wmi_veto_result = self.wmi_veto.check_override(
+                wmi_ratio=wmi_ratio,
+                lep_bias=lep_result.get('bias') if 'lep_result' in locals() else None
+            )
+            
+            # Internal Trap Detection (FMT)
+            internal_trap_result = self.internal_trap.detect(
+                trade_flow=trades['ratio'],
+                price_change_5m=change_5m,
+                rsi=rsi6
+            )
+            
+            # OI Acceleration Phase Detection
+            oi_phase_result = self.oi_phase.analyze(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                flow=trades['ratio']
+            )
+            
+            # Liquidity Density Calculator
+            density_result = self.density_calc.compare_paths(
+                short_liq_size=liq['short_vol'],
+                short_dist=liq['short_dist'],
+                long_liq_size=liq['long_vol'],
+                long_dist=liq['long_dist']
+            )
+            
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V99 (THE ULTIMATE HIERARCHY)
+            final_decision = self.conflict_resolver_v99.resolve(
+                # NEW MODULES V99 - PRIORITAS TERTINGGI!
+                wmi_veto_res=wmi_veto_result,
+                internal_trap_res=internal_trap_result,
+                oi_phase_res=oi_phase_result,
+                density_res=density_result,
                 
-                # Existing high priority modules
-                evh_res=evh_result,               # V97 Event Horizon Detector ⭐ BARU!
-                svi_res=svi_result,                 # V96 Singularity Veto Integrity ⭐ BARU!
-                ecd_res=ecd_result,               # V96 Execution Completion Detector ⭐ BARU!
-                rpt_res=rpt_result,                # V95 Retail Positioning Trap ⭐ BARU!
-                
-                phase_res=phase_result,           # V91 Market Phase
-                gwc_res=gwc_result,                 # V96 Ghost Wall Condemnation ⭐
-                lvd_res=lvd_result,                  # V97 Liquidity Vacuum Detector ⭐
-                sdd_res=sdd_result,                  # V97 Silent Distribution Detector ⭐
-                est_res=est_result,                 # V95 Energy Spoof Tracker
-                odc_res=odc_result,                # V93 OI Drain Condemnation
-                pdd_res=pdd_result,                  # V96 Passive Distribution Detector
-                lep_res=lep_result,                # V94 Low Energy Path
-                plr_res=plr_result,                 # V94 Passive Liquidity Reload
-                opd_res=opd_result,                # V93 Orderbook Pull Detector
-                wmi_exhaust_res=wmi_exhaust_result, # V93 WMI Exhaustion
-                cascade_res=cascade_result,         # V93 Cascade Time Estimator
-                energy_res=energy_result,           # V92 Execution Energy
-                death_res=death_result,             # V92 Aggression Death
-                lgd_res=lgd_result,                 # V91 Liquidity Gravity Drain
-                wsc_res=wsc_result,                 # V89 Whale Singularity
-                sat_res=sat_result,                  # V90 Liquidity Saturation
-                pet_res=pet_result,                  # V90 Position Expansion Trap
-                zgh_res=zgh_result,                  # V86 Zero Gravity Horizon
-                otf_res=otf_result,                  # V85 Oversold Trap Filter
-                lim_res=lim_result                    # V87 Liquidity Imbalance
+                # Existing modules (V97/V98)
+                ehs_res=ehs_result,
+                vac_res=vac_result,
+                pbd_res=pbd_result,
+                evh_res=evh_result,
+                svi_res=svi_result,
+                ecd_res=ecd_result,
+                rpt_res=rpt_result,
+                phase_res=phase_result,
+                gwc_res=gwc_result,
+                lvd_res=lvd_result,
+                sdd_res=sdd_result,
+                est_res=est_result,
+                odc_res=odc_result,
+                pdd_res=pdd_result,
+                lep_res=lep_result,
+                plr_res=plr_result,
+                opd_res=opd_result,
+                wmi_exhaust_res=wmi_exhaust_result,
+                cascade_res=cascade_result,
+                energy_res=energy_result,
+                death_res=death_result,
+                lgd_res=lgd_result,
+                wsc_res=wsc_result,
+                sat_res=sat_result,
+                pet_res=pet_result,
+                zgh_res=zgh_result,
+                otf_res=otf_result,
+                lim_res=lim_result
             )
 
             entry_ready = self.state_mgr.update_entry(final_decision['bias'])
