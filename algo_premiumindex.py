@@ -2051,6 +2051,119 @@ class EventHorizonV97:
         return {"active": False, "bias": "NEUTRAL", "reason": ""}
 
 
+# ================= V97: EVENT HORIZON SINGULARITY (EHS) =================
+class EventHorizonSingularityV97:
+    """
+    🔥 V97: EVENT HORIZON SINGULARITY - ANTI-ARIA TRAP
+    
+    Kasus ARIAUSDT (The Triple Veto Violation):
+    - WMI 98.9x (Hampir Singularitas)
+    - Energy Up: 1.19, Energy Down: 41.37 → Ratio 34.9x!
+    - Short Dist +0.72% (Tipis)
+    - OI Delta +5.64% (Position Building raksasa)
+    - RSI 100.0 (Tapi ini Vacuum, bukan exhaustion)
+    
+    Kelicikan MM:
+        MM sengaja naikin harga pelan-pelan biar RSI mentok 100.
+        Bot lo ngira RSI 100 + RPT = Waktunya bantai retail (Short).
+        Padahal RSI 100 adalah tanda bursa lagi "Full Throttle" 
+        (Injak Gas Pol) buat nge-liquidate SHORT seller.
+    
+    Prinsip:
+        Jika Energy Ratio > 20x DAN WMI > 95, bot dilarang keras
+        melakukan perlawanan arah (SHORT), biarpun retail kompak.
+        Ini adalah "Event Horizon" - tarikan gravitasi yang tidak bisa dilawan.
+    """
+    @staticmethod
+    def analyze(energy_up: float, energy_down: float, wmi: float, short_dist: float) -> Dict:
+        """
+        Args:
+            energy_up: Energy to pump (ke atas)
+            energy_down: Energy to dump (ke bawah)
+            wmi: Whale Migration Index (>95 = extreme)
+            short_dist: Jarak ke short liquidation
+        
+        Returns:
+            Dict dengan is_active, bias, reason
+        """
+        # Hitung energy ratio (mana yang lebih mahal)
+        if energy_up > 0:
+            energy_ratio = energy_down / energy_up
+        else:
+            energy_ratio = 999.0
+        
+        # Event Horizon terdeteksi: satu arah jauh lebih mahal (>20x) + WMI ekstrim
+        if energy_ratio > EHS_ENERGY_RATIO_THRESHOLD and abs(wmi) > EHS_WMI_THRESHOLD:
+            # Validasi dengan jarak likuidasi (semakin dekat, semakin kuat)
+            if abs(short_dist) < EHS_SHORT_DIST_MAX:
+                # Tentukan arah berdasarkan WMI
+                bias = "LONG" if wmi > 0 else "SHORT"
+                
+                return {
+                    "is_active": True,
+                    "bias": bias,
+                    "energy_ratio": round(energy_ratio, 1),
+                    "reason": f"EHS_BLACK_HOLE: Energy Ratio {energy_ratio:.1f}x (MUTLAK) + WMI {wmi:.1f}x. "
+                             f"Jalur lawan terlalu mahal untuk MM! MM pilih jalur termurah "
+                             f"biarpun RSI 100. DILARANG COUNTER!",
+                    "severity": "ABSOLUTE" if energy_ratio > 30 else "SUPREME"
+                }
+        
+        return {"is_active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V98: VACUUM DETECTOR =================
+class VacuumDetectorV98:
+    """
+    🔥 V98: VACUUM DETECTOR - ORDERBOOK VACUUM DETECTION
+    
+    Kasus ARIAUSDT:
+    - Agg = 0.11x (SANGAT RENDAH!)
+    - Flow = 1.94x (Cukup tinggi)
+    - RSI = 100 (Tapi ini bukan exhaustion)
+    
+    Interpretasi sebenarnya:
+        Aggression 0.11x artinya TIDAK ADA SELLER.
+        Dengan kondisi ini, price naik sangat mudah.
+        RSI jadi 100 bukan karena buying kuat, tapi karena liquidity tipis.
+        Ini disebut dalam microstructure: LIQUIDITY VACUUM.
+    
+    Struktur ARIA:
+        phase 1: OI build (+5.6%)
+        phase 2: retail short masuk
+        phase 3: orderbook vacuum (Agg < 0.2)
+        phase 4: squeeze (+7% dalam 13 menit)
+    
+    Rule:
+        Jika Agg < 0.2 DAN Flow > 1.5, maka seller mati.
+        Market maker hanya butuh sedikit buy untuk push price.
+        Abaikan sinyal RSI overbought!
+    """
+    @staticmethod
+    def analyze(agg_ratio: float, flow: float, rsi: float = None) -> Dict:
+        """
+        Args:
+            agg_ratio: Aggressive Ratio (<0.2 = seller mati)
+            flow: Trade Flow (>1.5 = ada volume)
+            rsi: RSI (opsional, untuk konteks)
+        
+        Returns:
+            Dict dengan active, bias, reason
+        """
+        if agg_ratio < VAC_AGG_MAX and flow > VAC_FLOW_MIN:
+            rsi_context = f" meskipun RSI {rsi:.1f}" if rsi and rsi > 80 else ""
+            
+            return {
+                "active": True,
+                "bias": "LONG",
+                "reason": f"VAC_VACUUM_DETECTED: Seller mati (Agg {agg_ratio:.2f}x) + Volume masuk (Flow {flow:.2f}x). "
+                         f"Orderbook kosong di atas{rsi_context}. Market maker hanya butuh sedikit buy untuk push price!",
+                "vacuum_type": "STRONG" if agg_ratio < 0.1 else "MODERATE"
+            }
+        
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
 # ================= V96: CONFLICT RESOLVER (UPDATED WITH PBD + LEP + RPT + ECD + SVI + EVH) =================
 class ConflictResolverV96:
     """
@@ -2483,38 +2596,46 @@ class SilentDistributionDetectorV97:
 # ================= V97: CONFLICT RESOLVER (THE GHOST WALL HIERARCHY) =================
 class ConflictResolverV97:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V97 (THE FINAL HIERARCHY - DENGAN EVH + SVI + GWC + LVD + SDD + ECD + RPT) 🔥
+    🔥 URUTAN PRIORITAS MUTLAK V97 (THE FINAL HIERARCHY - DENGAN EHS + VAC + PBD + EVH + SVI + GWC + LVD + SDD + ECD + RPT) 🔥
     
     HIERARKI FINAL (LENGKAP):
-    1. EVH (Event Horizon) - Jika WMI > 95 & jarak < 0.3% ⭐ BARU!
-    2. SVI (Singularity Veto) - Jika WMI > 99.5 (Veto Segala Veto) ⭐ BARU!
-    3. ECD (Execution Completion Detector) (V96) ⭐ BARU! - Deteksi fase distribusi
-    4. RPT (Retail Positioning Trap) (V95) ⭐ BARU! - Anti-crowded trap
-    5. MARKET PHASE (V91) - Konteks market (paling penting!)
-    6. GWC (Ghost Wall Condemnation) (V96) ⭐ - Flow <0.05 + Energy >150 = GHOST WALL!
-    7. LVD (Liquidity Vacuum Detector) (V97) ⭐ - Flow <0.05 + Agg <0.1 + RSI >75 = VACUUM DUMP!
-    8. SDD (Silent Distribution Detector) (V97) ⭐ - RSI >80 + OI >0 + Flow <0.5 = DISTRIBUTION!
-    9. EST (Energy Spoof Tracker) (V95) - Energy >100 + OI turun = SPOOF!
-    10. ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
-    11. PDD (Passive Distribution Detector) (V96) - OI turun + Flow tinggi + RSI <50
-    12. LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
-    13. PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati
-    14. OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop
-    15. WMI EXHAUST (V93) - WMI 99 + OI crash
-    16. CASCADE TIME (V93) - Jalur cascade tercepat
-    17. EXECUTION ENERGY (V92) - Jalur termudah
-    18. AGGRESSION DEATH (V92) - Market mati
-    19. LGD (Void Drain) (V91) - Void trap
-    20. WSC (Whale Singularity) (V89)
-    21. SAT (Liquidity Saturation) (V90)
-    22. PET (Position Expansion Trap) (V90)
-    23. ZGH (Zero Gravity) (V86)
-    24. OTF (Oversold Trap) (V85)
-    25. LIM (Liquidity Imbalance) (V87)
+    1. EHS (Event Horizon Singularity) - Energy Ratio > 20x + WMI > 95 ⭐ BARU! (Anti-ARIA Trap)
+    2. VAC (Vacuum Detector) - Agg < 0.2 + Flow > 1.5 ⭐ BARU! (Orderbook Vacuum)
+    3. PBD (Position Build Detector) - OI > 3% + price move ⭐ BARU!
+    4. EVH (Event Horizon) - Jika WMI > 95 & jarak < 0.3% ⭐ BARU!
+    5. SVI (Singularity Veto) - Jika WMI > 99.5 (Veto Segala Veto) ⭐ BARU!
+    6. ECD (Execution Completion Detector) (V96) ⭐ BARU! - Deteksi fase distribusi
+    7. RPT (Retail Positioning Trap) (V95) ⭐ BARU! - Anti-crowded trap
+    8. MARKET PHASE (V91) - Konteks market (paling penting!)
+    9. GWC (Ghost Wall Condemnation) (V96) ⭐ - Flow <0.05 + Energy >150 = GHOST WALL!
+    10. LVD (Liquidity Vacuum Detector) (V97) ⭐ - Flow <0.05 + Agg <0.1 + RSI >75 = VACUUM DUMP!
+    11. SDD (Silent Distribution Detector) (V97) ⭐ - RSI >80 + OI >0 + Flow <0.5 = DISTRIBUTION!
+    12. EST (Energy Spoof Tracker) (V95) - Energy >100 + OI turun = SPOOF!
+    13. ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
+    14. PDD (Passive Distribution Detector) (V96) - OI turun + Flow tinggi + RSI <50
+    15. LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
+    16. PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati
+    17. OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop
+    18. WMI EXHAUST (V93) - WMI 99 + OI crash
+    19. CASCADE TIME (V93) - Jalur cascade tercepat
+    20. EXECUTION ENERGY (V92) - Jalur termudah
+    21. AGGRESSION DEATH (V92) - Market mati
+    22. LGD (Void Drain) (V91) - Void trap
+    23. WSC (Whale Singularity) (V89)
+    24. SAT (Liquidity Saturation) (V90)
+    25. PET (Position Expansion Trap) (V90)
+    26. ZGH (Zero Gravity) (V86)
+    27. OTF (Oversold Trap) (V85)
+    28. LIM (Liquidity Imbalance) (V87)
     """
     @staticmethod
     def resolve(
-        # NEW MODULES V96/V97 - PRIORITAS TERTINGGI!
+        # NEW MODULES V97/V98 - PRIORITAS TERTINGGI!
+        ehs_res: Dict,                # V97 Event Horizon Singularity ⭐ BARU! (Anti-ARIA)
+        vac_res: Dict,                 # V98 Vacuum Detector ⭐ BARU! (Orderbook Vacuum)
+        pbd_res: Dict,                  # V96 Position Build Detector ⭐ BARU!
+        
+        # Existing high priority modules
         evh_res: Dict,                # V97 Event Horizon Detector ⭐ BARU!
         svi_res: Dict,                 # V96 Singularity Veto Integrity ⭐ BARU!
         ecd_res: Dict,               # V96 Execution Completion Detector ⭐ BARU!
@@ -2543,8 +2664,37 @@ class ConflictResolverV97:
         lim_res: Dict               # V87 Liquidity Imbalance
     ) -> Dict:
         
-        # 🎯 1. EVENT HORIZON (PRIORITAS TERTINGGI!)
-        # Jika jarak likuidasi terlalu dekat dengan WMI ekstrim, price wajib menabrak magnet
+        # 🕳️ 1. EVENT HORIZON SINGULARITY (Penyelamat ARIA - Anti Over-Logic)
+        # Jika energy ratio > 20x + WMI > 95, ini black hole. Jangan counter!
+        if ehs_res.get('is_active'):
+            return {
+                "bias": ehs_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V97_EHS: {ehs_res['reason']}",
+                "phase": "EVENT_HORIZON_SUCTION"
+            }
+        
+        # 💨 2. VACUUM DETECTOR (Orderbook kosong)
+        # Jika seller mati (Agg < 0.2) tapi volume masuk, price akan mudah bergerak
+        if vac_res.get('active'):
+            return {
+                "bias": vac_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V98_VAC: {vac_res['reason']}",
+                "phase": "LIQUIDITY_VACUUM"
+            }
+        
+        # 🏗️ 3. POSITION BUILD DETECTOR (OI meledak + price move)
+        # Whale sedang membangun posisi, ikuti arah OI
+        if pbd_res.get('active'):
+            return {
+                "bias": pbd_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_PBD: {pbd_res['reason']}",
+                "phase": "POSITION_BUILD_PHASE"
+            }
+        
+        # 🎯 4. EVENT HORIZON (WMI > 95 + jarak < 0.3%)
         if evh_res.get('active'):
             return {
                 "bias": evh_res['bias'],
@@ -2553,7 +2703,7 @@ class ConflictResolverV97:
                 "phase": "EVENT_HORIZON"
             }
         
-        # 🌌 2. SINGULARITY VETO INTEGRITY (Anti-OverLogic DEGO)
+        # 🌌 5. SINGULARITY VETO INTEGRITY (Anti-OverLogic DEGO)
         # Jika WMI > 99.5, veto semua filter lain
         if svi_res.get('is_absolute_veto'):
             return {
@@ -2563,7 +2713,7 @@ class ConflictResolverV97:
                 "phase": "GOD_EXECUTION"
             }
         
-        # 🎯 3. EXECUTION COMPLETION DETECTOR
+        # 🎯 6. EXECUTION COMPLETION DETECTOR
         # Jika eksekusi sudah selesai, jangan entry searah!
         if ecd_res.get('completed'):
             return {
@@ -2573,7 +2723,7 @@ class ConflictResolverV97:
                 "phase": "DISTRIBUTION_PHASE"
             }
         
-        # 🛡️ 4. RETAIL POSITIONING TRAP (Hanya aktif jika bukan singularitas)
+        # 🛡️ 7. RETAIL POSITIONING TRAP (Hanya aktif jika bukan singularitas)
         # Catatan: SVI sudah handle kasus WMI > 99.5, jadi ini aman
         if rpt_res.get('is_trap'):
             return {
@@ -2583,7 +2733,7 @@ class ConflictResolverV97:
                 "phase": "ENERGY_VENGEANCE"
             }
         
-        # 🎯 5. MARKET PHASE VETO (Raja - Paling Penting!)
+        # 🎯 8. MARKET PHASE VETO (Raja - Paling Penting!)
         if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
             return {
                 "bias": phase_res.get('signal', phase_res['bias']),
@@ -2592,7 +2742,7 @@ class ConflictResolverV97:
                 "phase": phase_res['phase']
             }
         
-        # 👻 2. GHOST WALL CONDEMNATION (V96) - Flow mati + Energy raksasa
+        # 👻 9. GHOST WALL CONDEMNATION (V96) - Flow mati + Energy raksasa
         if gwc_res.get('is_ghost_wall'):
             return {
                 "bias": gwc_res['bias'],
@@ -2601,7 +2751,7 @@ class ConflictResolverV97:
                 "phase": "GHOST_WALL_COLLAPSE"
             }
         
-        # 💨 3. LIQUIDITY VACUUM DETECTOR (V97) - Freeze + RSI tinggi = vacuum dump
+        # 💨 10. LIQUIDITY VACUUM DETECTOR (V97) - Freeze + RSI tinggi = vacuum dump
         if lvd_res.get('active'):
             return {
                 "bias": lvd_res['bias'],
@@ -2610,7 +2760,7 @@ class ConflictResolverV97:
                 "phase": "VACUUM_DUMP"
             }
         
-        # 📊 4. SILENT DISTRIBUTION DETECTOR (V97) - RSI tinggi + OI naik + flow rendah
+        # 📊 11. SILENT DISTRIBUTION DETECTOR (V97) - RSI tinggi + OI naik + flow rendah
         if sdd_res.get('active'):
             return {
                 "bias": sdd_res['bias'],
@@ -2619,7 +2769,7 @@ class ConflictResolverV97:
                 "phase": "SILENT_DISTRIBUTION"
             }
         
-        # 🛡️ 5. ENERGY SPOOF TRACKER (V95)
+        # 🛡️ 12. ENERGY SPOOF TRACKER (V95)
         if est_res.get('is_spoof'):
             return {
                 "bias": est_res['bias'],
@@ -2628,7 +2778,7 @@ class ConflictResolverV97:
                 "phase": "SPOOF_COLLAPSE"
             }
         
-        # 💧 6. OI DRAIN CONDEMNATION (V93)
+        # 💧 13. OI DRAIN CONDEMNATION (V93)
         if odc_res.get('active'):
             return {
                 "bias": odc_res['bias'],
@@ -2637,7 +2787,7 @@ class ConflictResolverV97:
                 "phase": "VACUUM_FLUSH"
             }
         
-        # 📉 7. PASSIVE DISTRIBUTION DETECTOR (V96)
+        # 📉 14. PASSIVE DISTRIBUTION DETECTOR (V96)
         if pdd_res.get('active'):
             return {
                 "bias": pdd_res['bias'],
@@ -2646,7 +2796,7 @@ class ConflictResolverV97:
                 "phase": "PASSIVE_DISTRIBUTION"
             }
         
-        # ⚡ 8. LOW ENERGY PATH (V94)
+        # ⚡ 15. LOW ENERGY PATH (V94)
         if lep_res.get('is_active'):
             return {
                 "bias": lep_res['bias'],
@@ -2655,7 +2805,7 @@ class ConflictResolverV97:
                 "phase": "ENERGY_PATH_VETO"
             }
         
-        # 🔄 9. PASSIVE LIQUIDITY RELOAD (V94)
+        # 🔄 16. PASSIVE LIQUIDITY RELOAD (V94)
         if plr_res.get('active'):
             return {
                 "bias": plr_res['bias'],
@@ -10457,6 +10607,18 @@ SVI_WMI_THRESHOLD = 99.5           # WMI > 99.5 = Singularitas Mutlak
 EVH_WMI_THRESHOLD = 95.0            # WMI > 95
 EVH_SHORT_DIST_MAX = 0.3             # Short distance < 0.3%
 EVH_LONG_DIST_MAX = 0.3              # Long distance < 0.3% (untuk kasus sebaliknya)
+
+# ================= V97 CONFIG - EVENT HORIZON SINGULARITY (EHS) =================
+# EHS - Event Horizon Singularity (Anti-ARIA Trap)
+EHS_ENERGY_RATIO_THRESHOLD = 20.0     # Energy ratio > 20x = mutlak
+EHS_WMI_THRESHOLD = 95.0               # WMI > 95
+EHS_SHORT_DIST_MAX = 1.5                # Short distance < 1.5%
+
+# ================= V98 CONFIG - VACUUM DETECTOR =================
+# VAC - Orderbook Vacuum Detection (Anti-Seller Exhaustion)
+VAC_AGG_MAX = 0.2                        # Aggression < 0.2 = seller mati
+VAC_FLOW_MIN = 1.5                        # Flow > 1.5 = ada volume
+VAC_RSI_IGNORE = True                     # Abaikan RSI saat vacuum
 
 # ================= V96 CONFIG - PASSIVE DISTRIBUTION & SHORT COVERING FILTER =================
 # PDD - Passive Distribution Detector
