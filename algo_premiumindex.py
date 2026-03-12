@@ -1918,27 +1918,163 @@ class ExecutionCompletionDetectorV96:
         return {"completed": False, "bias": "NEUTRAL", "reason": ""}
 
 
-# ================= V96: CONFLICT RESOLVER (UPDATED WITH PBD + LEP + RPT + ECD) =================
+# ================= V96: SINGULARITY VETO INTEGRITY (SVI) =================
+class SingularityVetoV96:
+    """
+    🔥 V96: SINGULARITY VETO INTEGRITY - ANTI-OVER-LOGIC DEGO
+    
+    Kasus DEGOUSDT:
+    - WMI 100.0x (Singularitas Mutlak)
+    - Short Dist +0.19% (Event Horizon)
+    - RSI 91.1 (Parabolic Phase)
+    - Bot V95 salah: RPT (Retail Trap) override Singularitas Whale
+    
+    Prinsip:
+        Di hadapan Singularitas (WMI > 99.5), semua filter psikologi retail hancur.
+        Harga tidak lagi punya pilihan selain menabrak magnet tersebut.
+        MM tidak peduli retail mau posisi apa, MM cuma peduli EKSEKUSI.
+    
+    Kaidah:
+        Jika WMI > 99.5 (Singularitas), maka modul RPT (Retail Trap) HARUS MATI.
+    """
+    @staticmethod
+    def analyze(wmi: float, rpt_bias: str = None, singularity_bias: str = None) -> Dict:
+        """
+        Args:
+            wmi: Whale Migration Index (>99.5 = singularitas mutlak)
+            rpt_bias: Bias dari Retail Positioning Trap (opsional)
+            singularity_bias: Bias dari Whale Singularity (opsional)
+        
+        Returns:
+            Dict dengan is_absolute_veto, bias, reason
+        """
+        if wmi > SVI_WMI_THRESHOLD:
+            # Tentukan bias berdasarkan arah WMI
+            bias = "LONG" if wmi > 0 else "SHORT"
+            
+            return {
+                "is_absolute_veto": True,
+                "bias": bias,
+                "reason": f"SVI_ABSOLUTE_VETO: WMI {wmi:.1f}x adalah Singularitas Mutlak! "
+                         f"Abaikan semua filter (RPT, dll). MM sedang dalam mode 'God Execution'. "
+                         f"Ikuti arah Magnet {wmi:.1f}x!",
+                "wmi_level": "CRITICAL" if wmi > 99.9 else "ABSOLUTE"
+            }
+        
+        # Level warning (99.0 - 99.5)
+        if wmi > 99.0:
+            bias = "LONG" if wmi > 0 else "SHORT"
+            return {
+                "is_absolute_veto": False,
+                "warning": True,
+                "bias": bias,
+                "reason": f"SVI_WARNING: WMI {wmi:.1f}x mendekati singularitas. "
+                         f"Pertimbangkan untuk memprioritaskan sinyal WSC.",
+                "wmi_level": "WARNING"
+            }
+        
+        return {
+            "is_absolute_veto": False, 
+            "warning": False,
+            "bias": "NEUTRAL", 
+            "reason": ""
+        }
+
+
+# ================= V97: EVENT HORIZON DETECTOR (EVH) =================
+class EventHorizonV97:
+    """
+    🔥 V97: EVENT HORIZON DETECTOR - LIQUIDATION MAGNET PROXIMITY
+    
+    Kasus DEGOUSDT:
+    - WMI = 100 (Singularitas)
+    - Short liq = +0.19% (SANGAT DEKAT!)
+    - RSI = 91 (Overbought)
+    - Flow = 2.03, Agg = 0.33
+    
+    Prinsip Paling Penting HFT:
+        Market maker selalu memprioritaskan distance_to_liquidation, bukan RSI.
+        
+        Struktur DEGO:
+        price
+        │
+        │ short liq +0.19% ← SANGAT DEKAT (Event Horizon)
+        │
+        │
+        │ long liq -2.95% ← JAUH
+        
+        Artinya: target atas sangat dekat, target bawah jauh.
+        Jadi walaupun RSI 91 (overbought), MM tetap akan ambil +0.19%
+        karena itu free liquidity.
+    
+    Rule:
+        Jika WMI > 95 DAN jarak likuidasi < 0.3%, maka price TIDAK PUNYA PILIHAN
+        selain menabrak magnet tersebut. Abaikan semua sinyal counter-trend!
+    """
+    @staticmethod
+    def analyze(wmi: float, short_dist: float, long_dist: float) -> Dict:
+        """
+        Args:
+            wmi: Whale Migration Index (>95 = extreme)
+            short_dist: Jarak ke short liquidation (+%)
+            long_dist: Jarak ke long liquidation (-%)
+        
+        Returns:
+            Dict dengan active, bias, reason
+        """
+        # Event Horizon untuk SHORT LIQUIDATION (price akan naik)
+        if wmi > EVH_WMI_THRESHOLD and abs(short_dist) < EVH_SHORT_DIST_MAX:
+            return {
+                "active": True,
+                "bias": "LONG",
+                "type": "SHORT_EVENT_HORIZON",
+                "reason": f"EVH_SHORT_HORIZON: Short liq {short_dist:.2f}% terlalu dekat dengan WMI {wmi:.1f}x! "
+                         f"Price tidak punya pilihan selain menabrak magnet ini. "
+                         f"Abaikan RSI {wmi:.1f} atau sinyal distribution!",
+                "distance": short_dist,
+                "wmi": wmi
+            }
+        
+        # Event Horizon untuk LONG LIQUIDATION (price akan turun)
+        if wmi < -EVH_WMI_THRESHOLD and abs(long_dist) < EVH_LONG_DIST_MAX:
+            return {
+                "active": True,
+                "bias": "SHORT",
+                "type": "LONG_EVENT_HORIZON",
+                "reason": f"EVH_LONG_HORIZON: Long liq {long_dist:.2f}% terlalu dekat dengan WMI {wmi:.1f}x! "
+                         f"Price tidak punya pilihan selain menabrak magnet ini. "
+                         f"Abaikan sinyal oversold atau reversal!",
+                "distance": long_dist,
+                "wmi": wmi
+            }
+        
+        return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V96: CONFLICT RESOLVER (UPDATED WITH PBD + LEP + RPT + ECD + SVI + EVH) =================
 class ConflictResolverV96:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V96 (DENGAN POSITION BUILD + ENERGY SUPREMACY + RETAIL TRAP + EXECUTION COMPLETION) 🔥
+    🔥 URUTAN PRIORITAS MUTLAK V96 (THE FINAL HIERARCHY):
     
-    HIERARKI FINAL:
-    1️⃣ ECD (Execution Completion Detector) (V96) ⭐ BARU! - Deteksi fase distribusi
-    2️⃣ RPT (Retail Positioning Trap) (V95) ⭐ BARU! - Anti-crowded trap
-    3️⃣ PBD (Position Build Detector) - OI naik + price move = POSITION BUILD ⭐ NEW!
-    4️⃣ OID (OI-Directional Conflict) - OI meledak + price turun = REAL SHORTING ⭐ NEW!
-    5️⃣ ODR (OI Dominance Rule) - OI dominance dengan WMI normal ⭐ NEW!
-    6️⃣ RSC (Short Covering Rule) - RSI >90 + OI turun + price naik
-    7️⃣ LEP (Low Energy Priority) - Energy supremacy atas Cascade Time ⭐ NEW!
-    8️⃣ BPF (Baiting Price Filter) - Anti dump palsu
-    9️⃣ LGD (Liquidation Gap Detector) - Gap structure
-    🔟 EGR (Energy Gravity Rule) - Energy veto
-    1️⃣1️⃣ MARKET PHASE (V91) - Konteks market
+    1. EVH (Event Horizon) - Jika WMI > 95 & jarak < 0.3% ⭐ BARU!
+    2. SVI (Singularity Veto) - Jika WMI > 99.5 (Veto Segala Veto) ⭐ BARU!
+    3. ECD (Execution Completion Detector) (V96) ⭐ BARU! - Deteksi fase distribusi
+    4. RPT (Retail Positioning Trap) (V95) ⭐ BARU! - Anti-crowded trap
+    5. PBD (Position Build Detector) - OI naik + price move = POSITION BUILD ⭐ NEW!
+    6. OID (OI-Directional Conflict) - OI meledak + price turun = REAL SHORTING ⭐ NEW!
+    7. ODR (OI Dominance Rule) - OI dominance dengan WMI normal ⭐ NEW!
+    8. RSC (Short Covering Rule) - RSI >90 + OI turun + price naik
+    9. LEP (Low Energy Priority) - Energy supremacy atas Cascade Time ⭐ NEW!
+    10. BPF (Baiting Price Filter) - Anti dump palsu
+    11. LGD (Liquidation Gap Detector) - Gap structure
+    12. EGR (Energy Gravity Rule) - Energy veto
+    13. MARKET PHASE (V91) - Konteks market
     """
     @staticmethod
     def resolve(
-        # NEW MODULES V95/V96 - PRIORITAS TERTINGGI!
+        # NEW MODULES V96/V97 - PRIORITAS TERTINGGI!
+        evh_res: Dict,                # V97 Event Horizon Detector ⭐ BARU!
+        svi_res: Dict,                 # V96 Singularity Veto Integrity ⭐ BARU!
         ecd_res: Dict,               # V96 Execution Completion Detector ⭐ BARU!
         rpt_res: Dict,                # V95 Retail Positioning Trap ⭐ BARU!
         
@@ -1976,7 +2112,27 @@ class ConflictResolverV96:
         lim_res: Dict
     ) -> Dict:
         
-        # 🎯 1. EXECUTION COMPLETION DETECTOR (TERTINGGI!)
+        # 🎯 1. EVENT HORIZON (PRIORITAS TERTINGGI!)
+        # Jika jarak likuidasi terlalu dekat dengan WMI ekstrim, price wajib menabrak magnet
+        if evh_res.get('active'):
+            return {
+                "bias": evh_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V97_EVH: {evh_res['reason']}",
+                "phase": "EVENT_HORIZON"
+            }
+        
+        # 🌌 2. SINGULARITY VETO INTEGRITY (Anti-OverLogic DEGO)
+        # Jika WMI > 99.5, veto semua filter lain
+        if svi_res.get('is_absolute_veto'):
+            return {
+                "bias": svi_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_SVI: {svi_res['reason']}",
+                "phase": "GOD_EXECUTION"
+            }
+        
+        # 🎯 3. EXECUTION COMPLETION DETECTOR
         # Jika eksekusi sudah selesai, jangan entry searah!
         if ecd_res.get('completed'):
             return {
@@ -1986,8 +2142,8 @@ class ConflictResolverV96:
                 "phase": "DISTRIBUTION_PHASE"
             }
         
-        # 🎯 2. RETAIL POSITIONING TRAP (PRIORITAS KEDUA)
-        # Jika retail terlalu crowded, lawan arah mereka!
+        # 🛡️ 4. RETAIL POSITIONING TRAP (Hanya aktif jika bukan singularitas)
+        # Catatan: SVI sudah handle kasus WMI > 99.5, jadi ini aman
         if rpt_res.get('is_trap'):
             return {
                 "bias": rpt_res['bias'],
@@ -1996,7 +2152,7 @@ class ConflictResolverV96:
                 "phase": "ENERGY_VENGEANCE"
             }
         
-        # 🏗️ 3. POSITION BUILD DETECTOR (PALING PENTING! - Kasus LYN)
+        # 🏗️ 5. POSITION BUILD DETECTOR (PALING PENTING! - Kasus LYN)
         if pbd_res.get('active'):
             return {
                 "bias": pbd_res['bias'],
@@ -2005,7 +2161,7 @@ class ConflictResolverV96:
                 "phase": "POSITION_BUILD_PHASE"
             }
         
-        # 💧 4. OI-DIRECTIONAL CONFLICT (Real Shorting/Longing)
+        # 💧 6. OI-DIRECTIONAL CONFLICT (Real Shorting/Longing)
         if oid_res.get('active'):
             return {
                 "bias": oid_res['bias'],
@@ -2327,36 +2483,40 @@ class SilentDistributionDetectorV97:
 # ================= V97: CONFLICT RESOLVER (THE GHOST WALL HIERARCHY) =================
 class ConflictResolverV97:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V97 (DENGAN GWC, LVD, SDD, ECD, RPT) 🔥
+    🔥 URUTAN PRIORITAS MUTLAK V97 (THE FINAL HIERARCHY - DENGAN EVH + SVI + GWC + LVD + SDD + ECD + RPT) 🔥
     
     HIERARKI FINAL (LENGKAP):
-    1️⃣ ECD (Execution Completion Detector) (V96) ⭐ BARU! - Deteksi fase distribusi
-    2️⃣ RPT (Retail Positioning Trap) (V95) ⭐ BARU! - Anti-crowded trap
-    3️⃣ MARKET PHASE (V91) - Konteks market (paling penting!)
-    4️⃣ GWC (Ghost Wall Condemnation) (V96) ⭐ - Flow <0.05 + Energy >150 = GHOST WALL!
-    5️⃣ LVD (Liquidity Vacuum Detector) (V97) ⭐ - Flow <0.05 + Agg <0.1 + RSI >75 = VACUUM DUMP!
-    6️⃣ SDD (Silent Distribution Detector) (V97) ⭐ - RSI >80 + OI >0 + Flow <0.5 = DISTRIBUTION!
-    7️⃣ EST (Energy Spoof Tracker) (V95) - Energy >100 + OI turun = SPOOF!
-    8️⃣ ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
-    9️⃣ PDD (Passive Distribution Detector) (V96) - OI turun + Flow tinggi + RSI <50
-    🔟 LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
-    1️⃣1️⃣ PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati
-    1️⃣2️⃣ OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop
-    1️⃣3️⃣ WMI EXHAUST (V93) - WMI 99 + OI crash
-    1️⃣4️⃣ CASCADE TIME (V93) - Jalur cascade tercepat
-    1️⃣5️⃣ EXECUTION ENERGY (V92) - Jalur termudah
-    1️⃣6️⃣ AGGRESSION DEATH (V92) - Market mati
-    1️⃣7️⃣ LGD (Void Drain) (V91) - Void trap
-    1️⃣8️⃣ WSC (Whale Singularity) (V89)
-    1️⃣9️⃣ SAT (Liquidity Saturation) (V90)
-    2️⃣0️⃣ PET (Position Expansion Trap) (V90)
-    2️⃣1️⃣ ZGH (Zero Gravity) (V86)
-    2️⃣2️⃣ OTF (Oversold Trap) (V85)
-    2️⃣3️⃣ LIM (Liquidity Imbalance) (V87)
+    1. EVH (Event Horizon) - Jika WMI > 95 & jarak < 0.3% ⭐ BARU!
+    2. SVI (Singularity Veto) - Jika WMI > 99.5 (Veto Segala Veto) ⭐ BARU!
+    3. ECD (Execution Completion Detector) (V96) ⭐ BARU! - Deteksi fase distribusi
+    4. RPT (Retail Positioning Trap) (V95) ⭐ BARU! - Anti-crowded trap
+    5. MARKET PHASE (V91) - Konteks market (paling penting!)
+    6. GWC (Ghost Wall Condemnation) (V96) ⭐ - Flow <0.05 + Energy >150 = GHOST WALL!
+    7. LVD (Liquidity Vacuum Detector) (V97) ⭐ - Flow <0.05 + Agg <0.1 + RSI >75 = VACUUM DUMP!
+    8. SDD (Silent Distribution Detector) (V97) ⭐ - RSI >80 + OI >0 + Flow <0.5 = DISTRIBUTION!
+    9. EST (Energy Spoof Tracker) (V95) - Energy >100 + OI turun = SPOOF!
+    10. ODC (OI Drain Condemnation) (V93) - OI >3% drop + RSI >90 → FLUSH!
+    11. PDD (Passive Distribution Detector) (V96) - OI turun + Flow tinggi + RSI <50
+    12. LEP (Low Energy Path) (V94) - Energy ratio >10x → veto!
+    13. PLR (Passive Liquidity Reload) (V94) - OI naik + Agg mati
+    14. OPD (Orderbook Pull Detector) (V93) - Bid wall hilang + OI drop
+    15. WMI EXHAUST (V93) - WMI 99 + OI crash
+    16. CASCADE TIME (V93) - Jalur cascade tercepat
+    17. EXECUTION ENERGY (V92) - Jalur termudah
+    18. AGGRESSION DEATH (V92) - Market mati
+    19. LGD (Void Drain) (V91) - Void trap
+    20. WSC (Whale Singularity) (V89)
+    21. SAT (Liquidity Saturation) (V90)
+    22. PET (Position Expansion Trap) (V90)
+    23. ZGH (Zero Gravity) (V86)
+    24. OTF (Oversold Trap) (V85)
+    25. LIM (Liquidity Imbalance) (V87)
     """
     @staticmethod
     def resolve(
-        # NEW MODULES V95/V96 - PRIORITAS TERTINGGI!
+        # NEW MODULES V96/V97 - PRIORITAS TERTINGGI!
+        evh_res: Dict,                # V97 Event Horizon Detector ⭐ BARU!
+        svi_res: Dict,                 # V96 Singularity Veto Integrity ⭐ BARU!
         ecd_res: Dict,               # V96 Execution Completion Detector ⭐ BARU!
         rpt_res: Dict,                # V95 Retail Positioning Trap ⭐ BARU!
         
@@ -2383,7 +2543,27 @@ class ConflictResolverV97:
         lim_res: Dict               # V87 Liquidity Imbalance
     ) -> Dict:
         
-        # 🎯 1. EXECUTION COMPLETION DETECTOR (TERTINGGI!)
+        # 🎯 1. EVENT HORIZON (PRIORITAS TERTINGGI!)
+        # Jika jarak likuidasi terlalu dekat dengan WMI ekstrim, price wajib menabrak magnet
+        if evh_res.get('active'):
+            return {
+                "bias": evh_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V97_EVH: {evh_res['reason']}",
+                "phase": "EVENT_HORIZON"
+            }
+        
+        # 🌌 2. SINGULARITY VETO INTEGRITY (Anti-OverLogic DEGO)
+        # Jika WMI > 99.5, veto semua filter lain
+        if svi_res.get('is_absolute_veto'):
+            return {
+                "bias": svi_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V96_SVI: {svi_res['reason']}",
+                "phase": "GOD_EXECUTION"
+            }
+        
+        # 🎯 3. EXECUTION COMPLETION DETECTOR
         # Jika eksekusi sudah selesai, jangan entry searah!
         if ecd_res.get('completed'):
             return {
@@ -2393,8 +2573,8 @@ class ConflictResolverV97:
                 "phase": "DISTRIBUTION_PHASE"
             }
         
-        # 🎯 2. RETAIL POSITIONING TRAP (PRIORITAS KEDUA)
-        # Jika retail terlalu crowded, lawan arah mereka!
+        # 🛡️ 4. RETAIL POSITIONING TRAP (Hanya aktif jika bukan singularitas)
+        # Catatan: SVI sudah handle kasus WMI > 99.5, jadi ini aman
         if rpt_res.get('is_trap'):
             return {
                 "bias": rpt_res['bias'],
@@ -2403,7 +2583,7 @@ class ConflictResolverV97:
                 "phase": "ENERGY_VENGEANCE"
             }
         
-        # 🎯 3. MARKET PHASE VETO (Raja - Paling Penting!)
+        # 🎯 5. MARKET PHASE VETO (Raja - Paling Penting!)
         if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
             return {
                 "bias": phase_res.get('signal', phase_res['bias']),
@@ -10270,6 +10450,14 @@ ECD_RSI_THRESHOLD = 95                # RSI > 95 = extreme overbought
 ECD_PRICE_SPIKE_MIN = 5.0              # Price spike > 5%
 ECD_OI_DELTA_MIN = 2.0                  # OI delta > 2%
 
+# ================= V96 CONFIG - SINGULARITY VETO INTEGRITY =================
+SVI_WMI_THRESHOLD = 99.5           # WMI > 99.5 = Singularitas Mutlak
+
+# ================= V97 CONFIG - EVENT HORIZON DETECTOR =================
+EVH_WMI_THRESHOLD = 95.0            # WMI > 95
+EVH_SHORT_DIST_MAX = 0.3             # Short distance < 0.3%
+EVH_LONG_DIST_MAX = 0.3              # Long distance < 0.3% (untuk kasus sebaliknya)
+
 # ================= V96 CONFIG - PASSIVE DISTRIBUTION & SHORT COVERING FILTER =================
 # PDD - Passive Distribution Detector
 PDD_OI_DELTA_MIN = -1.0                     # OI turun > 1.0%
@@ -11302,6 +11490,12 @@ class BinanceAnalyzerV87:
         self.rpt = RetailPositioningTrapV95()             # V95 baru! (Retail Positioning Trap) ⭐
         self.ecd = ExecutionCompletionDetectorV96()       # V96 baru! (Execution Completion Detector) ⭐
         
+        # ===== V96: SINGULARITY VETO INTEGRITY =====
+        self.svi = SingularityVetoV96()           # V96 baru! (Anti-OverLogic DEGO) ⭐
+        
+        # ===== V97: EVENT HORIZON DETECTOR =====
+        self.evh = EventHorizonV97()               # V97 baru! (Liquidation Proximity) ⭐
+        
         self.conflict_resolver_v96 = ConflictResolverV96  # V96 resolver ⭐
         
         # ===== V96: NEW MODULE - GHOST WALL CONDEMNATION =====
@@ -12078,6 +12272,20 @@ class BinanceAnalyzerV87:
                 oi_delta=oi_delta_5m
             )
             
+            # SVI - Singularity Veto Integrity
+            svi_result = self.svi.analyze(
+                wmi=wmi_ratio,
+                rpt_bias=rpt_result.get('bias') if 'rpt_result' in locals() else None,
+                singularity_bias=wsc_result.get('bias') if 'wsc_result' in locals() else None
+            )
+            
+            # EVH - Event Horizon Detector
+            evh_result = self.evh.analyze(
+                wmi=wmi_ratio,
+                short_dist=liq['short_dist'],
+                long_dist=liq['long_dist']
+            )
+            
             # ================= V95: LIQUIDITY IGNITION DETECTOR (LID) =================
             lid_result = self.lid.analyze(
                 rsi=rsi6,
@@ -12143,9 +12351,11 @@ class BinanceAnalyzerV87:
                 flow=trades['ratio']
             )
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V97 (THE GHOST WALL HIERARCHY - DENGAN ECD + RPT)
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V97 (THE GHOST WALL HIERARCHY - DENGAN EVH + SVI + ECD + RPT)
             final_decision = self.conflict_resolver_v97.resolve(
-                # NEW MODULES V95/V96 - PRIORITAS TERTINGGI!
+                # NEW MODULES V96/V97 - PRIORITAS TERTINGGI!
+                evh_res=evh_result,               # V97 Event Horizon Detector ⭐ BARU!
+                svi_res=svi_result,                 # V96 Singularity Veto Integrity ⭐ BARU!
                 ecd_res=ecd_result,               # V96 Execution Completion Detector ⭐ BARU!
                 rpt_res=rpt_result,                # V95 Retail Positioning Trap ⭐ BARU!
                 
