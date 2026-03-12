@@ -11511,6 +11511,20 @@ class OutputFormatterV87:
         if result.get('sdd', {}).get('active'):
             print(f"📊 SDD: ACTIVE - {result['sdd']['reason']}")
         
+        # ===== V97: EVENT HORIZON SINGULARITY (EHS) =====
+        if result.get('ehs', {}).get('is_active'):
+            severity_icon = "☢️" if result['ehs']['severity'] == "ABSOLUTE" else "🔥"
+            print(f"{severity_icon} EHS: ACTIVE - {result['ehs']['reason']} (Ratio: {result['ehs']['energy_ratio']}x)")
+        
+        # ===== V98: VACUUM DETECTOR (VAC) =====
+        if result.get('vac', {}).get('active'):
+            vac_icon = "💨" if result['vac']['vacuum_type'] == "STRONG" else "🌪️"
+            print(f"{vac_icon} VAC: ACTIVE - {result['vac']['reason']}")
+        
+        # ===== V96: POSITION BUILD DETECTOR (PBD) =====
+        if result.get('pbd', {}).get('active'):
+            print(f"🏗️ PBD: ACTIVE - {result['pbd']['reason']}")
+        
         # ===== V94: BAITING PRICE FILTER =====
         if result.get('bpf', {}).get('is_bait'):
             print(f"🎣 BPF: ACTIVE - {result['bpf']['reason']}")
@@ -11657,6 +11671,15 @@ class BinanceAnalyzerV87:
         
         # ===== V97: EVENT HORIZON DETECTOR =====
         self.evh = EventHorizonV97()               # V97 baru! (Liquidation Proximity) ⭐
+        
+        # ===== V97: EVENT HORIZON SINGULARITY =====
+        self.ehs = EventHorizonSingularityV97()    # V97 baru! (Anti-ARIA Trap) ⭐
+        
+        # ===== V98: VACUUM DETECTOR =====
+        self.vac = VacuumDetectorV98()              # V98 baru! (Orderbook Vacuum) ⭐
+        
+        # ===== V96: POSITION BUILD DETECTOR (ENHANCED) =====
+        self.pbd = PositionBuildDetectorV96()       # V96 enhanced ⭐
         
         self.conflict_resolver_v96 = ConflictResolverV96  # V96 resolver ⭐
         
@@ -12448,6 +12471,29 @@ class BinanceAnalyzerV87:
                 long_dist=liq['long_dist']
             )
             
+            # ================= V97/V98: EVENT HORIZON SINGULARITY & VACUUM DETECTOR =================
+            # EHS - Event Horizon Singularity (Anti-ARIA Trap)
+            ehs_result = self.ehs.analyze(
+                energy_up=up_energy,
+                energy_down=down_energy,
+                wmi=wmi_ratio,
+                short_dist=liq['short_dist']
+            )
+            
+            # VAC - Vacuum Detector (Orderbook Vacuum)
+            vac_result = self.vac.analyze(
+                agg_ratio=trades['aggressive_ratio'],
+                flow=trades['ratio'],
+                rsi=rsi6
+            )
+            
+            # PBD - Position Build Detector (Enhanced)
+            pbd_result = self.pbd.analyze(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                wmi=wmi_ratio
+            )
+            
             # ================= V95: LIQUIDITY IGNITION DETECTOR (LID) =================
             lid_result = self.lid.analyze(
                 rsi=rsi6,
@@ -12513,9 +12559,14 @@ class BinanceAnalyzerV87:
                 flow=trades['ratio']
             )
             
-            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V97 (THE GHOST WALL HIERARCHY - DENGAN EVH + SVI + ECD + RPT)
+            # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V97 (THE GHOST WALL HIERARCHY - DENGAN EHS + VAC + PBD + EVH + SVI + ECD + RPT)
             final_decision = self.conflict_resolver_v97.resolve(
-                # NEW MODULES V96/V97 - PRIORITAS TERTINGGI!
+                # NEW MODULES V97/V98 - PRIORITAS TERTINGGI!
+                ehs_res=ehs_result,                # V97 Event Horizon Singularity ⭐ BARU! (Anti-ARIA)
+                vac_res=vac_result,                 # V98 Vacuum Detector ⭐ BARU! (Orderbook Vacuum)
+                pbd_res=pbd_result,                  # V96 Position Build Detector ⭐ BARU!
+                
+                # Existing high priority modules
                 evh_res=evh_result,               # V97 Event Horizon Detector ⭐ BARU!
                 svi_res=svi_result,                 # V96 Singularity Veto Integrity ⭐ BARU!
                 ecd_res=ecd_result,               # V96 Execution Completion Detector ⭐ BARU!
@@ -13143,6 +13194,31 @@ class BinanceAnalyzerV87:
                 "completed": ecd_result.get('completed', False),
                 "bias": ecd_result.get('direction', 'NEUTRAL'),
                 "reason": ecd_result.get('reason', '')
+            }
+            
+            # ===== V97: EVENT HORIZON SINGULARITY (EHS) =====
+            result["ehs"] = {
+                "is_active": ehs_result.get('is_active', False),
+                "bias": ehs_result.get('bias', 'NEUTRAL'),
+                "energy_ratio": ehs_result.get('energy_ratio', 0),
+                "reason": ehs_result.get('reason', ''),
+                "severity": ehs_result.get('severity', 'NONE')
+            }
+            
+            # ===== V98: VACUUM DETECTOR (VAC) =====
+            result["vac"] = {
+                "active": vac_result.get('active', False),
+                "bias": vac_result.get('bias', 'NEUTRAL'),
+                "reason": vac_result.get('reason', ''),
+                "vacuum_type": vac_result.get('vacuum_type', 'NONE')
+            }
+            
+            # ===== V96: POSITION BUILD DETECTOR (PBD) =====
+            result["pbd"] = {
+                "active": pbd_result.get('active', False),
+                "bias": pbd_result.get('bias', 'NEUTRAL'),
+                "type": pbd_result.get('type', ''),
+                "reason": pbd_result.get('reason', '')
             }
             
             # ===== V96: PASSIVE DISTRIBUTION DETECTOR =====
