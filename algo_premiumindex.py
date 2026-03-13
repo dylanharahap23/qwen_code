@@ -9868,37 +9868,38 @@ class MarketStateEngineV82:
         # ============================================
         # PRIORITAS 0.5: PANIC SELL VALIDATOR (V78) - ANTI-OPN ENDLESS FLOOR
         # ============================================
-        if psv_result['is_valid'] and psv_result['confidence'] in ["ABSOLUTE", "SUPREME", "HIGH"]:
-            if psv_result['validation_type'] == "FALLING_KNIFE_CONTINUATION":
+        if psv_result.get('is_valid', False) and psv_result.get('confidence') in ["ABSOLUTE", "SUPREME", "HIGH"]:
+            validation_type = psv_result.get('validation_type', 'NONE')
+            if validation_type == "FALLING_KNIFE_CONTINUATION":
                 return {
                     "phase": "ENDLESS_FLOOR",
                     "bias": "SHORT",
                     "confidence": "ABSOLUTE",
-                    "reason": psv_result['reason'],
+                    "reason": psv_result.get('reason', ''),
                     "multiplier": 24.0
                 }
-            elif psv_result['validation_type'] == "REAL_EXHAUSTION":
+            elif validation_type == "REAL_EXHAUSTION":
                 return {
                     "phase": "TRUE_BOTTOM",
                     "bias": "LONG",
                     "confidence": "ABSOLUTE",
-                    "reason": psv_result['reason'],
+                    "reason": psv_result.get('reason', ''),
                     "multiplier": 24.0
                 }
-            elif psv_result['validation_type'] == "REAL_DISTRIBUTION":
+            elif validation_type == "REAL_DISTRIBUTION":
                 return {
                     "phase": "TRUE_TOP",
                     "bias": "SHORT",
                     "confidence": "ABSOLUTE",
-                    "reason": psv_result['reason'],
+                    "reason": psv_result.get('reason', ''),
                     "multiplier": 23.5
                 }
-            elif psv_result['validation_type'] == "FAKE_PUMP":
+            elif validation_type == "FAKE_PUMP":
                 return {
                     "phase": "FAKE_PUMP",
                     "bias": "SHORT",
                     "confidence": "HIGH",
-                    "reason": psv_result['reason'],
+                    "reason": psv_result.get('reason', ''),
                     "multiplier": 23.0
                 }
 
@@ -11257,14 +11258,15 @@ class ConflictResolverV82:
         # ============================================
         # PRIORITAS 9: PANIC SELL VALIDATOR (V78) - ANTI-OPN ENDLESS FLOOR
         # ============================================
-        if psv_result and psv_result['is_valid']:
-            if psv_result['confidence'] in ["ABSOLUTE", "SUPREME", "HIGH"]:
+        if psv_result and psv_result.get('is_valid', False):
+            if psv_result.get('confidence') in ["ABSOLUTE", "SUPREME", "HIGH"]:
+                validation_type = psv_result.get('validation_type', 'NONE')
                 return {
-                    "bias": psv_result['bias'],
-                    "confidence": psv_result['confidence'],
-                    "reason": psv_result['reason'],
-                    "phase": psv_result['validation_type'],
-                    "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "NO" if "FALLING" in psv_result['validation_type'] else "YES"}
+                    "bias": psv_result.get('bias', 'NEUTRAL'),
+                    "confidence": psv_result.get('confidence', 'LOW'),
+                    "reason": psv_result.get('reason', ''),
+                    "phase": validation_type,
+                    "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "NO" if "FALLING" in validation_type else "YES"}
                 }
 
         # ============================================
@@ -14329,12 +14331,13 @@ class BinanceAnalyzerV87:
                     "ezh_duration_minutes": round(ezh_duration, 1)
                 },
                 "psv": {
-                    "is_valid": psv_result['is_valid'],
-                    "validation_type": psv_result['validation_type'],
-                    "bias": psv_result['bias'],
-                    "reason": psv_result['reason'],
-                    "confidence": psv_result['confidence'],
-                    "psv_duration_minutes": round(psv_duration, 1)
+                    "is_trap": psv_result.get('is_trap', False),
+                    "bias": psv_result.get('bias', 'NEUTRAL'),
+                    "direction": psv_result.get('direction', 'NEUTRAL'),
+                    "reason": psv_result.get('reason', ''),
+                    "wait_minutes": psv_result.get('wait_minutes', 0),
+                    "entry_signal": psv_result.get('entry_signal', 'WAIT'),
+                    "warning_level": psv_result.get('warning_level', 'NONE')
                 },
                 # V77 Modules
                 "off": {
