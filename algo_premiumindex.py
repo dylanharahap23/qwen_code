@@ -14519,6 +14519,64 @@ class BinanceAnalyzerV87:
                 flow=trades.get('ratio', 0)
             )
             
+            # ================= V100: LIQUIDATION PAYOUT & PRE-FLUSH DETECTOR =================
+            # Hitung liquidation payout
+            lpc_result = self.lpc.calculate_payouts(
+                long_liq_size=liq['long_vol'],
+                short_liq_size=liq['short_vol'],
+                long_dist=liq['long_dist'],
+                short_dist=liq['short_dist']
+            )
+
+            # Deteksi pre-flush
+            lpf_result = self.lpf.analyze(
+                wmi=wmi_ratio,
+                long_dist=liq['long_dist'],
+                short_dist=liq['short_dist'],
+                long_size=liq['long_vol'],
+                short_size=liq['short_vol'],
+                flow=trades['ratio'],
+                agg=trades['aggressive_ratio'],
+                rsi=rsi6
+            )
+
+            # Hitung probabilitas flush
+            flush_probability = self.lpf.calculate_flush_probability(
+                long_size=liq['long_vol'],
+                short_size=liq['short_vol'],
+                long_dist=liq['long_dist'],
+                short_dist=liq['short_dist'],
+                wmi=wmi_ratio,
+                oi_delta=oi_delta_5m
+            )
+
+            # ================= PHAUSDT PATCH MODULES =================
+            # V99-APM: Absorption Priority Module
+            apm_result = self.apm_v99.detect(
+                agg=trades['aggressive_ratio'],
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                flow=trades['ratio']
+            )
+
+            # V82-FID: Fuel Ignition Detector
+            fid_result = self.fid_v82.detect(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                rsi=rsi6
+            )
+
+            # V99-ARC: Absorption Confirmation Rate
+            arc_result = self.arc_v99.validate(
+                agg=trades['aggressive_ratio'],
+                flow=trades['ratio']
+            )
+
+            # V100-LFC: Liquidation Flush Coordinator (gunakan lpc_result dari V100)
+            lfc_result = self.lfc_v100.integrate(
+                lpc_result=lpc_result  # dari perhitungan V100 sebelumnya
+            )
+            
             # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V88+PHAUSDT PATCH (THE ULTIMATE HIERARCHY)
             final_decision = self.conflict_resolver_v88plus.resolve(
                 # PHAUSDT MODULES - PRIORITAS TERTINGGI!
@@ -14585,64 +14643,6 @@ class BinanceAnalyzerV87:
                 hold_status = "🔓 HOLD FREE"
 
             ttk_info = final_decision.get('ttk_info', {"estimated_minutes": 45, "urgency": "PREPARING", "fuel_ready": "NO"})
-
-            # ================= V100: LIQUIDATION PAYOUT & PRE-FLUSH DETECTOR =================
-            # Hitung liquidation payout
-            lpc_result = self.lpc.calculate_payouts(
-                long_liq_size=liq['long_vol'],
-                short_liq_size=liq['short_vol'],
-                long_dist=liq['long_dist'],
-                short_dist=liq['short_dist']
-            )
-
-            # Deteksi pre-flush
-            lpf_result = self.lpf.analyze(
-                wmi=wmi_ratio,
-                long_dist=liq['long_dist'],
-                short_dist=liq['short_dist'],
-                long_size=liq['long_vol'],
-                short_size=liq['short_vol'],
-                flow=trades['ratio'],
-                agg=trades['aggressive_ratio'],
-                rsi=rsi6
-            )
-
-            # Hitung probabilitas flush
-            flush_probability = self.lpf.calculate_flush_probability(
-                long_size=liq['long_vol'],
-                short_size=liq['short_vol'],
-                long_dist=liq['long_dist'],
-                short_dist=liq['short_dist'],
-                wmi=wmi_ratio,
-                oi_delta=oi_delta_5m
-            )
-
-            # ================= PHAUSDT PATCH MODULES =================
-            # V99-APM: Absorption Priority Module
-            apm_result = self.apm_v99.detect(
-                agg=trades['aggressive_ratio'],
-                oi_delta=oi_delta_5m,
-                price_change=change_5m,
-                flow=trades['ratio']
-            )
-
-            # V82-FID: Fuel Ignition Detector
-            fid_result = self.fid_v82.detect(
-                oi_delta=oi_delta_5m,
-                price_change=change_5m,
-                rsi=rsi6
-            )
-
-            # V99-ARC: Absorption Confirmation Rate
-            arc_result = self.arc_v99.validate(
-                agg=trades['aggressive_ratio'],
-                flow=trades['ratio']
-            )
-
-            # V100-LFC: Liquidation Flush Coordinator (gunakan lpc_result dari V100)
-            lfc_result = self.lfc_v100.integrate(
-                lpc_result=lpc_result  # dari perhitungan V100 sebelumnya
-            )
 
             result = {
                 "timestamp": datetime.now().strftime("%H:%M:%S.%f")[:-3],
