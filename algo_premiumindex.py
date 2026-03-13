@@ -4792,9 +4792,9 @@ class AbsorptionPriorityModuleV99:
 
 
 # ================= V82-FID: FUEL IGNITION DETECTOR =================
-class FuelIgnitionDetectorV82:
+class FuelIgnitionDetectorV82Plus:
     """
-    🔥 V82-FID: OI EXPLOSION IS NOT DISTRIBUTION - IT'S FUEL!
+    🔥 V82-FID-PLUS: OI EXPLOSION IS NOT DISTRIBUTION - IT'S FUEL!
     
     Kasus PHAUSDT:
     - OI: +12.20% (Explosion!)
@@ -13565,7 +13565,7 @@ class BinanceAnalyzerV87:
         
         # ===== PHAUSDT PATCH MODULES =====
         self.apm_v99 = AbsorptionPriorityModuleV99()           # V99-APM baru!
-        self.fid_v82 = FuelIgnitionDetectorV82()               # V82-FID baru!
+        self.fid_v82 = FuelIgnitionDetectorV82Plus()           # V82-FID-PLUS baru!
         self.arc_v99 = AbsorptionConfirmationRateV99()         # V99-ARC baru!
         self.lfc_v100 = LiquidationFlushCoordinatorV100()      # V100-LFC baru!
         self.conflict_resolver_v88plus = ConflictResolverV88Plus()  # New resolver
