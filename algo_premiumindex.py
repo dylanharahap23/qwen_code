@@ -13005,6 +13005,31 @@ class OutputFormatterV87:
         if result.get('icd', {}).get('is_internal_trap'):
             print(f"🔄 ICD: ACTIVE - {result['icd']['reason']}")
         
+        # ===== V100: LIQUIDATION PAYOUT & PRE-FLUSH DETECTOR =====
+        if result.get('lpc'):
+            lpc = result['lpc']
+            print(f"\n💰 V100 LIQUIDATION PAYOUT CALCULATOR:")
+            print(f"   📊 Long Payout: {lpc.get('payout_long', 0):.2f} | Short Payout: {lpc.get('payout_short', 0):.2f}")
+            print(f"   📊 Ratio: {lpc.get('payout_ratio', 1.0):.1f}x | Target: {lpc.get('dominant_target', 'NONE')}")
+            print(f"   📌 {lpc.get('reason', '')}")
+
+        if result.get('lpf'):
+            lpf = result['lpf']
+            flush_icon = "💧" if lpf.get('flush_detected') else "✅"
+            print(f"\n{flush_icon} V100 LIQUIDATION PRE-FLUSH DETECTOR:")
+            if lpf.get('flush_detected'):
+                print(f"   🔴 FLUSH DETECTED! {lpf.get('expected_flush_range', 'NONE')}")
+                print(f"   📌 {lpf.get('reason', '')}")
+                if "DOUBLE_SWEEP_ZONE" in lpf.get('reason', ''):
+                    print(f"   ⚠️ JANGAN ENTRY! Tunggu flush selesai!")
+            else:
+                print(f"   ✅ No pre-flush detected")
+
+        if result.get('flush_probability'):
+            prob = result['flush_probability']
+            prob_bar = "█" * int(prob * 10) + "░" * (10 - int(prob * 10))
+            print(f"\n📊 FLUSH PROBABILITY: {prob:.1%} [{prob_bar}]")
+        
         # V80
         if result.get('ier', {}).get('is_exit'):
             print(f"🏦 IER: ACTIVE ({result['ier']['exit_type']}) - Flow: {result['trade_flow']}x | OI Δ: {result['oi_delta_5m']}%")
@@ -14179,6 +14204,37 @@ class BinanceAnalyzerV87:
 
             ttk_info = final_decision.get('ttk_info', {"estimated_minutes": 45, "urgency": "PREPARING", "fuel_ready": "NO"})
 
+            # ================= V100: LIQUIDATION PAYOUT & PRE-FLUSH DETECTOR =================
+            # Hitung liquidation payout
+            lpc_result = self.lpc.calculate_payouts(
+                long_liq_size=liq['long_vol'],
+                short_liq_size=liq['short_vol'],
+                long_dist=liq['long_dist'],
+                short_dist=liq['short_dist']
+            )
+
+            # Deteksi pre-flush
+            lpf_result = self.lpf.analyze(
+                wmi=wmi_ratio,
+                long_dist=liq['long_dist'],
+                short_dist=liq['short_dist'],
+                long_size=liq['long_vol'],
+                short_size=liq['short_vol'],
+                flow=trades['ratio'],
+                agg=trades['aggressive_ratio'],
+                rsi=rsi6
+            )
+
+            # Hitung probabilitas flush
+            flush_probability = self.lpf.calculate_flush_probability(
+                long_size=liq['long_vol'],
+                short_size=liq['short_vol'],
+                long_dist=liq['long_dist'],
+                short_dist=liq['short_dist'],
+                wmi=wmi_ratio,
+                oi_delta=oi_delta_5m
+            )
+
             result = {
                 "timestamp": datetime.now().strftime("%H:%M:%S.%f")[:-3],
                 "symbol": self.symbol,
@@ -14278,6 +14334,7 @@ class BinanceAnalyzerV87:
                     "reason": sad_result.get('reason', ''),
                     "confidence": sad_result.get('confidence', 'LOW')
                 },
+                "flush_probability": flush_probability,
                 # V89/V90 Results
                 "wsc": {
                     "is_active": wsc_result.get('is_active', False),
@@ -15049,6 +15106,11 @@ python script.py TRIAUSDT --loop   # Test V86 ODF (Overbought Distribution)
     'Jika Aggression 0.00 tapi OI turun, itu bukan Whale kabur, itu Whale sedang nutup Short (Short Covering). JANGAN SHORT, lo bakal kena squeeze!'
     'Market maker selalu mengikuti path of least resistance. Jika seller tidak ada, satu market buy bisa gerakkan harga jauh.'
     'Agg = 0 ≠ weak momentum. Agg = 0 artinya no sellers left. Ini justru bullish precursor.'
+
+🧠 V100 - LIQUIDATION PAYOUT & PRE-FLUSH DETECTOR:
+    'MM memilih target berdasarkan REWARD, bukan jarak.'
+    'Jika payout long > short + short liq dekat = FLUSH DULU baru PUMP'
+    'Double sweep zone = JANGAN ENTRY!'
             """)
         else:
             main_v87()
