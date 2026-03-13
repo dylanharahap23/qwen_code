@@ -2181,7 +2181,8 @@ class SuperiorWDMVIP99:
     @staticmethod
     def check_override(wmi_ratio: float, lep_bias: str = None, 
                        short_dist: float = 0, long_dist: float = 0,
-                       price_change: float = 0, oi_delta: float = 0) -> Dict:
+                       price_change: float = 0, oi_delta: float = 0,
+                       short_imbalance: float = 0, agg: float = None) -> Dict:
         """
         Args:
             wmi_ratio: Whale Migration Index
@@ -2190,7 +2191,40 @@ class SuperiorWDMVIP99:
             long_dist: Jarak ke long liquidation
             price_change: Perubahan harga 5 menit
             oi_delta: OI Delta 5 menit
+            short_imbalance: Rasio imbalance SHORT (untuk validasi crowded)
+            agg: Aggressive Ratio (untuk validasi exhaustion)
         """
+        # ============================================
+        # VALIDASI BARU: Jangan veto jika Short Imbalance Ekstrim (>50x)
+        # ============================================
+        if wmi_ratio < -95 and short_imbalance and short_imbalance > SCT_IMBALANCE_THRESHOLD:
+            if agg and agg < SCT_AGG_MAX:
+                # Kontradiksi: WMI bilang target bawah besar, TAPI Shorts crowded di atas
+                # Prioritaskan Squeeze Up untuk crowd shorts dulu!
+                return {
+                    "is_veto": False,  # JANGAN VETO SQUEEZE UP!
+                    "bias": "LONG", 
+                    "warning": True,
+                    "reason": f"V99_CROWDED_SHORT_OVERRIDE: WMI {wmi_ratio:.1f}x TAPI "
+                             f"Short Imbalance {short_imbalance:.1f}x crowd! + Agg {agg:.2f}x exhausted! "
+                             f"Prioritas SQUEEZE! WMI VETO dibatalkan.",
+                    "phase": "CROWD_OVERRIDE"
+                }
+        
+        # ============================================
+        # VALIDASI BARU: Jika WMI > 95 dan Long Crowded > 50x
+        # ============================================
+        if wmi_ratio > 95 and short_imbalance and short_imbalance < (1.0 / SCT_IMBALANCE_THRESHOLD):  # Long crowded
+            if agg and agg < SCT_AGG_MAX:
+                return {
+                    "is_veto": False,
+                    "bias": "SHORT",
+                    "warning": True,
+                    "reason": f"V99_CROWDED_LONG_OVERRIDE: WMI {wmi_ratio:.1f}x TAPI "
+                             f"Long Crowded! Prioritas DUMP!",
+                    "phase": "CROWD_OVERRIDE"
+                }
+        
         # --- FIX 1: LOGIKA POSITIF/NEGATIF HARUS SESUAI ARAH TARGET ---
         
         # VALIDASI TAMBAHAN: Jika OI Build > 5% dan price turun > 2%, override WMI
@@ -2241,9 +2275,10 @@ class SuperiorWDMVIP99:
         elif wmi_ratio < -WMI_SINGULARITY_VETO_THRESHOLD:
             # VALIDASI: Apakah jaraknya realistis? (< 3% biasanya aman untuk trigger)
             if abs(long_dist) <= 3.0:
+                # PERHATIAN: Sudah divalidasi sebelumnya untuk crowded short
                 return {
                     "is_veto": True,
-                    "bias": "SHORT",  # <<< PERBAIKAN DISINI (Sebelumnya salah pakai LONG)
+                    "bias": "SHORT",
                     "reason": f"V99_WMI_VETO: WMI {wmi_ratio:.1f}x < -95 (LONG_LIQ_CLUSTER BELOW). "
                              f"Jarak {long_dist}% dekat! MM pasti Dump Down!",
                     "phase": "WHALE_SINGULARITY_OVERRIDE"
@@ -2386,6 +2421,238 @@ class GravityDistanceValidatorV99:
                 }
         
         return {"override": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V99-SCT: SHORT CROWD TRAP DETECTOR =================
+
+class ShortCrowdTrapDetectorV99:
+    """
+    🔥 V99-SCT: SHORT CROWD TRAP DETECTOR - ANTI-ARIA TRAP
+    
+    Kasus ARIAUSDT:
+        - Imbalance Ratio: 73.01x (SHORT OVERCROWDED!)
+        - Aggression: 0.05x (SELLER EXHAUSTED!)
+        - OI Delta: +1.76% (Whale Building Shorts)
+        - Long Dist: -0.27% (Target Below tapi kecil)
+    
+    Interpretasi Benar:
+        Market Maker akan SQUEEZE SHORTS dulu karena ada 73x lebih banyak
+        retail shorts daripada longs. Agg 0.05x menandakan tidak ada seller
+        yang tersisa - orderbook vacuum!
+    
+    Prinsip:
+        "73x Rule" - Imbalance Saturation Override
+        Jika Short Imbalance > 70x + Agg < 0.1 + OI Build → 
+        DILARANG SHORT bahkan jika WMI ekstrim negatif.
+        
+        Market Maker akan Squeeze Shorts terlebih dahulu karena ada lebih banyak
+        profit dari membakar 73x shorts daripada menghajar longs dengan volume kecil.
+    """
+    
+    @staticmethod
+    def analyze(short_imbalance: float, agg: float, oi_delta: float, 
+                wmi: float = None, price_change: float = None) -> Dict:
+        """
+        Args:
+            short_imbalance: Rasio imbalance SHORT (>50x = crowded)
+            agg: Aggressive Ratio (<0.1 = seller exhaustion)
+            oi_delta: OI Delta 5 menit (>0 = position building)
+            wmi: WMI ratio (optional, untuk konteks)
+            price_change: Perubahan harga (optional)
+        
+        Returns:
+            Dict dengan is_trap, bias, confidence, reason, priority
+        """
+        
+        # ============================================
+        # SCENARIO 1: EXTREME CROWD - 70x RULE
+        # Jika Imbalance > 70x + Agg mati = SQUEEZE IMMINENT!
+        # ============================================
+        if short_imbalance > SCT_CROWD_LEVEL_EXTREME and agg < SCT_AGG_MAX:
+            wmi_context = f" WMI {wmi:.1f}x" if wmi else ""
+            price_context = f" Price {price_change:+.2f}%" if price_change else ""
+            
+            return {
+                "is_trap": True,
+                "bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "priority": "SUPREME",  # Prioritas tertinggi!
+                "reason": f"SCT_EXTREME_CROWD: Short Imbalance {short_imbalance:.1f}x (SUPER CROWDED!) + "
+                         f"Agg {agg:.2f}x (SELLER EXHAUSTED!){wmi_context}{price_context}. "
+                         f"MM akan SQUEEZE SHORTS! 73x Rule activated! DILARANG SHORT!",
+                "phase": "CROWDED_SQUEEZE_TRIGGER"
+            }
+        
+        # ============================================
+        # SCENARIO 2: STANDARD CROWD - 50x RULE
+        # Jika Imbalance > 50x + Agg mati + OI Build = SQUEEZE SETUP
+        # ============================================
+        if (short_imbalance > SCT_IMBALANCE_THRESHOLD and 
+            agg < SCT_AGG_MAX and 
+            oi_delta > SCT_OI_DELTA_MIN):
+            
+            wmi_context = f" WMI {wmi:.1f}x" if wmi else ""
+            
+            return {
+                "is_trap": True,
+                "bias": "LONG",
+                "confidence": "SUPREME",
+                "priority": "SUPREME",
+                "reason": f"SCT_SHORT_CROWD: Imbalance {short_imbalance:.1f}x crowd SHORT! + "
+                         f"Agg {agg:.2f}x exhausted! + OI Δ {oi_delta:+.2f}% (Whale building). "
+                         f"SQUEEZE INCOMING!{wmi_context}",
+                "phase": "CROWDED_SQUEEZE_SETUP"
+            }
+        
+        # ============================================
+        # SCENARIO 3: CROWD + VACUUM (Ghost Vacuum Signal)
+        # Agg < 0.1 + Imbalance > 50x = Orderbook Vacuum
+        # ============================================
+        if short_imbalance > SCT_IMBALANCE_THRESHOLD and agg < SCT_AGG_MAX:
+            return {
+                "is_trap": True,
+                "bias": "LONG",
+                "confidence": "HIGH",
+                "priority": "HIGH",
+                "reason": f"SCT_VACUUM: Imbalance {short_imbalance:.1f}x + Agg {agg:.2f}x (VACUUM!). "
+                         f"Orderbook kosong di atas, siap squeeze!",
+                "phase": "VACUUM_SQUEEZE"
+            }
+        
+        return {"is_trap": False, "bias": "NEUTRAL", "priority": "LOW"}
+
+
+class CrowdVsClusterLogicV99:
+    """
+    🔥 V99: CROWD VS CLUSTER LOGIC - ANTI-WMI OVERRIDE
+    
+    Prinsip:
+        Jangan bandingkan WMI Cluster Size, bandingkan Crowd Imbalance.
+        
+        - WMI = Likuidasi potensial (massive pool)
+        - Imbalance = Posisi aktif trader (crowd)
+        
+        Jika Crowd > 50x, Market Maker fokus pada Crowd dulu sebelum Cluster.
+        
+    Kasus ARIA:
+        WMI = -99.7x (Long Cluster di bawah)
+        Imbalance = 73x (Short Crowd di atas)
+        Agg = 0.05x (Seller exhausted)
+        
+        Meskipun WMI negatif, Crowd > 50x memaksa MM untuk squeeze SHORT dulu!
+    """
+    
+    @staticmethod
+    def resolve(wmi: float, short_imbalance: float, agg: float,
+                short_dist: float, long_dist: float) -> Dict:
+        """
+        Args:
+            wmi: Whale Migration Index
+            short_imbalance: Rasio imbalance SHORT
+            agg: Aggressive Ratio
+            short_dist: Jarak ke short liquidation
+            long_dist: Jarak ke long liquidation
+        
+        Returns:
+            Dict dengan override, bias, reason
+        """
+        
+        # KASUS 1: WMI negatif (target bawah) TAPI Short Crowded > 50x
+        if wmi < 0 and short_imbalance > SCT_IMBALANCE_THRESHOLD:
+            # Validasi dengan Aggression
+            if agg < SCT_AGG_MAX:
+                return {
+                    "override": True,
+                    "bias": "LONG",
+                    "reason": f"V99_CROWD_VS_CLUSTER: WMI {wmi:.1f}x (Cluster bawah) TAPI "
+                             f"Short Imbalance {short_imbalance:.1f}x (Crowd atas) + Agg {agg:.2f}x (exhausted). "
+                             f"MM squeeze CROWD dulu! LONG!",
+                    "phase": "CROWD_DOMINANCE"
+                }
+        
+        # KASUS 2: WMI positif (target atas) TAPI Long Crowded > 50x
+        if wmi > 0 and short_imbalance < (1.0 / SCT_IMBALANCE_THRESHOLD):  # Long crowded
+            if agg < SCT_AGG_MAX:
+                return {
+                    "override": True,
+                    "bias": "SHORT",
+                    "reason": f"V99_CROWD_VS_CLUSTER: WMI {wmi:.1f}x (Cluster atas) TAPI "
+                             f"Long Crowded! MM dump CROWD dulu! SHORT!",
+                    "phase": "CROWD_DOMINANCE"
+                }
+        
+        return {"override": False, "bias": "NEUTRAL"}
+
+
+class OIBuildAtExtremumV99:
+    """
+    🔥 V99: OI BUILD AT EXTREMUM - WHALE ACCUMULATION DETECTOR
+    
+    Prinsip:
+        "OI Naik + Price Turun + Agg < 0.1 = Whale Accumulation"
+        
+        Bukan Distribusi! Ini akumulasi posisi baru sebelum pergerakan besar.
+        Perlu dibedakan dengan PDD (Passive Distribution) yang memerlukan Flow Tinggi.
+    
+    Kasus ARIA:
+        OI Delta: +1.76% (naik)
+        Price Change: -0.12% (turun sedikit)
+        Agg: 0.05x (sangat rendah)
+        
+        Ini BUKAN distribusi, ini akumulasi posisi SHORT baru yang akan di-squeeze!
+    """
+    
+    @staticmethod
+    def analyze(oi_delta: float, price_change: float, agg: float,
+                flow: float = None) -> Dict:
+        """
+        Args:
+            oi_delta: OI Delta 5 menit
+            price_change: Perubahan harga 5 menit
+            agg: Aggressive Ratio
+            flow: Trade Flow (untuk membedakan dengan distribusi)
+        
+        Returns:
+            Dict dengan is_accumulation, bias, reason
+        """
+        
+        # KASUS: OI Naik + Price Turun + Agg Rendah = SHORT BUILD (akan di-squeeze)
+        if oi_delta > 1.0 and price_change < 0 and agg < 0.2:
+            # Cek flow untuk membedakan dengan distribusi
+            if flow and flow < 1.5:  # Flow tidak terlalu tinggi = akumulasi diam-diam
+                return {
+                    "is_accumulation": True,
+                    "bias": "LONG",  # Akan squeeze
+                    "confidence": "SUPREME",
+                    "reason": f"V99_OI_BUILD_EXTREMUM: OI naik {oi_delta:+.2f}% (BUILD!) + "
+                             f"Price turun {price_change:.2f}% + Agg {agg:.2f}x (RENDAH!). "
+                             f"Whale akumulasi SHORT baru! SIAP SQUEEZE!",
+                    "phase": "STEALTH_ACCUMULATION"
+                }
+            
+            if flow and flow > 2.0:  # Flow tinggi = distribusi
+                return {
+                    "is_accumulation": False,
+                    "bias": "SHORT",
+                    "confidence": "HIGH",
+                    "reason": f"V99_OI_DISTRIBUTION: OI naik {oi_delta:+.2f}% + "
+                             f"Flow {flow:.2f}x tinggi = DISTRIBUSI!",
+                    "phase": "DISTRIBUTION"
+                }
+        
+        # KASUS: OI Turun + Price Naik + Agg Rendah = SHORT COVERING
+        if oi_delta < -1.0 and price_change > 0 and agg < 0.2:
+            return {
+                "is_accumulation": True,
+                "bias": "LONG",
+                "confidence": "SUPREME",
+                "reason": f"V99_OI_COVERING: OI turun {oi_delta:.2f}% (COVERING!) + "
+                         f"Price naik {price_change:+.2f}% + Agg {agg:.2f}x. "
+                         f"Short seller forced to cover! SQUEEZE!",
+                "phase": "SHORT_COVERING"
+            }
+        
+        return {"is_accumulation": False, "bias": "NEUTRAL"}
 
 
 class InternalTrapV99FMT:
@@ -3726,29 +3993,31 @@ def safe_div(a, b, default=1.0):
 # ================= V99: REVISED CONFLICT RESOLVER (THE ULTIMATE HIERARCHY) =================
 class ConflictResolverV99:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V99 (FIXED FOR HUMA CASE):
+    🔥 URUTAN PRIORITAS MUTLAK V99 (DENGAN SHORT CROWD TRAP):
     
-    1. V99 OI Build Validator - NUCLEAR OI (OI > 5% + price move > 2%) ⭐ TERTINGGI!
-    2. V99 Gravity Distance - Proximity > Massa (jarak < 2% vs > 5%)
-    3. V99 WMI Veto (Fixed Logic) - Hanya jika jarak < 3%
-    4. V99 Internal Trap (FMT)
-    5. V97 EHS (Event Horizon Singularity)
-    6. V98 VAC (Vacuum Detector)
-    7. V96 PBD (Position Build Detector)
-    8. V97 EVH (Event Horizon)
-    9. V96 SVI (Singularity Veto)
-    10. V96 ECD (Execution Completion)
-    11. V95 RPT (Retail Positioning Trap)
-    12. V91 Market Phase Engine
-    13. V86 ZGH (Zero Gravity)
-    14. V94 LEP (Low Energy Path) - PRIORITAS DITURUNKAN!
+    ⚠️ PRIORITAS BARU V99:
+    1. V99-SCT (Short Crowd Trap) - ANTI-CHECKMATE! ⭐ TERTINGGI!
+    2. V99 Crowd vs Cluster Logic - Bandingkan Crowd vs Cluster
+    3. V99 OI Build at Extremum - Deteksi akumulasi diam-diam
+    4. V99 OI Build Validator - Nuclear OI
+    5. V99 Gravity Distance - Proximity > Massa
+    6. V99 WMI VETO - Hanya valid jika tidak crowded
+    7. V99 Internal Trap (FMT)
+    8. V97 EHS (Event Horizon Singularity)
+    9. V98 VAC (Vacuum Detector)
+    10. V96 PBD (Position Build Detector)
     """
     @staticmethod
     def resolve(
-        # NEW MODULES V99
-        oi_build_res: Dict,           # V99 OI Build Validator ⭐ TERTINGGI!
-        gravity_dist_res: Dict,        # V99 Gravity Distance ⭐
-        wmi_veto_res: Dict,            # V99 WMI Veto (Fixed)
+        # NEW V99 MODULES - PRIORITAS TERTINGGI!
+        sct_res: Dict,                 # V99 Short Crowd Trap ⭐ TERTINGGI!
+        crowd_cluster_res: Dict,        # V99 Crowd vs Cluster Logic ⭐
+        oi_extremum_res: Dict,          # V99 OI Build at Extremum ⭐
+        
+        # Existing V99 modules
+        oi_build_res: Dict,
+        gravity_dist_res: Dict,
+        wmi_veto_res: Dict,
         internal_trap_res: Dict,
         density_res: Dict,
         
@@ -3783,8 +4052,37 @@ class ConflictResolverV99:
         lim_res: Dict
     ) -> Dict:
         
-        # 🎯 1. V99 OI BUILD VALIDATOR - NUCLEAR OI (PRIORITAS TERTINGGI!)
-        # Jika OI Build > 5% + price move > 2%, ini institutional attack!
+        # 🎯 1. V99 SHORT CROWD TRAP (PRIORITAS TERTINGGI!)
+        # Jika Short Imbalance > 50x + Agg mati = SQUEEZE!
+        if sct_res.get('is_trap'):
+            return {
+                "bias": sct_res['bias'],
+                "confidence": sct_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99_SCT: {sct_res['reason']}",
+                "phase": sct_res.get('phase', 'CROWDED_SQUEEZE')
+            }
+        
+        # 🎯 2. V99 CROWD VS CLUSTER LOGIC
+        # Bandingkan crowd vs cluster, prioritaskan crowd
+        if crowd_cluster_res.get('override'):
+            return {
+                "bias": crowd_cluster_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V99_CROWD_CLUSTER: {crowd_cluster_res['reason']}",
+                "phase": crowd_cluster_res.get('phase', 'CROWD_DOMINANCE')
+            }
+        
+        # 🎯 3. V99 OI BUILD AT EXTREMUM
+        # Deteksi akumulasi diam-diam sebelum squeeze
+        if oi_extremum_res.get('is_accumulation'):
+            return {
+                "bias": oi_extremum_res['bias'],
+                "confidence": oi_extremum_res.get('confidence', 'SUPREME'),
+                "reason": f"V99_OI_EXTREMUM: {oi_extremum_res['reason']}",
+                "phase": oi_extremum_res.get('phase', 'STEALTH_ACCUMULATION')
+            }
+        
+        # 🎯 4. V99 OI BUILD VALIDATOR
         if oi_build_res.get('bias') != "NEUTRAL" and oi_build_res.get('confidence') == "ABSOLUTE":
             return {
                 "bias": oi_build_res['bias'],
@@ -3793,8 +4091,7 @@ class ConflictResolverV99:
                 "phase": oi_build_res.get('phase', 'OI_DOMINANCE')
             }
         
-        # 🎯 2. V99 GRAVITY DISTANCE - Proximity > Massa
-        # Jika target WMI terlalu jauh (>5%) dan target lawan sangat dekat (<2%)
+        # 🎯 5. V99 GRAVITY DISTANCE
         if gravity_dist_res.get('override'):
             return {
                 "bias": gravity_dist_res['bias'],
@@ -3803,7 +4100,7 @@ class ConflictResolverV99:
                 "phase": gravity_dist_res.get('phase', 'PROXIMITY_OVERRIDE')
             }
         
-        # 🎯 3. V99 WMI VETO (FIXED LOGIC) - Hanya jika jarak < 3%
+        # 🎯 6. V99 WMI VETO (Hanya jika tidak ada crowd)
         if wmi_veto_res.get('is_veto'):
             return {
                 "bias": wmi_veto_res['bias'],
@@ -3812,7 +4109,7 @@ class ConflictResolverV99:
                 "phase": wmi_veto_res.get('phase', 'WHALE_SINGULARITY_OVERRIDE')
             }
         
-        # 🎯 4. V99 INTERNAL TRAP
+        # 🎯 7. V99 INTERNAL TRAP
         if internal_trap_res.get('is_trap'):
             return {
                 "bias": internal_trap_res['bias'],
@@ -3821,7 +4118,7 @@ class ConflictResolverV99:
                 "phase": "INTERNAL_MATCHING_TRAP"
             }
         
-        # 🎯 5. V97 EVENT HORIZON SINGULARITY
+        # 🎯 8. V97 EVENT HORIZON SINGULARITY
         if ehs_res.get('is_active'):
             return {
                 "bias": ehs_res['bias'],
@@ -3830,7 +4127,7 @@ class ConflictResolverV99:
                 "phase": "EVENT_HORIZON_SUCTION"
             }
         
-        # 💨 6. VACUUM DETECTOR
+        # 💨 9. VACUUM DETECTOR
         if vac_res.get('active'):
             return {
                 "bias": vac_res['bias'],
@@ -3839,7 +4136,7 @@ class ConflictResolverV99:
                 "phase": "LIQUIDITY_VACUUM"
             }
         
-        # 🏗️ 7. POSITION BUILD DETECTOR
+        # 🏗️ 10. POSITION BUILD DETECTOR
         if pbd_res.get('active'):
             return {
                 "bias": pbd_res['bias'],
@@ -3848,7 +4145,7 @@ class ConflictResolverV99:
                 "phase": "POSITION_BUILD_PHASE"
             }
         
-        # 🎯 8. EVENT HORIZON
+        # 🎯 11. EVENT HORIZON
         if evh_res.get('active'):
             return {
                 "bias": evh_res['bias'],
@@ -3857,7 +4154,7 @@ class ConflictResolverV99:
                 "phase": "EVENT_HORIZON"
             }
         
-        # 🌌 9. SINGULARITY VETO
+        # 🌌 12. SINGULARITY VETO
         if svi_res.get('is_absolute_veto'):
             return {
                 "bias": svi_res['bias'],
@@ -3866,7 +4163,7 @@ class ConflictResolverV99:
                 "phase": "GOD_EXECUTION"
             }
         
-        # 🎯 10. EXECUTION COMPLETION DETECTOR
+        # 🎯 13. EXECUTION COMPLETION DETECTOR
         if ecd_res.get('completed'):
             return {
                 "bias": ecd_res['direction'],
@@ -3875,7 +4172,7 @@ class ConflictResolverV99:
                 "phase": "DISTRIBUTION_PHASE"
             }
         
-        # 🛡️ 11. RETAIL POSITIONING TRAP
+        # 🛡️ 14. RETAIL POSITIONING TRAP
         if rpt_res.get('is_trap'):
             return {
                 "bias": rpt_res['bias'],
@@ -3884,7 +4181,7 @@ class ConflictResolverV99:
                 "phase": "ENERGY_VENGEANCE"
             }
         
-        # 🎯 12. MARKET PHASE VETO
+        # 🎯 15. MARKET PHASE VETO
         if phase_res.get('priority') in ['ABSOLUTE', 'SUPREME']:
             return {
                 "bias": phase_res.get('signal', phase_res['bias']),
@@ -3893,7 +4190,7 @@ class ConflictResolverV99:
                 "phase": phase_res['phase']
             }
         
-        # 👻 13. GHOST WALL CONDEMNATION
+        # 👻 16. GHOST WALL CONDEMNATION
         if gwc_res.get('is_ghost_wall'):
             return {
                 "bias": gwc_res['bias'],
@@ -3902,7 +4199,7 @@ class ConflictResolverV99:
                 "phase": "GHOST_WALL_COLLAPSE"
             }
         
-        # 💨 14. LIQUIDITY VACUUM DETECTOR
+        # 💨 17. LIQUIDITY VACUUM DETECTOR
         if lvd_res.get('active'):
             return {
                 "bias": lvd_res['bias'],
@@ -3911,7 +4208,7 @@ class ConflictResolverV99:
                 "phase": "VACUUM_DUMP"
             }
         
-        # 📊 15. SILENT DISTRIBUTION DETECTOR
+        # 📊 18. SILENT DISTRIBUTION DETECTOR
         if sdd_res.get('active'):
             return {
                 "bias": sdd_res['bias'],
@@ -3920,7 +4217,7 @@ class ConflictResolverV99:
                 "phase": "SILENT_DISTRIBUTION"
             }
         
-        # 🛡️ 16. ENERGY SPOOF TRACKER
+        # 🛡️ 19. ENERGY SPOOF TRACKER
         if est_res.get('is_spoof'):
             return {
                 "bias": est_res['bias'],
@@ -3929,7 +4226,7 @@ class ConflictResolverV99:
                 "phase": "SPOOF_COLLAPSE"
             }
         
-        # 💧 17. OI DRAIN CONDEMNATION
+        # 💧 20. OI DRAIN CONDEMNATION
         if odc_res.get('active'):
             return {
                 "bias": odc_res['bias'],
@@ -3938,7 +4235,7 @@ class ConflictResolverV99:
                 "phase": "VACUUM_FLUSH"
             }
         
-        # 📉 18. PASSIVE DISTRIBUTION DETECTOR
+        # 📉 21. PASSIVE DISTRIBUTION DETECTOR
         if pdd_res.get('active'):
             return {
                 "bias": pdd_res['bias'],
@@ -3947,7 +4244,7 @@ class ConflictResolverV99:
                 "phase": "PASSIVE_DISTRIBUTION"
             }
         
-        # ⚡ 19. LOW ENERGY PATH (PRIORITAS DITURUNKAN!)
+        # ⚡ 22. LOW ENERGY PATH (PRIORITAS DITURUNKAN!)
         if lep_res.get('is_active'):
             # Cek density calculator
             if density_res.get('better_path') != 'BALANCED':
@@ -12370,6 +12667,12 @@ class BinanceAnalyzerV87:
         self.density_calc = LiquidityDensityCalculatorV99()  # V99 baru! (Density Calculator)
         self.oi_build_validator = OIBuildValidatorV99()      # V99 baru! (Nuclear OI)
         self.gravity_distance = GravityDistanceValidatorV99() # V99 baru! (Proximity > Massa)
+        
+        # ===== V99-SCT: SHORT CROWD TRAP MODULES =====
+        self.sct_detector = ShortCrowdTrapDetectorV99()      # V99 Short Crowd Trap
+        self.crowd_cluster = CrowdVsClusterLogicV99()        # V99 Crowd vs Cluster
+        self.oi_extremum = OIBuildAtExtremumV99()            # V99 OI Build at Extremum
+        
         self.conflict_resolver_v99 = ConflictResolverV99()   # V99 resolver
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
@@ -13246,7 +13549,9 @@ class BinanceAnalyzerV87:
                 short_dist=liq['short_dist'],
                 long_dist=liq['long_dist'],
                 price_change=change_5m,
-                oi_delta=oi_delta_5m
+                oi_delta=oi_delta_5m,
+                short_imbalance=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 0,
+                agg=trades.get('aggressive_ratio', None)
             )
             
             # Internal Trap Detection (FMT)
@@ -13289,12 +13594,47 @@ class BinanceAnalyzerV87:
                 wmi_bias=wmi_veto_result.get('bias') if 'wmi_veto_result' in locals() else None
             )
             
+            # ================= V99-SCT: SHORT CROWD TRAP DETECTION =================
+            # Ambil imbalance ratio dari LIM atau hitung manual
+            short_imbalance = lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0
+            
+            # SCT - Short Crowd Trap Detector
+            sct_result = self.sct_detector.analyze(
+                short_imbalance=short_imbalance,
+                agg=trades.get('aggressive_ratio', 0),
+                oi_delta=oi_delta_5m,
+                wmi=wmi_ratio,
+                price_change=change_5m
+            )
+            
+            # Crowd vs Cluster Logic
+            crowd_cluster_result = self.crowd_cluster.resolve(
+                wmi=wmi_ratio,
+                short_imbalance=short_imbalance,
+                agg=trades.get('aggressive_ratio', 0),
+                short_dist=liq['short_dist'],
+                long_dist=liq['long_dist']
+            )
+            
+            # OI Build at Extremum
+            oi_extremum_result = self.oi_extremum.analyze(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                agg=trades.get('aggressive_ratio', 0),
+                flow=trades.get('ratio', 0)
+            )
+            
             # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V99 (THE ULTIMATE HIERARCHY)
             final_decision = self.conflict_resolver_v99.resolve(
-                # NEW MODULES V99 - PRIORITAS TERTINGGI!
-                oi_build_res=oi_build_result,           # V99 OI Build Validator ⭐
-                gravity_dist_res=gravity_dist_result,    # V99 Gravity Distance ⭐
-                wmi_veto_res=wmi_veto_result,            # V99 WMI Veto (Fixed)
+                # NEW V99 MODULES - PRIORITAS TERTINGGI!
+                sct_res=sct_result,                    # V99 Short Crowd Trap ⭐
+                crowd_cluster_res=crowd_cluster_result, # V99 Crowd vs Cluster ⭐
+                oi_extremum_res=oi_extremum_result,     # V99 OI Build at Extremum ⭐
+                
+                # Existing V99 modules
+                oi_build_res=oi_build_result,
+                gravity_dist_res=gravity_dist_result,
+                wmi_veto_res=wmi_veto_result,
                 internal_trap_res=internal_trap_result,
                 density_res=density_result,
                 
@@ -13404,6 +13744,23 @@ class BinanceAnalyzerV87:
                     "long_score": lim_result.get('long_score', 0),
                     "short_score": lim_result.get('short_score', 0),
                     "imbalance_ratio": lim_result.get('imbalance_ratio', 1.0)
+                },
+                # V99-SCT: SHORT CROWD TRAP RESULTS
+                "sct": {
+                    "is_trap": sct_result.get('is_trap', False),
+                    "bias": sct_result.get('bias', 'NEUTRAL'),
+                    "reason": sct_result.get('reason', ''),
+                    "phase": sct_result.get('phase', 'NORMAL')
+                },
+                "crowd_cluster": {
+                    "override": crowd_cluster_result.get('override', False),
+                    "bias": crowd_cluster_result.get('bias', 'NEUTRAL'),
+                    "reason": crowd_cluster_result.get('reason', '')
+                },
+                "oi_extremum": {
+                    "is_accumulation": oi_extremum_result.get('is_accumulation', False),
+                    "bias": oi_extremum_result.get('bias', 'NEUTRAL'),
+                    "reason": oi_extremum_result.get('reason', '')
                 },
                 "sad": {
                     "is_active": sad_result.get('is_active', False),
