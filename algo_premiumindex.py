@@ -2173,34 +2173,6 @@ SCT_CROWD_LEVEL_EXTREME = 70.0         # 70x rule - extreme crowd
 SCT_AGG_MAX = 0.1                      # Agg < 0.1 = seller exhaustion
 SCT_OI_DELTA_MIN = 0.0                 # OI Build = new positions entering
 
-# ================= V99-PSV: PRE-SQUEEZE FLUSH VALIDATOR CONFIG =================
-PSV_FLOW_SUSPICION_MIN = 5.0           # Flow > 5x = suspicious (wash trade)
-PSV_PRICE_STAGNATION_MAX = 0.15        # Price change < 0.15% = no real momentum
-PSV_AGG_DISCREPANCY_MIN = 2.0          # Agg/Price ratio mismatch
-
-# ================= V99-LFT: LIQUIDITY FLUSH TRAP DETECTOR CONFIG =================
-LFT_AGG_DEAD_MAX = 0.1                  # Agg < 0.1 = orderbook kosong
-LFT_WMI_SINGULARITY_MIN = 98.0          # WMI > 98 = danger zone
-LFT_FLUSH_DISTANCE_PREDICT = 2.0        # Prediksi drop 2% sebelum squeeze
-
-# ================= V99-FVT: FAKE VOLATILITY TESTER CONFIG =================
-FVT_FLOW_THRESHOLD = 6.0                # Flow > 6x suspicious
-FVT_PRICE_RATIO_MAX = 0.05              # Price move per 1% flow
-FVT_TIME_WINDOW = 300                    # 5 minutes check
-
-# ================= V99-PET: POST-FLUSH ENTRY TRIGGER CONFIG =================
-PET_OI_STABILIZATION_MIN = 1.5          # OI stabil > 1.5%
-PET_PRICE_REVERSAL_MIN = 2.0            # Price reversal > 2% from low
-
-# ================= V99-TTP: TIME-BASED TRAP PREDICTOR CONFIG =================
-TTP_ROBO_PATTERN_HOURS = 4              # ROBO pattern average (240 menit)
-TTP_PIXEL_PATTERN_MINUTES = 15          # PIXEL pattern average (15 menit)
-TTP_DEFAULT_WAIT_MINUTES = 1            # Default 1 menit
-
-# ================= V99-GWP: GHOST WALL PROXIMITY CONFIG =================
-GWP_REAL_WALL_DEPTH_MIN = 500000        # Minimum $ depth (500k)
-GWP_CANCEL_RATE_MAX = 0.3               # Cancel rate < 30% = real wall
-
 class SuperiorWDMVIP99:
     """
     🔥 V99: SUPERIOR WHALE DOMINANCE PROTOCOL - FIXED LOGIC
@@ -2687,306 +2659,6 @@ class OIBuildAtExtremumV99:
             }
         
         return {"is_accumulation": False, "bias": "NEUTRAL"}
-
-
-# ================= V99-PSV: PRE-SQUEEZE FLUSH VALIDATOR =================
-class PreSqueezeFlushValidatorV99:
-    """
-    🔥 V99-PSV: PRE-SQUEEZE FLUSH VALIDATOR - ANTI-ROBO TRAP
-    
-    Kasus ROBOUSDT:
-        - Flow: 6.69x (TINGGI!)
-        - Price Change: +0.05% (STAGNAN!)
-        - WMI: 98.8x (Singularitas)
-        - Bot salah: LONG (karena WMI tinggi)
-        - Realita: FLUSH -7% dulu, baru squeeze 4 jam kemudian
-    
-    Prinsip:
-        "Jika Flow > 5x TAPI Price Change < 0.15%, itu BUKAN squeeze,
-        itu WASH TRADE sebelum FLUSH!"
-        
-        Market Maker ciptakan volume palsu untuk menarik bot,
-        lalu mereka flush harga untuk liquidate retail sebelum real squeeze.
-    """
-    
-    PSV_FLOW_SUSPICION_MIN = 5.0
-    PSV_PRICE_STAGNATION_MAX = 0.15
-    
-    @staticmethod
-    def detect(flow: float, price_change: float, wmi: float = None) -> Dict:
-        """
-        Args:
-            flow: Trade Flow ratio (>5x = suspicious)
-            price_change: Perubahan harga 5 menit (<0.15% = stagnan)
-            wmi: WMI ratio (untuk konteks)
-        
-        Returns:
-            Dict dengan is_trap, bias, reason, wait_minutes
-        """
-        # SCENARIO: High Flow + Low Price Move = FAKE MOMENTUM
-        if flow > PreSqueezeFlushValidatorV99.PSV_FLOW_SUSPICION_MIN:
-            if abs(price_change) <= PreSqueezeFlushValidatorV99.PSV_PRICE_STAGNATION_MAX:
-                wmi_context = f" WMI {wmi:.1f}x" if wmi else ""
-                
-                return {
-                    "is_trap": True,
-                    "warning_level": "ABSOLUTE",
-                    "bias": "NEUTRAL",  # Jangan entry!
-                    "direction": "FLUSH_BEFORE_SQUEEZE",
-                    "reason": f"PSV_TRAP: Flow {flow:.2f}x (TINGGI!) + Price {price_change:+.2f}% (STAGNAN){wmi_context}. "
-                             f"Ini BUKAN squeeze, ini WASH TRADE sebelum FLUSH! Tunggu 4 jam.",
-                    "wait_minutes": 240,  # Tunggu 4 jam (ROBO pattern)
-                    "entry_signal": "WAIT_FOR_FLUSH_COMPLETION"
-                }
-        
-        return {"is_trap": False, "bias": "NEUTRAL", "reason": ""}
-
-
-# ================= V99-LFT: LIQUIDITY FLUSH TRAP DETECTOR =================
-class LiquidityFlushTrapDetectorV99:
-    """
-    🔥 V99-LFT: LIQUIDITY FLUSH TRAP DETECTOR - ANTI-PIXEL TRAP
-    
-    Kasus PIXELUSDT:
-        - WMI: 99.2x (Singularitas)
-        - Agg: 0.0x (DEAD - orderbook kosong)
-        - EST_SPOOF: ACTIVE (tembok bawah palsu)
-        - Bot salah: LONG (langsung entry)
-        - Realita: DROP -7% dulu (stop out), baru SQUEEZE +22%
-    
-    Prinsip:
-        "Jika WMI > 98 TAPI Agg < 0.1 dan EST_SPOOF Active,
-        ini adalah FLUSH TRAP! Jangan entry langsung!"
-        
-        MM pasang ghost wall untuk menarik LONG, lalu mereka cabut
-        dan flush harga untuk liquidate bot sebelum real squeeze.
-    """
-    
-    LFT_AGG_DEAD_MAX = 0.1
-    LFT_WMI_SINGULARITY_MIN = 98.0
-    LFT_FLUSH_DISTANCE_PREDICT = 2.0
-    
-    @staticmethod
-    def detect(wmi: float, agg_ratio: float, est_spoof: bool) -> Dict:
-        """
-        Args:
-            wmi: Whale Migration Index (>98 = singularity)
-            agg_ratio: Aggressive Ratio (<0.1 = dead)
-            est_spoof: Apakah EST_SPOOF active (dari modul V95)
-        
-        Returns:
-            Dict dengan is_trap, bias, reason, wait_seconds
-        """
-        # SCENARIO: Singularity WMI + Aggression Dead = Fake Wall Incoming
-        if wmi > LiquidityFlushTrapDetectorV99.LFT_WMI_SINGULARITY_MIN:
-            if agg_ratio <= LiquidityFlushTrapDetectorV99.LFT_AGG_DEAD_MAX:
-                if est_spoof:
-                    return {
-                        "is_trap": True,
-                        "trap_phase": "PRE_FLUSH_WAIT",
-                        "confidence": "SUPREME",
-                        "bias": "LONG",  # Final bias tetap LONG, tapi tunggu dulu!
-                        "direction": "LONG_AFTER_FLUSH",
-                        "reason": f"LFT_TRAP: WMI {wmi:.1f}x (Singularity) + Agg {agg_ratio:.2f}x (DEAD) + "
-                                 f"EST_SPOOF Active. INI GHOST WALL! Drop akan ada sebelum squeeze!",
-                        "predicted_drop": f"-{LiquidityFlushTrapDetectorV99.LFT_FLUSH_DISTANCE_PREDICT}%",
-                        "safe_entry_time": "POST_FLUSH_VALIDATION",
-                        "wait_seconds": 300  # 5 menit minimum (PIXEL pattern)
-                    }
-        
-        return {"is_trap": False, "bias": "NEUTRAL", "reason": ""}
-
-
-# ================= V99-FVT: FAKE VOLATILITY TESTER =================
-class FakeVolatilityTesterV99:
-    """
-    🔥 V99-FVT: FAKE VOLATILITY TESTER - ANTI-WASH TRADING
-    
-    Mendeteksi manipulasi volatilitas sebelum harga bergerak nyata.
-    
-    Formula: efficiency = abs(price_change) / max(abs(volume_ratio), 0.1)
-    Jika flow tinggi tapi price change kecil, itu fake volatility.
-    """
-    
-    FVT_FLOW_THRESHOLD = 6.0
-    FVT_PRICE_RATIO_MAX = 0.05
-    
-    @staticmethod
-    def detect(flow: float, price_change: float, volume_ratio: float) -> Dict:
-        """
-        Args:
-            flow: Trade Flow ratio
-            price_change: Perubahan harga 5 menit
-            volume_ratio: Volume ratio
-        
-        Returns:
-            Dict dengan is_fake, confidence, reason
-        """
-        # Hitung efisiensi: berapa % price change per 1x flow
-        safe_volume = max(abs(volume_ratio), 0.1)
-        efficiency = abs(price_change) / safe_volume
-        
-        if flow > FakeVolatilityTesterV99.FVT_FLOW_THRESHOLD and efficiency < FakeVolatilityTesterV99.FVT_PRICE_RATIO_MAX:
-            return {
-                "is_fake": True,
-                "confidence": "SUPREME",
-                "reason": f"FVT_FAKE_VOLATILITY: Flow {flow:.2f}x tinggi TAPI price change {price_change:+.2f}% kecil. "
-                         f"Efisiensi {efficiency:.3f}% per 1x flow. Ini WASH TRADE!",
-                "bias": "NEUTRAL"
-            }
-        
-        return {"is_fake": False, "bias": "NEUTRAL", "reason": ""}
-
-
-# ================= V99-PET: POST-FLUSH ENTRY TRIGGER =================
-class PostFlushEntryTriggerV99:
-    """
-    🔥 V99-PET: POST-FLUSH ENTRY TRIGGER - TIMING OPTIMIZER
-    
-    Menentukan waktu entry terbaik SETELAH fase flush selesai.
-    
-    Indikator flush selesai:
-        - OI stabil atau naik (>1.5%)
-        - Price reversal dari low (>2%)
-    """
-    
-    PET_OI_STABILIZATION_MIN = 1.5
-    PET_PRICE_REVERSAL_MIN = 2.0
-    
-    @staticmethod
-    def validate(oi_delta: float, price_from_low: float, current_price: float, low_price: float) -> Dict:
-        """
-        Args:
-            oi_delta: OI Delta 5 menit (>1.5% = stabil)
-            price_from_low: Persentase reversal dari titik terendah
-            current_price: Harga sekarang
-            low_price: Harga terendah dalam periode flush
-        
-        Returns:
-            Dict dengan is_safe, bias, reason
-        """
-        # Hitung reversal jika tidak diberikan
-        if price_from_low == 0 and low_price > 0:
-            price_from_low = ((current_price - low_price) / low_price) * 100
-        
-        if oi_delta > PostFlushEntryTriggerV99.PET_OI_STABILIZATION_MIN:
-            if price_from_low > PostFlushEntryTriggerV99.PET_PRICE_REVERSAL_MIN:
-                return {
-                    "is_safe": True,
-                    "bias": "LONG",
-                    "confidence": "HIGH",
-                    "reason": f"PET_SAFE_ENTRY: OI naik {oi_delta:+.2f}% (stabil) + Price reversal {price_from_low:.2f}% dari low. "
-                             f"Flush selesai! AMAN ENTRY LONG!"
-                }
-            else:
-                return {
-                    "is_safe": False,
-                    "bias": "WAIT",
-                    "reason": f"PET_WAIT: OI naik {oi_delta:+.2f}% TAPI reversal baru {price_from_low:.2f}% (<2%). Tunggu reversal lebih kuat."
-                }
-        
-        return {"is_safe": False, "bias": "WAIT", "reason": "OI belum stabil."}
-
-
-# ================= V99-TTP: TIME-BASED TRAP PREDICTOR =================
-class TimeBasedTrapPredictorV99:
-    """
-    🔥 V99-TTP: TIME-BASED TRAP PREDICTOR - TEMPORAL ANALYSIS
-    
-    Prediksi durasi fase trap berdasarkan karakteristik historical.
-    
-    Pattern:
-        - ROBO pattern: Flow tinggi + price stagnan → tunggu 4 jam
-        - PIXEL pattern: WMI tinggi + Agg mati + spoof → tunggu 5-15 menit
-    """
-    
-    TTP_ROBO_PATTERN_HOURS = 4
-    TTP_PIXEL_PATTERN_MINUTES = 15
-    TTP_DEFAULT_WAIT_MINUTES = 1
-    
-    @staticmethod
-    def estimate_wait_time(flow: float, price_change: float, wmi: float, agg: float, est_spoof: bool) -> Dict:
-        """
-        Args:
-            flow: Trade Flow
-            price_change: Price change
-            wmi: WMI ratio
-            agg: Aggressive Ratio
-            est_spoof: EST_SPOOF status
-        
-        Returns:
-            Dict dengan pattern_type, wait_minutes, reason
-        """
-        # Pattern ROBO: Flow tinggi + price stagnan
-        if flow > 5.0 and abs(price_change) < 0.2:
-            return {
-                "pattern_type": "ROBO",
-                "wait_minutes": TimeBasedTrapPredictorV99.TTP_ROBO_PATTERN_HOURS * 60,
-                "wait_seconds": TimeBasedTrapPredictorV99.TTP_ROBO_PATTERN_HOURS * 3600,
-                "reason": f"TTP_ROBO_PATTERN: Flow {flow:.2f}x tinggi + price stagnan. Tunggu {TimeBasedTrapPredictorV99.TTP_ROBO_PATTERN_HOURS} jam."
-            }
-        
-        # Pattern PIXEL: WMI tinggi + Agg mati + spoof
-        if wmi > 98 and agg < 0.1 and est_spoof:
-            return {
-                "pattern_type": "PIXEL",
-                "wait_minutes": TimeBasedTrapPredictorV99.TTP_PIXEL_PATTERN_MINUTES,
-                "wait_seconds": TimeBasedTrapPredictorV99.TTP_PIXEL_PATTERN_MINUTES * 60,
-                "reason": f"TTP_PIXEL_PATTERN: WMI {wmi:.1f}x + Agg {agg:.2f}x + Spoof. Tunggu {TimeBasedTrapPredictorV99.TTP_PIXEL_PATTERN_MINUTES} menit."
-            }
-        
-        return {
-            "pattern_type": "NORMAL",
-            "wait_minutes": TimeBasedTrapPredictorV99.TTP_DEFAULT_WAIT_MINUTES,
-            "wait_seconds": TimeBasedTrapPredictorV99.TTP_DEFAULT_WAIT_MINUTES * 60,
-            "reason": "No special pattern detected."
-        }
-
-
-# ================= V99-GWP: GHOST WALL PROXIMITY =================
-class GhostWallProximityV99:
-    """
-    🔥 V99-GWP: GHOST WALL PROXIMITY - ORDERBOOK DEPTH CHECK
-    
-    Validasi apakah tembok likuiditas asli atau hanya ghost wall.
-    
-    - Real wall: Depth besar (>$500k) + cancel rate rendah (<30%)
-    - Ghost wall: Depth kecil atau cancel rate tinggi
-    """
-    
-    GWP_REAL_WALL_DEPTH_MIN = 500000
-    GWP_CANCEL_RATE_MAX = 0.3
-    
-    @staticmethod
-    def validate(orderbook_depth: float, cancel_rate: float, side: str = "bid") -> Dict:
-        """
-        Args:
-            orderbook_depth: Total volume orderbook dalam USD
-            cancel_rate: Rasio order yang dicancel (0-1)
-            side: "bid" atau "ask"
-        
-        Returns:
-            Dict dengan is_real, confidence, reason
-        """
-        if orderbook_depth > GhostWallProximityV99.GWP_REAL_WALL_DEPTH_MIN:
-            if cancel_rate < GhostWallProximityV99.GWP_CANCEL_RATE_MAX:
-                return {
-                    "is_real": True,
-                    "confidence": "HIGH",
-                    "reason": f"GWP_REAL_WALL: Depth ${orderbook_depth:,.0f} > 500k + Cancel rate {cancel_rate:.1%} rendah. Wall ASLI."
-                }
-            else:
-                return {
-                    "is_real": False,
-                    "confidence": "MEDIUM",
-                    "reason": f"GWP_SUSPECT: Depth besar TAPI cancel rate {cancel_rate:.1%} tinggi. Mungkin GHOST WALL."
-                }
-        else:
-            return {
-                "is_real": False,
-                "confidence": "HIGH",
-                "reason": f"GWP_GHOST_WALL: Depth ${orderbook_depth:,.0f} < 500k. Ini GHOST WALL!"
-            }
 
 
 class InternalTrapV99FMT:
@@ -4327,46 +3999,35 @@ def safe_div(a, b, default=1.0):
 # ================= V99: REVISED CONFLICT RESOLVER (THE ULTIMATE HIERARCHY) =================
 class ConflictResolverV99:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V99+CRIMINAL (THE ULTIMATE HIERARCHY):
+    🔥 URUTAN PRIORITAS MUTLAK V99 (DENGAN SHORT CROWD TRAP):
     
-    ⭐ TERTINGGI (CRIMINAL PATTERN DETECTORS):
-    1. V99-PSV (Pre-Squeeze Flush Validator) - Anti-ROBO Trap ⭐ BARU!
-    2. V99-LFT (Liquidity Flush Trap Detector) - Anti-PIXEL Trap ⭐ BARU!
-    3. V99-FVT (Fake Volatility Tester) - Anti-Wash Trade ⭐ BARU!
-    4. V99-GWP (Ghost Wall Proximity) - Validasi Orderbook ⭐ BARU!
-    
-    ⭐ SECONDARY (EXISTING HIGH PRIORITY):
-    5. V99-SCT (Short Crowd Trap) - ANTI-CHECKMATE!
-    6. V99 Crowd vs Cluster Logic - Bandingkan Crowd vs Cluster
-    7. V99 OI Build at Extremum - Deteksi akumulasi diam-diam
-    8. V99 OI Build Validator - Nuclear OI
-    9. V99 Gravity Distance - Proximity > Massa
-    10. V99 WMI VETO - Hanya valid jika tidak crowded
-    11. V99 Internal Trap (FMT)
-    12. V97 EHS (Event Horizon Singularity)
-    13. V98 VAC (Vacuum Detector)
-    14. V96 PBD (Position Build Detector)
+    ⚠️ PRIORITAS BARU V99:
+    1. V99-SCT (Short Crowd Trap) - ANTI-CHECKMATE! ⭐ TERTINGGI!
+    2. V99 Crowd vs Cluster Logic - Bandingkan Crowd vs Cluster
+    3. V99 OI Build at Extremum - Deteksi akumulasi diam-diam
+    4. V99 OI Build Validator - Nuclear OI
+    5. V99 Gravity Distance - Proximity > Massa
+    6. V99 WMI VETO - Hanya valid jika tidak crowded
+    7. V99 Internal Trap (FMT)
+    8. V97 EHS (Event Horizon Singularity)
+    9. V98 VAC (Vacuum Detector)
+    10. V96 PBD (Position Build Detector)
     """
     @staticmethod
     def resolve(
-        # NEW CRIMINAL PATTERN MODULES - PRIORITAS TERTINGGI!
-        psv_res: Dict,                 # V99 Pre-Squeeze Flush Validator ⭐ BARU!
-        lft_res: Dict,                  # V99 Liquidity Flush Trap Detector ⭐ BARU!
-        fvt_res: Dict,                   # V99 Fake Volatility Tester ⭐ BARU!
-        gwp_res: Dict,                   # V99 Ghost Wall Proximity ⭐ BARU!
-        ttp_res: Dict,                   # V99 Time-Based Trap Predictor (informational)
+        # NEW V99 MODULES - PRIORITAS TERTINGGI!
+        sct_res: Dict,                 # V99 Short Crowd Trap ⭐ TERTINGGI!
+        crowd_cluster_res: Dict,        # V99 Crowd vs Cluster Logic ⭐
+        oi_extremum_res: Dict,          # V99 OI Build at Extremum ⭐
         
         # Existing V99 modules
-        sct_res: Dict,
-        crowd_cluster_res: Dict,
-        oi_extremum_res: Dict,
         oi_build_res: Dict,
         gravity_dist_res: Dict,
         wmi_veto_res: Dict,
         internal_trap_res: Dict,
         density_res: Dict,
         
-        # Existing modules (V97/V98/etc)
+        # Existing modules
         ehs_res: Dict,
         vac_res: Dict,
         pbd_res: Dict,
@@ -4397,62 +4058,8 @@ class ConflictResolverV99:
         lim_res: Dict
     ) -> Dict:
         
-        # ============================================
-        # 🎯 1. V99-PSV: PRE-SQUEEZE FLUSH VALIDATOR (PRIORITAS TERTINGGI!)
-        # Deteksi ROBO-style wash trade: flow tinggi + price stagnan
-        # ============================================
-        if psv_res.get('is_trap'):
-            return {
-                "bias": "NEUTRAL",  # JANGAN ENTRY!
-                "confidence": "ABSOLUTE",
-                "reason": f"V99_PSV: {psv_res['reason']}",
-                "phase": "WASH_TRADE_DETECTED",
-                "wait_minutes": psv_res.get('wait_minutes', 240),
-                "entry_signal": psv_res.get('entry_signal', 'WAIT')
-            }
-        
-        # ============================================
-        # 🎯 2. V99-LFT: LIQUIDITY FLUSH TRAP DETECTOR
-        # Deteksi PIXEL-style trap: WMI tinggi + Agg mati + spoof
-        # ============================================
-        if lft_res.get('is_trap'):
-            return {
-                "bias": lft_res['bias'],  # Bias tetap LONG, tapi dengan warning
-                "confidence": lft_res.get('confidence', 'SUPREME'),
-                "reason": f"V99_LFT: {lft_res['reason']}",
-                "phase": lft_res.get('trap_phase', 'PRE_FLUSH_WAIT'),
-                "warning": "JANGAN ENTRY LANGSUNG! Tunggu 5 menit setelah low.",
-                "wait_seconds": lft_res.get('wait_seconds', 300)
-            }
-        
-        # ============================================
-        # 🎯 3. V99-FVT: FAKE VOLATILITY TESTER
-        # Deteksi wash trading berdasarkan efisiensi price/flow
-        # ============================================
-        if fvt_res.get('is_fake'):
-            return {
-                "bias": "NEUTRAL",
-                "confidence": fvt_res.get('confidence', 'SUPREME'),
-                "reason": f"V99_FVT: {fvt_res['reason']}",
-                "phase": "FAKE_VOLATILITY"
-            }
-        
-        # ============================================
-        # 🎯 4. V99-GWP: GHOST WALL PROXIMITY
-        # Validasi orderbook depth untuk ghost wall
-        # ============================================
-        if gwp_res.get('is_real') is False and gwp_res.get('confidence') == 'HIGH':
-            return {
-                "bias": "NEUTRAL",  # Ghost wall terdeteksi, jangan percaya
-                "confidence": "SUPREME",
-                "reason": f"V99_GWP: {gwp_res['reason']}",
-                "phase": "GHOST_WALL_DETECTED",
-                "warning": "JANGAN PERCAYA MAGNET LIKUIDITAS!"
-            }
-        
-        # ============================================
-        # 🎯 5. V99-SCT: SHORT CROWD TRAP
-        # ============================================
+        # 🎯 1. V99 SHORT CROWD TRAP (PRIORITAS TERTINGGI!)
+        # Jika Short Imbalance > 50x + Agg mati = SQUEEZE!
         if sct_res.get('is_trap'):
             return {
                 "bias": sct_res['bias'],
@@ -4461,7 +4068,8 @@ class ConflictResolverV99:
                 "phase": sct_res.get('phase', 'CROWDED_SQUEEZE')
             }
         
-        # 🎯 6. V99 CROWD VS CLUSTER LOGIC
+        # 🎯 2. V99 CROWD VS CLUSTER LOGIC
+        # Bandingkan crowd vs cluster, prioritaskan crowd
         if crowd_cluster_res.get('override'):
             return {
                 "bias": crowd_cluster_res['bias'],
@@ -4470,7 +4078,8 @@ class ConflictResolverV99:
                 "phase": crowd_cluster_res.get('phase', 'CROWD_DOMINANCE')
             }
         
-        # 🎯 7. V99 OI BUILD AT EXTREMUM
+        # 🎯 3. V99 OI BUILD AT EXTREMUM
+        # Deteksi akumulasi diam-diam sebelum squeeze
         if oi_extremum_res.get('is_accumulation'):
             return {
                 "bias": oi_extremum_res['bias'],
@@ -4479,7 +4088,7 @@ class ConflictResolverV99:
                 "phase": oi_extremum_res.get('phase', 'STEALTH_ACCUMULATION')
             }
         
-        # 🎯 8. V99 OI BUILD VALIDATOR
+        # 🎯 4. V99 OI BUILD VALIDATOR
         if oi_build_res.get('bias') != "NEUTRAL" and oi_build_res.get('confidence') == "ABSOLUTE":
             return {
                 "bias": oi_build_res['bias'],
@@ -4488,7 +4097,7 @@ class ConflictResolverV99:
                 "phase": oi_build_res.get('phase', 'OI_DOMINANCE')
             }
         
-        # 🎯 9. V99 GRAVITY DISTANCE
+        # 🎯 5. V99 GRAVITY DISTANCE
         if gravity_dist_res.get('override'):
             return {
                 "bias": gravity_dist_res['bias'],
@@ -4497,7 +4106,7 @@ class ConflictResolverV99:
                 "phase": gravity_dist_res.get('phase', 'PROXIMITY_OVERRIDE')
             }
         
-        # 🎯 10. V99 WMI VETO
+        # 🎯 6. V99 WMI VETO (Hanya jika tidak ada crowd)
         if wmi_veto_res.get('is_veto'):
             return {
                 "bias": wmi_veto_res['bias'],
@@ -4506,7 +4115,7 @@ class ConflictResolverV99:
                 "phase": wmi_veto_res.get('phase', 'WHALE_SINGULARITY_OVERRIDE')
             }
         
-        # 🎯 11. V99 INTERNAL TRAP
+        # 🎯 7. V99 INTERNAL TRAP
         if internal_trap_res.get('is_trap'):
             return {
                 "bias": internal_trap_res['bias'],
@@ -4515,7 +4124,7 @@ class ConflictResolverV99:
                 "phase": "INTERNAL_MATCHING_TRAP"
             }
         
-        # 🎯 12. V97 EVENT HORIZON SINGULARITY
+        # 🎯 8. V97 EVENT HORIZON SINGULARITY
         if ehs_res.get('is_active'):
             return {
                 "bias": ehs_res['bias'],
@@ -4524,7 +4133,7 @@ class ConflictResolverV99:
                 "phase": "EVENT_HORIZON_SUCTION"
             }
         
-        # 💨 13. VACUUM DETECTOR
+        # 💨 9. VACUUM DETECTOR
         if vac_res.get('active'):
             return {
                 "bias": vac_res['bias'],
@@ -4533,7 +4142,7 @@ class ConflictResolverV99:
                 "phase": "LIQUIDITY_VACUUM"
             }
         
-        # 🏗️ 14. POSITION BUILD DETECTOR
+        # 🏗️ 10. POSITION BUILD DETECTOR
         if pbd_res.get('active'):
             return {
                 "bias": pbd_res['bias'],
@@ -9868,38 +9477,37 @@ class MarketStateEngineV82:
         # ============================================
         # PRIORITAS 0.5: PANIC SELL VALIDATOR (V78) - ANTI-OPN ENDLESS FLOOR
         # ============================================
-        if psv_result.get('is_valid', False) and psv_result.get('confidence') in ["ABSOLUTE", "SUPREME", "HIGH"]:
-            validation_type = psv_result.get('validation_type', 'NONE')
-            if validation_type == "FALLING_KNIFE_CONTINUATION":
+        if psv_result['is_valid'] and psv_result['confidence'] in ["ABSOLUTE", "SUPREME", "HIGH"]:
+            if psv_result['validation_type'] == "FALLING_KNIFE_CONTINUATION":
                 return {
                     "phase": "ENDLESS_FLOOR",
                     "bias": "SHORT",
                     "confidence": "ABSOLUTE",
-                    "reason": psv_result.get('reason', ''),
+                    "reason": psv_result['reason'],
                     "multiplier": 24.0
                 }
-            elif validation_type == "REAL_EXHAUSTION":
+            elif psv_result['validation_type'] == "REAL_EXHAUSTION":
                 return {
                     "phase": "TRUE_BOTTOM",
                     "bias": "LONG",
                     "confidence": "ABSOLUTE",
-                    "reason": psv_result.get('reason', ''),
+                    "reason": psv_result['reason'],
                     "multiplier": 24.0
                 }
-            elif validation_type == "REAL_DISTRIBUTION":
+            elif psv_result['validation_type'] == "REAL_DISTRIBUTION":
                 return {
                     "phase": "TRUE_TOP",
                     "bias": "SHORT",
                     "confidence": "ABSOLUTE",
-                    "reason": psv_result.get('reason', ''),
+                    "reason": psv_result['reason'],
                     "multiplier": 23.5
                 }
-            elif validation_type == "FAKE_PUMP":
+            elif psv_result['validation_type'] == "FAKE_PUMP":
                 return {
                     "phase": "FAKE_PUMP",
                     "bias": "SHORT",
                     "confidence": "HIGH",
-                    "reason": psv_result.get('reason', ''),
+                    "reason": psv_result['reason'],
                     "multiplier": 23.0
                 }
 
@@ -11258,15 +10866,14 @@ class ConflictResolverV82:
         # ============================================
         # PRIORITAS 9: PANIC SELL VALIDATOR (V78) - ANTI-OPN ENDLESS FLOOR
         # ============================================
-        if psv_result and psv_result.get('is_valid', False):
-            if psv_result.get('confidence') in ["ABSOLUTE", "SUPREME", "HIGH"]:
-                validation_type = psv_result.get('validation_type', 'NONE')
+        if psv_result and psv_result['is_valid']:
+            if psv_result['confidence'] in ["ABSOLUTE", "SUPREME", "HIGH"]:
                 return {
-                    "bias": psv_result.get('bias', 'NEUTRAL'),
-                    "confidence": psv_result.get('confidence', 'LOW'),
-                    "reason": psv_result.get('reason', ''),
-                    "phase": validation_type,
-                    "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "NO" if "FALLING" in validation_type else "YES"}
+                    "bias": psv_result['bias'],
+                    "confidence": psv_result['confidence'],
+                    "reason": psv_result['reason'],
+                    "phase": psv_result['validation_type'],
+                    "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "NO" if "FALLING" in psv_result['validation_type'] else "YES"}
                 }
 
         # ============================================
@@ -13072,14 +12679,6 @@ class BinanceAnalyzerV87:
         self.crowd_cluster = CrowdVsClusterLogicV99()        # V99 Crowd vs Cluster
         self.oi_extremum = OIBuildAtExtremumV99()            # V99 OI Build at Extremum
         
-        # ===== V99: CRIMINAL PATTERN DETECTORS (BARU!) =====
-        self.psv_detector = PreSqueezeFlushValidatorV99()        # V99-PSV (Anti-ROBO)
-        self.lft_detector = LiquidityFlushTrapDetectorV99()      # V99-LFT (Anti-PIXEL)
-        self.fvt_detector = FakeVolatilityTesterV99()            # V99-FVT (Anti-Wash)
-        self.gwp_detector = GhostWallProximityV99()              # V99-GWP (Ghost Wall)
-        self.ttp_predictor = TimeBasedTrapPredictorV99()         # V99-TTP (Timing)
-        self.pet_trigger = PostFlushEntryTriggerV99()            # V99-PET (Entry Timing)
-        
         self.conflict_resolver_v99 = ConflictResolverV99()   # V99 resolver
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
@@ -14031,78 +13630,14 @@ class BinanceAnalyzerV87:
                 flow=trades.get('ratio', 0)
             )
             
-            # ================= V99: CRIMINAL PATTERN DETECTORS =================
-            # PSV - Pre-Squeeze Flush Validator (Anti-ROBO)
-            psv_result = self.psv_detector.detect(
-                flow=trades.get('ratio', 0),
-                price_change=change_5m,
-                wmi=wmi_ratio
-            )
-            
-            # LFT - Liquidity Flush Trap Detector (Anti-PIXEL)
-            # EST_SPOOF status dari result sebelumnya
-            est_spoof_active = est_result.get('is_spoof', False) if 'est_result' in locals() else False
-            
-            lft_result = self.lft_detector.detect(
-                wmi=wmi_ratio,
-                agg_ratio=trades.get('aggressive_ratio', 0),
-                est_spoof=est_spoof_active
-            )
-            
-            # FVT - Fake Volatility Tester
-            volume_ratio = trades.get('volume_ratio', 1.0) if 'volume_ratio' in dir(trades) else trades.get('ratio', 1.0)
-            fvt_result = self.fvt_detector.detect(
-                flow=trades.get('ratio', 0),
-                price_change=change_5m,
-                volume_ratio=volume_ratio
-            )
-            
-            # GWP - Ghost Wall Proximity (butuh data orderbook depth)
-            # Estimasi orderbook depth dari bid_vol dan ask_vol
-            total_depth = (bid_vol + ask_vol) * price  # Estimasi dalam USD
-            # Cancel rate sulit dihitung, bisa pakai proxy dari flow/agg
-            cancel_rate_estimate = 0.5  # Default, bisa di-improve
-            
-            gwp_result = self.gwp_detector.validate(
-                orderbook_depth=total_depth,
-                cancel_rate=cancel_rate_estimate,
-                side="bid"  # atau "ask" tergantung konteks
-            )
-            
-            # TTP - Time-Based Trap Predictor
-            ttp_result = self.ttp_predictor.estimate_wait_time(
-                flow=trades.get('ratio', 0),
-                price_change=change_5m,
-                wmi=wmi_ratio,
-                agg=trades.get('aggressive_ratio', 0),
-                est_spoof=est_spoof_active
-            )
-            
-            # PET - Post-Flush Entry Trigger (butuh data low price)
-            # Simpan low price dari history
-            price_low = min(self.state_mgr.price_history) if len(self.state_mgr.price_history) > 0 else price
-            price_from_low = ((price - price_low) / price_low) * 100 if price_low > 0 else 0
-            
-            pet_result = self.pet_trigger.validate(
-                oi_delta=oi_delta_5m,
-                price_from_low=price_from_low,
-                current_price=price,
-                low_price=price_low
-            )
-            
             # 4️⃣ Terakhir: Resolve semua sinyal dengan hierarki V99 (THE ULTIMATE HIERARCHY)
             final_decision = self.conflict_resolver_v99.resolve(
-                # NEW CRIMINAL PATTERN MODULES - PRIORITAS TERTINGGI!
-                psv_res=psv_result,                    # V99 Pre-Squeeze Flush Validator ⭐
-                lft_res=lft_result,                     # V99 Liquidity Flush Trap Detector ⭐
-                fvt_res=fvt_result,                     # V99 Fake Volatility Tester ⭐
-                gwp_res=gwp_result,                     # V99 Ghost Wall Proximity ⭐
-                ttp_res=ttp_result,                     # V99 Time-Based Trap Predictor
-                
-                # Existing V99 modules
+                # NEW V99 MODULES - PRIORITAS TERTINGGI!
                 sct_res=sct_result,                    # V99 Short Crowd Trap ⭐
                 crowd_cluster_res=crowd_cluster_result, # V99 Crowd vs Cluster ⭐
                 oi_extremum_res=oi_extremum_result,     # V99 OI Build at Extremum ⭐
+                
+                # Existing V99 modules
                 oi_build_res=oi_build_result,
                 gravity_dist_res=gravity_dist_result,
                 wmi_veto_res=wmi_veto_result,
@@ -14331,13 +13866,12 @@ class BinanceAnalyzerV87:
                     "ezh_duration_minutes": round(ezh_duration, 1)
                 },
                 "psv": {
-                    "is_trap": psv_result.get('is_trap', False),
-                    "bias": psv_result.get('bias', 'NEUTRAL'),
-                    "direction": psv_result.get('direction', 'NEUTRAL'),
-                    "reason": psv_result.get('reason', ''),
-                    "wait_minutes": psv_result.get('wait_minutes', 0),
-                    "entry_signal": psv_result.get('entry_signal', 'WAIT'),
-                    "warning_level": psv_result.get('warning_level', 'NONE')
+                    "is_valid": psv_result['is_valid'],
+                    "validation_type": psv_result['validation_type'],
+                    "bias": psv_result['bias'],
+                    "reason": psv_result['reason'],
+                    "confidence": psv_result['confidence'],
+                    "psv_duration_minutes": round(psv_duration, 1)
                 },
                 # V77 Modules
                 "off": {
@@ -14830,106 +14364,6 @@ class BinanceAnalyzerV87:
                 "is_veto": egr_result.get('is_veto', False),
                 "bias": egr_result.get('bias', 'NEUTRAL'),
                 "reason": egr_result.get('reason', '')
-            }
-            
-            # ================= V99: CRIMINAL PATTERN MODULES OUTPUT =================
-            result["psv"] = {
-                "is_trap": psv_result.get('is_trap', False),
-                "reason": psv_result.get('reason', ''),
-                "wait_minutes": psv_result.get('wait_minutes', 0),
-                "entry_signal": psv_result.get('entry_signal', 'WAIT')
-            }
-            
-            result["lft"] = {
-                "is_trap": lft_result.get('is_trap', False),
-                "bias": lft_result.get('bias', 'NEUTRAL'),
-                "reason": lft_result.get('reason', ''),
-                "wait_seconds": lft_result.get('wait_seconds', 0),
-                "trap_phase": lft_result.get('trap_phase', 'NORMAL')
-            }
-            
-            result["fvt"] = {
-                "is_fake": fvt_result.get('is_fake', False),
-                "reason": fvt_result.get('reason', ''),
-                "confidence": fvt_result.get('confidence', 'LOW')
-            }
-            
-            result["gwp"] = {
-                "is_real": gwp_result.get('is_real', True),
-                "reason": gwp_result.get('reason', ''),
-                "confidence": gwp_result.get('confidence', 'LOW')
-            }
-            
-            result["ttp"] = {
-                "pattern": ttp_result.get('pattern_type', 'NORMAL'),
-                "wait_minutes": ttp_result.get('wait_minutes', 1),
-                "reason": ttp_result.get('reason', '')
-            }
-            
-            result["pet"] = {
-                "is_safe": pet_result.get('is_safe', False),
-                "bias": pet_result.get('bias', 'WAIT'),
-                "reason": pet_result.get('reason', '')
-            }
-            
-            # ================= V99: EXISTING MODULES OUTPUT =================
-            result["sct"] = {
-                "is_trap": sct_result.get('is_trap', False),
-                "bias": sct_result.get('bias', 'NEUTRAL'),
-                "reason": sct_result.get('reason', ''),
-                "phase": sct_result.get('phase', 'NORMAL')
-            }
-            
-            result["crowd_cluster"] = {
-                "override": crowd_cluster_result.get('override', False),
-                "bias": crowd_cluster_result.get('bias', 'NEUTRAL'),
-                "reason": crowd_cluster_result.get('reason', '')
-            }
-            
-            result["oi_extremum"] = {
-                "is_accumulation": oi_extremum_result.get('is_accumulation', False),
-                "bias": oi_extremum_result.get('bias', 'NEUTRAL'),
-                "reason": oi_extremum_result.get('reason', '')
-            }
-            
-            result["oi_build"] = {
-                "bias": oi_build_result.get('bias', 'NEUTRAL'),
-                "confidence": oi_build_result.get('confidence', 'LOW'),
-                "reason": oi_build_result.get('reason', ''),
-                "phase": oi_build_result.get('phase', 'NORMAL')
-            }
-            
-            result["gravity_distance"] = {
-                "override": gravity_dist_result.get('override', False),
-                "bias": gravity_dist_result.get('bias', 'NEUTRAL'),
-                "reason": gravity_dist_result.get('reason', '')
-            }
-            
-            result["wmi_veto"] = {
-                "is_veto": wmi_veto_result.get('is_veto', False),
-                "bias": wmi_veto_result.get('bias', 'NEUTRAL'),
-                "reason": wmi_veto_result.get('reason', ''),
-                "phase": wmi_veto_result.get('phase', 'NORMAL')
-            }
-            
-            result["internal_trap"] = {
-                "is_trap": internal_trap_result.get('is_trap', False),
-                "bias": internal_trap_result.get('bias', 'NEUTRAL'),
-                "reason": internal_trap_result.get('reason', '')
-            }
-            
-            result["oi_phase"] = {
-                "phase": oi_phase_result.get('phase', 'NORMAL'),
-                "bias": oi_phase_result.get('bias', 'NEUTRAL'),
-                "reason": oi_phase_result.get('reason', '')
-            }
-            
-            result["density"] = {
-                "better_path": density_result.get('better_path', 'BALANCED'),
-                "bias": density_result.get('bias', 'NEUTRAL'),
-                "reason": density_result.get('reason', ''),
-                "short_efficiency": density_result.get('short_efficiency', 0),
-                "long_efficiency": density_result.get('long_efficiency', 0)
             }
             
             # ===== V95: LIQUIDATION GAP DETECTOR =====
