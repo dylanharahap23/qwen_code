@@ -4278,6 +4278,473 @@ class ConflictResolverV99:
         }
 
 
+# ================= V100: LIQUIDATION PAYOUT CALCULATOR =================
+class LiquidationPayoutCalculatorV100:
+    """
+    🔥 V100: LIQUIDATION PAYOUT CALCULATOR - HFT REWARD MODEL
+    
+    HFT tidak memilih target berdasarkan jarak terdekat,
+    tapi berdasarkan REWARD TERBESAR per unit ENERGY.
+    
+    Formula:
+        payout_long = long_liq_size / abs(long_liq_distance)
+        payout_short = short_liq_size / abs(short_liq_distance)
+    
+    Contoh PIXELUSDT:
+        short liq 0.6%, size kecil = payout kecil
+        long liq 3.7%, size besar = payout besar
+        Maka HFT akan: DUMP DULU (pre-flush) baru PUMP
+    
+    Kasus PLAYUSDT:
+        long liq -2.95%, size 1.2M → payout = 1.2/2.95 = 0.407
+        short liq +0.19%, size 8.5M → payout = 8.5/0.19 = 44.7
+        Maka HFT akan: LANGSUNG SQUEEZE!
+    """
+    
+    @staticmethod
+    def calculate_payouts(long_liq_size: float, short_liq_size: float,
+                         long_dist: float, short_dist: float) -> Dict:
+        """
+        Menghitung payout untuk kedua sisi likuidasi
+        
+        Args:
+            long_liq_size: Ukuran likuidasi LONG (dalam $)
+            short_liq_size: Ukuran likuidasi SHORT (dalam $)
+            long_dist: Jarak ke long liquidation (negatif, dalam %)
+            short_dist: Jarak ke short liquidation (positif, dalam %)
+        
+        Returns:
+            Dict dengan payout_long, payout_short, bias, reason
+        """
+        # Hindari division by zero
+        safe_long_dist = max(abs(long_dist), 0.01)
+        safe_short_dist = max(abs(short_dist), 0.01)
+        
+        # Hitung payout (reward per unit distance)
+        payout_long = long_liq_size / safe_long_dist if long_liq_size > 0 else 0
+        payout_short = short_liq_size / safe_short_dist if short_liq_size > 0 else 0
+        
+        # Hitung rasio payout
+        if payout_long > payout_short:
+            ratio = payout_long / max(payout_short, 0.01)
+            bias = "SHORT"  # Long payout lebih besar → target long di bawah → SHORT
+            reason = (f"LPC_PAYOUT: Long payout {payout_long:.2f} > Short payout {payout_short:.2f} "
+                     f"(ratio {ratio:.1f}x). MM akan pilih target LONG di bawah (SHORT bias)")
+        elif payout_short > payout_long:
+            ratio = payout_short / max(payout_long, 0.01)
+            bias = "LONG"   # Short payout lebih besar → target short di atas → LONG
+            reason = (f"LPC_PAYOUT: Short payout {payout_short:.2f} > Long payout {payout_long:.2f} "
+                     f"(ratio {ratio:.1f}x). MM akan pilih target SHORT di atas (LONG bias)")
+        else:
+            ratio = 1.0
+            bias = "NEUTRAL"
+            reason = "LPC_PAYOUT: Payout seimbang, tunggu signal lain"
+        
+        return {
+            "payout_long": round(payout_long, 2),
+            "payout_short": round(payout_short, 2),
+            "payout_ratio": round(ratio, 2),
+            "bias": bias,
+            "reason": reason,
+            "dominant_target": "LONG_LIQ" if payout_long > payout_short else "SHORT_LIQ"
+        }
+    
+    @staticmethod
+    def get_optimal_path(payout_result: Dict, 
+                         long_dist: float, short_dist: float,
+                         flow: float, agg: float) -> Dict:
+        """
+        Menentukan path optimal dengan validasi tambahan
+        
+        Args:
+            payout_result: Hasil dari calculate_payouts
+            long_dist: Jarak long liquidation
+            short_dist: Jarak short liquidation
+            flow: Trade flow
+            agg: Aggression ratio
+        
+        Returns:
+            Dict dengan path, bias, dan rekomendasi
+        """
+        # Jika salah satu payout dominan (> LPC_PAYOUT_THRESHOLD)
+        if payout_result['payout_ratio'] > LPC_PAYOUT_THRESHOLD:
+            if payout_result['dominant_target'] == "LONG_LIQ":
+                return {
+                    "path": "PRE_FLUSH_THEN_PUMP" if abs(short_dist) < 2.0 else "DIRECT_DUMP",
+                    "bias": "SHORT",
+                    "first_move": "DUMP",
+                    "second_move": "PUMP" if abs(short_dist) < 2.0 else None,
+                    "reason": f"Long payout dominan ({payout_result['payout_ratio']:.1f}x). "
+                             f"MM akan {'dump dulu sebelum pump' if abs(short_dist) < 2.0 else 'dump langsung'}",
+                    "flush_expected": abs(short_dist) < 2.0
+                }
+            else:
+                return {
+                    "path": "DIRECT_PUMP",
+                    "bias": "LONG",
+                    "first_move": "PUMP",
+                    "second_move": None,
+                    "reason": f"Short payout dominan ({payout_result['payout_ratio']:.1f}x). "
+                             f"MM akan pump langsung ke short liquidation",
+                    "flush_expected": False
+                }
+        
+        # Jika payout seimbang, lihat konteks
+        return {
+            "path": "CONTEXT_DEPENDENT",
+            "bias": "NEUTRAL",
+            "first_move": "UNKNOWN",
+            "reason": "Payout seimbang, perlu validasi dari modul lain",
+            "flush_expected": False
+        }
+
+
+# ================= V100: LIQUIDATION PRE-FLUSH DETECTOR =================
+class LiquidationPreFlushDetectorV100:
+    """
+    🔥 V100: LIQUIDATION PRE-FLUSH DETECTOR - ANTI-PIXEL TRAP
+    
+    Mendeteksi pattern klasik di mana market maker melakukan pre-flush
+    (dump -3% sampai -7%) sebelum squeeze.
+    
+    Pattern PIXELUSDT:
+        1. price mendekati short liquidation (+0.6%)
+        2. bot long (karena lihat short liq dekat)
+        3. market flush dulu -3% sampai -7%
+        4. baru squeeze ke atas
+    
+    Kenapa? Karena market maker perlu membersihkan long leverage
+    sebelum pump. Long liquidity di bawah masih terlalu banyak.
+    
+    Rule:
+        if wmi > 90
+        and long_liq_distance < 4%
+        and long_liq_size > short_liq_size:
+            expect flush first
+    """
+    
+    @staticmethod
+    def analyze(wmi: float, long_dist: float, short_dist: float,
+               long_size: float, short_size: float,
+               flow: float, agg: float, rsi: float) -> Dict:
+        """
+        Mendeteksi potensi pre-flush sebelum pump
+        
+        Args:
+            wmi: Whale Migration Index (>90 = extreme)
+            long_dist: Jarak ke long liquidation
+            short_dist: Jarak ke short liquidation
+            long_size: Ukuran long liquidation
+            short_size: Ukuran short liquidation
+            flow: Trade flow
+            agg: Aggression ratio
+            rsi: RSI value
+        
+        Returns:
+            Dict dengan flush_detected, bias, reason
+        """
+        flush_detected = False
+        bias = "NEUTRAL"
+        reason = ""
+        
+        # Kondisi klasik pre-flush: WMI tinggi + long pool besar + short dekat
+        if (wmi > LPF_WMI_THRESHOLD and 
+            abs(long_dist) < LPF_LONG_DIST_MAX and
+            long_size > short_size * 1.5 and
+            abs(short_dist) < 2.0):
+            
+            flush_detected = True
+            bias = "LONG"  # Setelah flush, target LONG
+            reason = (f"LPF_PRE_FLUSH_DETECTED: WMI {wmi:.1f}x > {LPF_WMI_THRESHOLD} + "
+                     f"Long pool {long_size:.0f} > Short pool {short_size:.0f} + "
+                     f"Short liq {short_dist:.2f}% dekat. "
+                     f"MM akan FLUSH dulu ({LPF_PRE_FLUSH_MIN}% sampai {LPF_PRE_FLUSH_MAX}%) "
+                     f"untuk bersihkan long leverage, baru SQUEEZE ke short liq!")
+        
+        # Double sweep zone: kedua sisi likuidasi dekat
+        elif (abs(long_dist) < DSZ_LONG_DIST_MAX and 
+              abs(short_dist) < DSZ_SHORT_DIST_MAX):
+            
+            flush_detected = True
+            bias = "NEUTRAL"  # JANGAN ENTRY di double sweep zone!
+            reason = (f"LPF_DOUBLE_SWEEP_ZONE: Long liq {long_dist:.2f}% < {DSZ_LONG_DIST_MAX}% + "
+                     f"Short liq {short_dist:.2f}% < {DSZ_SHORT_DIST_MAX}%. "
+                     f"Zona double sweep! Hampir pasti ada fake move dulu. JANGAN ENTRY!")
+        
+        # Long pool dominan dengan aggression mati
+        elif (long_size > short_size * 2 and 
+              agg < 0.2 and 
+              flow < 1.0):
+            
+            flush_detected = True
+            bias = "SHORT"  # Flush ke bawah
+            reason = (f"LPF_LIQUIDITY_IMBALANCE: Long pool {long_size:.0f} >> Short pool {short_size:.0f} + "
+                     f"Agg {agg:.2f}x mati + Flow {flow:.2f}x rendah. "
+                     f"MM akan FLUSH ke bawah untuk ambil long liquidity!")
+        
+        return {
+            "flush_detected": flush_detected,
+            "bias": bias,
+            "reason": reason,
+            "expected_flush_range": f"{LPF_PRE_FLUSH_MIN}% to {LPF_PRE_FLUSH_MAX}%" if flush_detected else "NONE",
+            "confidence": "HIGH" if flush_detected else "LOW"
+        }
+    
+    @staticmethod
+    def calculate_flush_probability(long_size: float, short_size: float,
+                                   long_dist: float, short_dist: float,
+                                   wmi: float, oi_delta: float) -> float:
+        """
+        Menghitung probabilitas pre-flush berdasarkan data
+        
+        Returns:
+            Float 0-1: probabilitas flush akan terjadi
+        """
+        prob = 0.0
+        
+        # Faktor 1: Rasio ukuran likuidasi
+        if long_size > 0 and short_size > 0:
+            size_ratio = long_size / short_size
+            if size_ratio > 2.0:
+                prob += 0.3
+            elif size_ratio > 1.5:
+                prob += 0.2
+        
+        # Faktor 2: Jarak likuidasi
+        if abs(long_dist) < 4.0 and abs(short_dist) < 2.0:
+            prob += 0.3
+        
+        # Faktor 3: WMI ekstrim
+        if wmi > 90:
+            prob += 0.2
+        elif wmi < -90:
+            prob += 0.1
+        
+        # Faktor 4: OI movement
+        if oi_delta > 1.0:  # OI naik = posisi baru masuk
+            prob += 0.2
+        
+        return min(prob, 1.0)
+
+
+# ================= V100: CONFLICT RESOLVER (THE ULTIMATE LIQUIDATION HIERARCHY) =================
+class ConflictResolverV100:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V100 (DENGAN LIQUIDATION PAYOUT & PRE-FLUSH) 🔥
+    
+    HIERARKI FINAL V100:
+    1. LPC (Liquidation Payout Calculator) ⭐ BARU! - Reward-based target selection
+    2. LPF (Liquidation Pre-Flush Detector) ⭐ BARU! - Antisipasi flush sebelum pump
+    3. V99-SCT (Short Crowd Trap) - Anti-crowded squeeze
+    4. V99 WMI VETO - WMI > 99.5 override
+    5. V99 Crowd vs Cluster Logic
+    6. V99 OI Build at Extremum
+    7. V99 OI Build Validator
+    8. V99 Gravity Distance
+    9. V98 VAC (Vacuum Detector)
+    10. V97 EHS (Event Horizon Singularity)
+    11. V96 PBD (Position Build Detector)
+    """
+    
+    @staticmethod
+    def resolve(
+        # V100 NEW MODULES - PRIORITAS TERTINGGI!
+        lpc_result: Dict,               # V100 Liquidation Payout Calculator ⭐
+        lpf_result: Dict,                # V100 Liquidation Pre-Flush Detector ⭐
+        
+        # V99-SCT Modules
+        sct_res: Dict,
+        crowd_cluster_res: Dict,
+        oi_extremum_res: Dict,
+        oi_build_res: Dict,
+        gravity_dist_res: Dict,
+        wmi_veto_res: Dict,
+        internal_trap_res: Dict,
+        density_res: Dict,
+        
+        # Existing modules
+        ehs_res: Dict,
+        vac_res: Dict,
+        pbd_res: Dict,
+        evh_res: Dict,
+        svi_res: Dict,
+        ecd_res: Dict,
+        rpt_res: Dict,
+        phase_res: Dict,
+        gwc_res: Dict,
+        lvd_res: Dict,
+        sdd_res: Dict,
+        est_res: Dict,
+        odc_res: Dict,
+        pdd_res: Dict,
+        lep_res: Dict,
+        plr_res: Dict,
+        opd_res: Dict,
+        wmi_exhaust_res: Dict,
+        cascade_res: Dict,
+        energy_res: Dict,
+        death_res: Dict,
+        lgd_res: Dict,
+        wsc_res: Dict,
+        sat_res: Dict,
+        pet_res: Dict,
+        zgh_res: Dict,
+        otf_res: Dict,
+        lim_res: Dict
+    ) -> Dict:
+        
+        # 🎯 1. LIQUIDATION PAYOUT CALCULATOR (TERTINGGI!)
+        # MM memilih target berdasarkan reward/effort, bukan jarak
+        if lpc_result.get('payout_ratio', 1.0) > LPC_PAYOUT_THRESHOLD:
+            path_info = LiquidationPayoutCalculatorV100.get_optimal_path(
+                lpc_result, 
+                long_dist=0,  # Akan diisi dari data
+                short_dist=0,
+                flow=0,
+                agg=0
+            )
+            
+            if path_info['flush_expected']:
+                return {
+                    "bias": "NEUTRAL",  # JANGAN ENTRY, tunggu flush!
+                    "confidence": "ABSOLUTE",
+                    "reason": f"V100_LPC: {lpc_result['reason']}. {path_info['reason']}. TUNGGU FLUSH SELESAI!",
+                    "phase": "PRE_FLUSH_WAIT",
+                    "action": "WAIT_FOR_FLUSH_COMPLETION"
+                }
+            else:
+                return {
+                    "bias": lpc_result['bias'],
+                    "confidence": "ABSOLUTE",
+                    "reason": f"V100_LPC: {lpc_result['reason']}",
+                    "phase": "PAYOUT_DOMINANT",
+                    "action": "FOLLOW_PAYOUT"
+                }
+        
+        # 🎯 2. LIQUIDATION PRE-FLUSH DETECTOR
+        if lpf_result.get('flush_detected'):
+            if "DOUBLE_SWEEP_ZONE" in lpf_result['reason']:
+                return {
+                    "bias": "NEUTRAL",
+                    "confidence": "ABSOLUTE",
+                    "reason": f"V100_LPF: {lpf_result['reason']}",
+                    "phase": "DOUBLE_SWEEP_ZONE",
+                    "action": "DO_NOT_ENTER"
+                }
+            else:
+                return {
+                    "bias": lpf_result['bias'],
+                    "confidence": "HIGH",
+                    "reason": f"V100_LPF: {lpf_result['reason']}",
+                    "phase": "PRE_FLUSH",
+                    "action": "PREPARE_FOR_REVERSAL"
+                }
+        
+        # 🎯 3. V99-SCT (Short Crowd Trap)
+        if sct_res.get('is_trap'):
+            return {
+                "bias": sct_res['bias'],
+                "confidence": sct_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99_SCT: {sct_res['reason']}",
+                "phase": sct_res.get('phase', 'CROWDED_SQUEEZE'),
+                "action": "FOLLOW_CROWD_TRAP"
+            }
+        
+        # 🎯 4. V99 WMI VETO
+        if wmi_veto_res.get('is_veto'):
+            return {
+                "bias": wmi_veto_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V99_WMI_VETO: {wmi_veto_res['reason']}",
+                "phase": wmi_veto_res.get('phase', 'WHALE_SINGULARITY_OVERRIDE'),
+                "action": "FOLLOW_WMI"
+            }
+        
+        # 🎯 5. V99 CROWD VS CLUSTER LOGIC
+        if crowd_cluster_res.get('override'):
+            return {
+                "bias": crowd_cluster_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V99_CROWD_CLUSTER: {crowd_cluster_res['reason']}",
+                "phase": crowd_cluster_res.get('phase', 'CROWD_DOMINANCE'),
+                "action": "FOLLOW_CROWD_CLUSTER"
+            }
+        
+        # 🎯 6. V99 OI BUILD AT EXTREMUM
+        if oi_extremum_res.get('is_accumulation'):
+            return {
+                "bias": oi_extremum_res['bias'],
+                "confidence": oi_extremum_res.get('confidence', 'SUPREME'),
+                "reason": f"V99_OI_EXTREMUM: {oi_extremum_res['reason']}",
+                "phase": oi_extremum_res.get('phase', 'STEALTH_ACCUMULATION'),
+                "action": "FOLLOW_OI_ACCUMULATION"
+            }
+        
+        # Fallback ke hierarki V99 yang tersisa
+        if oi_build_res.get('bias') != "NEUTRAL" and oi_build_res.get('confidence') == "ABSOLUTE":
+            return {
+                "bias": oi_build_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V99_OI_NUCLEAR: {oi_build_res['reason']}",
+                "phase": oi_build_res.get('phase', 'OI_DOMINANCE'),
+                "action": "FOLLOW_OI_BUILD"
+            }
+        
+        if gravity_dist_res.get('override'):
+            return {
+                "bias": gravity_dist_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V99_GRAVITY: {gravity_dist_res['reason']}",
+                "phase": gravity_dist_res.get('phase', 'PROXIMITY_OVERRIDE'),
+                "action": "FOLLOW_GRAVITY"
+            }
+        
+        if internal_trap_res.get('is_trap'):
+            return {
+                "bias": internal_trap_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V99_FMT: {internal_trap_res['reason']}",
+                "phase": "INTERNAL_MATCHING_TRAP",
+                "action": "FOLLOW_INTERNAL_TRAP"
+            }
+        
+        if ehs_res.get('is_active'):
+            return {
+                "bias": ehs_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V97_EHS: {ehs_res['reason']}",
+                "phase": "EVENT_HORIZON_SUCTION",
+                "action": "FOLLOW_EHS"
+            }
+        
+        if vac_res.get('active'):
+            return {
+                "bias": vac_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V98_VAC: {vac_res['reason']}",
+                "phase": "LIQUIDITY_VACUUM",
+                "action": "FOLLOW_VAC"
+            }
+        
+        if pbd_res.get('active'):
+            return {
+                "bias": pbd_res['bias'],
+                "confidence": pbd_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V96_PBD: {pbd_res['reason']}",
+                "phase": pbd_res.get('phase', 'POSITION_BUILD'),
+                "action": "FOLLOW_PBD"
+            }
+        
+        # Fallback akhir
+        return {
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected.",
+            "phase": "NEUTRAL",
+            "action": "WAIT"
+        }
+
+
 # ================= V82: ABSORPTION PRESSURE INDEX (API) - BARU! =================
 class AbsorptionPressureV82:
     """
@@ -11616,6 +12083,22 @@ EGR_WMI_MIN = 50                  # Minimal WMI untuk validasi
 LGD_GAP_RATIO = 2.0               # Rasio gap untuk deteksi squeeze
 LGD_SHORT_COVERING_RSI = 90       # RSI threshold untuk short covering
 
+# ================= V100: LIQUIDATION PRE-FLUSH & PAYOUT CALCULATOR =================
+# LPC - Liquidation Payout Calculator
+LPC_PAYOUT_THRESHOLD = 1.5           # Threshold untuk memilih target (ratio)
+LPC_MIN_DISTANCE = 0.5                # Jarak minimal untuk validasi
+
+# LPF - Liquidation Pre-Flush Detector
+LPF_WMI_THRESHOLD = 90                 # WMI > 90 untuk pre-flush
+LPF_LONG_DIST_MAX = 4.0                 # Long distance < 4%
+LPF_PRE_FLUSH_MIN = -3.0                 # Minimal pre-flush (-3% sampai -7%)
+LPF_PRE_FLUSH_MAX = -7.0
+LPF_ENERGY_RATIO_THRESHOLD = 2.0        # Energy ratio untuk validasi
+
+# Double Sweep Zone
+DSZ_SHORT_DIST_MAX = 1.0                 # Short distance < 1%
+DSZ_LONG_DIST_MAX = 4.0                  # Long distance < 4%
+
 
 # ================= V87: ZERO AGGRESSION SQUEEZE (ZAS) =================
 class ZeroAggressionSqueezeV87:
@@ -12680,6 +13163,11 @@ class BinanceAnalyzerV87:
         self.oi_extremum = OIBuildAtExtremumV99()            # V99 OI Build at Extremum
         
         self.conflict_resolver_v99 = ConflictResolverV99()   # V99 resolver
+        
+        # ===== V100: LIQUIDATION PAYOUT & PRE-FLUSH DETECTOR =====
+        self.lpc = LiquidationPayoutCalculatorV100()     # V100 baru!
+        self.lpf = LiquidationPreFlushDetectorV100()     # V100 baru!
+        self.conflict_resolver_v100 = ConflictResolverV100()  # V100 resolver
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
@@ -13767,6 +14255,22 @@ class BinanceAnalyzerV87:
                     "is_accumulation": oi_extremum_result.get('is_accumulation', False),
                     "bias": oi_extremum_result.get('bias', 'NEUTRAL'),
                     "reason": oi_extremum_result.get('reason', '')
+                },
+                # V100: LIQUIDATION PAYOUT & PRE-FLUSH RESULTS
+                "lpc": {
+                    "payout_long": lpc_result.get('payout_long', 0),
+                    "payout_short": lpc_result.get('payout_short', 0),
+                    "payout_ratio": lpc_result.get('payout_ratio', 1.0),
+                    "bias": lpc_result.get('bias', 'NEUTRAL'),
+                    "dominant_target": lpc_result.get('dominant_target', 'NONE'),
+                    "reason": lpc_result.get('reason', '')
+                },
+                "lpf": {
+                    "flush_detected": lpf_result.get('flush_detected', False),
+                    "bias": lpf_result.get('bias', 'NEUTRAL'),
+                    "reason": lpf_result.get('reason', ''),
+                    "expected_flush_range": lpf_result.get('expected_flush_range', 'NONE'),
+                    "confidence": lpf_result.get('confidence', 'LOW')
                 },
                 "sad": {
                     "is_active": sad_result.get('is_active', False),
