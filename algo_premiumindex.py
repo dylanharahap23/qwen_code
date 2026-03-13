@@ -2167,6 +2167,12 @@ class VacuumDetectorV98:
 # ================= V99: SUPERIOR WHALE DOMINANCE PROTOCOL =================
 
 # ================= V99 CONFIG - SUPERIOR WHALE DOMINANCE PROTOCOL =================
+# ================= V99-SCT: SHORT CROWD TRAP CONFIG =================
+SCT_IMBALANCE_THRESHOLD = 50.0        # Imbalance > 50x = dangerous crowd
+SCT_CROWD_LEVEL_EXTREME = 70.0         # 70x rule - extreme crowd
+SCT_AGG_MAX = 0.1                      # Agg < 0.1 = seller exhaustion
+SCT_OI_DELTA_MIN = 0.0                 # OI Build = new positions entering
+
 class SuperiorWDMVIP99:
     """
     🔥 V99: SUPERIOR WHALE DOMINANCE PROTOCOL - FIXED LOGIC
