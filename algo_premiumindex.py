@@ -11563,11 +11563,11 @@ class ConflictResolverV82:
         # ============================================
         # PRIORITAS 1: FUEL IGNITION DETECTOR (V82) - ANTI-FAKE PUMP
         # ============================================
-        if fid_result and fid_result['is_igniting']:
+        if fid_result and fid_result.get('is_igniting', False):
             return {
-                "bias": fid_result['bias'],
+                "bias": fid_result.get('bias', 'NEUTRAL'),
                 "confidence": "ABSOLUTE",
-                "reason": fid_result['reason'],
+                "reason": fid_result.get('reason', ''),
                 "phase": "FUEL_IGNITION",
                 "ttk_info": {"estimated_minutes": 1, "urgency": "IMMINENT", "fuel_ready": "YES"}
             }
@@ -13768,7 +13768,7 @@ class BinanceAnalyzerV87:
             )
 
             # === V82: Fuel Ignition Detector (FID) ===
-            fid_result = self.fid.analyze(oi_delta_5m, rsi6, wmi_ratio)
+            fid_result_original = self.fid.analyze(oi_delta_5m, rsi6, wmi_ratio)
             fid_key = f"FID_{oi_delta_5m:.2f}_{rsi6:.1f}"
             fid_duration = self.state_mgr.track_fid_persistence(fid_key, time.time())
 
@@ -14559,8 +14559,8 @@ class BinanceAnalyzerV87:
                 flow=trades['ratio']
             )
 
-            # V82-FID: Fuel Ignition Detector
-            fid_result = self.fid_v82.detect(
+            # V82-FID: Fuel Ignition Detector (PHAUSDT patch)
+            fid_result_plus = self.fid_v82.detect(
                 oi_delta=oi_delta_5m,
                 price_change=change_5m,
                 rsi=rsi6
@@ -14582,7 +14582,7 @@ class BinanceAnalyzerV87:
                 # PHAUSDT MODULES - PRIORITAS TERTINGGI!
                 apm_res=apm_result,           # V99-APM Absorption Priority Module ⭐
                 lfc_res=lfc_result,           # V100-LFC Liquidation Flush Coordinator ⭐
-                fid_res=fid_result,           # V82-FID Fuel Ignition Detector ⭐
+                fid_res=fid_result_plus,      # V82-FID-PLUS Fuel Ignition Detector ⭐
                 arc_res=arc_result,           # V99-ARC Absorption Confirmation Rate ⭐
                 
                 # NEW V99 MODULES - PRIORITAS TERTINGGI!
@@ -14746,12 +14746,12 @@ class BinanceAnalyzerV87:
                     "override_modules": apm_result.get('override_modules', [])
                 },
                 "fid_v82": {
-                    "is_fuel_injection": fid_result.get('is_fuel_injection', False),
-                    "bias": fid_result.get('bias', 'NEUTRAL'),
-                    "reason": fid_result.get('reason', ''),
-                    "confidence": fid_result.get('confidence', 'LOW'),
-                    "phase": fid_result.get('phase', ''),
-                    "estimated_duration_minutes": fid_result.get('estimated_duration_minutes', 0)
+                    "is_fuel_injection": fid_result_plus.get('is_fuel_injection', False),
+                    "bias": fid_result_plus.get('bias', 'NEUTRAL'),
+                    "reason": fid_result_plus.get('reason', ''),
+                    "confidence": fid_result_plus.get('confidence', 'LOW'),
+                    "phase": fid_result_plus.get('phase', ''),
+                    "estimated_duration_minutes": fid_result_plus.get('estimated_duration_minutes', 0)
                 },
                 "arc_v99": {
                     "is_real_absorption": arc_result.get('is_real_absorption', False),
@@ -14790,12 +14790,21 @@ class BinanceAnalyzerV87:
                     "bias": pet_result.get('bias', 'NEUTRAL'),
                     "reason": pet_result.get('reason', '')
                 },
-                # V82 New Modules
+                # V82 Original Module (FID)
                 "fid": {
-                    "is_igniting": fid_result['is_igniting'],
-                    "bias": fid_result['bias'],
-                    "reason": fid_result['reason'],
+                    "is_igniting": fid_result_original.get('is_igniting', False),
+                    "bias": fid_result_original.get('bias', 'NEUTRAL'),
+                    "reason": fid_result_original.get('reason', ''),
                     "fid_duration_minutes": round(fid_duration, 1)
+                },
+                # V82-PLUS (PHAUSDT Patch - FID Plus)
+                "fid_v82_plus": {
+                    "is_fuel_injection": fid_result_plus.get('is_fuel_injection', False),
+                    "bias": fid_result_plus.get('bias', 'NEUTRAL'),
+                    "reason": fid_result_plus.get('reason', ''),
+                    "confidence": fid_result_plus.get('confidence', 'LOW'),
+                    "phase": fid_result_plus.get('phase', ''),
+                    "estimated_duration_minutes": fid_result_plus.get('estimated_duration_minutes', 0)
                 },
                 "api": {
                     "is_absorbing": api_result['is_absorbing'],
