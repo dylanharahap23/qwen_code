@@ -259,6 +259,27 @@ SDD_RSI_MIN = 80                                # RSI > 80 = extreme overbought
 SDD_OI_DELTA_MIN = 0                             # OI > 0 (naik)
 SDD_FLOW_MAX = 0.5                               # Flow < 0.5 = low flow
 
+# ================= V98: EXTREME VACUUM REVERSAL CONFIG =================
+EVR_RSI_REVERSAL_THRESHOLD = 20.0       # RSI < 20 = Extreme Oversold
+EVR_IMBALANCE_CROWD_MIN = 100.0         # Imbalance > 100x = Crowd Ready
+EVR_FLOW_ABSORPTION_MIN = 5.0           # Flow > 5x = Whale Absorption
+EVR_AGG_BUY_PRESSURE_MIN = 2.0          # Agg > 2x = Active Buyers
+EVR_OI_DROP_FUEL_MIN = -2.0             # OI -2%+ = Short Covering Fuel
+EVR_LONG_DIST_PROTECTION_MAX = 3.0      # Long Dist < 3% = Safe Rebound Zone
+
+# ================= V99: SHORT CROWD EXHAUSTION CONFIG =================
+SCE_IMBALANCE_CROWD_THRESHOLD = 500.0   # Imbalance > 500x = Extreme Crowded
+SCE_RSI_OVERSOLD_MAX = 25.0             # RSI < 25 = Oversold
+SCE_WMI_SHIELD_THRESHOLD = -90.0        # WMI < -90 = Long Shield
+SCE_OI_DROP_CONFIRMATION_MIN = -1.0     # OI Drop > 1% confirms coverage
+
+# ================= V100: FLOW VELOCITY REVERSAL CONFIG =================
+FVC_REV_FLOW_ABSORPTION_MIN = 5.0       # High Flow for reversal
+FVC_REV_AGG_ACTIVE_MIN = 2.0            # Active Agg for reversal
+FVC_REV_RSI_REVERSAL_MAX = 20.0         # Extreme Oversold
+FVC_REV_OI_COVERING_THRESHOLD = -1.5    # OI Drop = covering
+FVC_REV_FALSE_SQUEEZE_FLOW_MAX = 1.5    # Low flow check
+
 # ================= V91: LIQUIDITY GRAVITY DRAIN (LGD) - ANTI-VOID TRAP =================
 class LiquidityGravityDrainV91:
     """
@@ -316,6 +337,152 @@ class AggressionDeathV92:
                 "reason": f"AGGRESSION_DEAD: Tidak ada buyer/seller (Agg {agg}x, Flow {flow}x). Harga mengikuti jalur likuidasi terdekat."
             }
         return {"active": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V98-EVR: EXTREME VACUUM REVERSAL MODULE =================
+class ExtremeVacuumReversalModuleV98:
+    """
+    🔥 V98-EVR: EXTREME VACUUM REVERSAL - ANTI-BTRUSDT TRAP
+    
+    Pola BTRUSDT Pattern:
+    • RSI < 20 (Extreme Oversold)
+    • Imbalance > 500x (Short Overcrowded)
+    • Flow > 5.0x (High Volume Absorption)
+    • Agg > 3.0x (Active Buying Pressure)
+    • OI Delta Negative (Short Covering Fuel)
+    
+    Interpretasi Benar:
+    Whale menyerap semua retail sells (high agg), lalu squeeze short seller.
+    WMI negative bukan dump target, tapi rebound fuel!
+    """
+    
+    @staticmethod
+    def detect(rsi6: float, imbalance_ratio: float, flow: float, 
+               agg_ratio: float, oi_delta: float, long_dist: float) -> Dict:
+        """
+        BTRUSDT Case Validation:
+        - RSI: 16.7 (<20) ✅
+        - Imbalance: 834.25x (>100x) ✅
+        - Flow: 8.09x (>5x) ✅
+        - Agg: 4.0x (>2x) ✅
+        - OI: -5.72% (<-2%) ✅
+        - Long Dist: -0.65% (<3%) ✅
+        """
+        
+        if rsi6 < EVR_RSI_REVERSAL_THRESHOLD:
+            if imbalance_ratio > EVR_IMBALANCE_CROWD_MIN:
+                if flow > EVR_FLOW_ABSORPTION_MIN:
+                    if agg_ratio > EVR_AGG_BUY_PRESSURE_MIN:
+                        if oi_delta < 0 and abs(oi_delta) > abs(EVR_OI_DROP_FUEL_MIN):
+                            if abs(long_dist) < EVR_LONG_DIST_PROTECTION_MAX:
+                                return {
+                                    "is_extreme_reversal": True,
+                                    "confidence": "ABSOLUTE",
+                                    "bias": "LONG",
+                                    "reason": f"EVR_NUCLEAR_REVERSAL: RSI {rsi6:.1f} (EXTREME!) + "
+                                             f"Imbalance {imbalance_ratio:.1f}x (CROWDED!) + "
+                                             f"Flow {flow:.1f}x (ABSORPTION!) + "
+                                             f"Agg {agg_ratio:.1f}x (BUY PRESSURE!) + "
+                                             f"OI ↓{oi_delta:+.2f}% (COVERING FUEL!). "
+                                             f"WMI negatif bukan DUMP target, tapi REBOUND fuel! "
+                                             f"MM akan SQUEEZE SHORTS dulu!",
+                                    "override_modules": ["WMI_VETO", "SAT_DISTRIBUTION", "LPC_PAYOUT_OVERRIDE"],
+                                    "priority_level": 0  # Highest Priority!
+                                }
+        
+        return {"is_extreme_reversal": False, "confidence": "NONE"}
+
+
+# ================= V99-SCE: SHORT CROWD EXHAUSTION VALIDATOR =================
+class ShortCrowdExhaustionValidatorV99:
+    """
+    🔥 V99-SCE: SHORT CROWD EXHAUSTION VALIDATOR - ANTI-BTRUSDT
+    
+    Logika: Jika Imbalance > 500x + RSI < 20, maka SHORT sudah EXHAUSTED.
+    Market Maker tidak akan dump ke bawah karena profit lebih besar 
+    dari squeeze above.
+    """
+    
+    @staticmethod
+    def validate(imbalance_ratio: float, rsi6: float, wmi_ratio: float, oi_delta: float) -> Dict:
+        """
+        BTRUSDT Case:
+        - Imbalance: 834.25x (>500x) ✅
+        - RSI: 16.7 (<25) ✅
+        - WMI: -100.0x (<-90) ✅
+        - OI: -5.72% (<-1%) ✅
+        """
+        
+        if imbalance_ratio > SCE_IMBALANCE_CROWD_THRESHOLD:
+            if rsi6 < SCE_RSI_OVERSOLD_MAX:
+                if wmi_ratio < SCE_WMI_SHIELD_THRESHOLD:
+                    if oi_delta < SCE_OI_DROP_CONFIRMATION_MIN:
+                        return {
+                            "is_exhausted_crowd": True,
+                            "validation_type": "SHORT_SQUEEZE_READY",
+                            "confidence": "ABSOLUTE",
+                            "bias": "LONG",
+                            "reason": f"SCE_SHORT_CROWD_EXHAUSTED: Imbalance {imbalance_ratio:.1f}x crowd "
+                                     f"SHORT! RSI {rsi6:.1f} oversold! WMI {wmi_ratio:.1f}x (Shield)! "
+                                     f"OI ↓{oi_delta:.2f}% (Covering Confirmed). MM akan squeeze!",
+                            "override_modules": ["WMI_DUMP_TARGET_LOGIC"]
+                        }
+        
+        return {"is_exhausted_crowd": False, "confidence": "NONE"}
+
+
+# ================= V100-FVC-REV: FLOW VELOCITY CONFIRMATION REVERSAL =================
+class FlowVelocityConfirmationReversalV100:
+    """
+    🔥 V100-FVC-REV: FLOW VELOCITY CONFIRMATION - REVERSAL VALIDATION
+    
+    Perbaikan dari modul FVC existing:
+    - FVC lama: Flow < 1.5x = Fake Squeeze
+    - FVC baru (Rev): Flow > 5.0x + Agg > 2.0x + RSI < 20 = REAL REVERSAL!
+    """
+    
+    @staticmethod
+    def validate_flow_for_reversal(flow: float, agg_ratio: float, rsi6: float, oi_delta: float) -> Dict:
+        """
+        Validasi Flow untuk REVERSAL vs DISTRIBUTION
+        
+        Scenario A: Reversal (BTRUSDT Style)
+        - Flow > 5x + Agg > 2x + RSI < 20 + OI ↓
+        - = REAL BUYING ABSORPTION + COVERING
+        
+        Scenario B: Distribution (NAORISUSDT Style)
+        - Flow < 1x + Agg < 1x + RSI > 90 + OI ↑
+        - = FAKE MOMENTUM + WHALE EXIT
+        """
+        
+        # CHECK FOR REVERSAL SIGNAL
+        if flow > FVC_REV_FLOW_ABSORPTION_MIN:
+            if agg_ratio > FVC_REV_AGG_ACTIVE_MIN:
+                if rsi6 < FVC_REV_RSI_REVERSAL_MAX:
+                    if oi_delta < FVC_REV_OI_COVERING_THRESHOLD:
+                        return {
+                            "is_real_reversal": True,
+                            "reversal_type": "VACUUM_REBOUND",
+                            "confidence": "SUPREME",
+                            "reason": f"FVC_REVERSAL_CONFIRMED: Flow {flow:.1f}x (ABSORPTION!) + "
+                                     f"Agg {agg_ratio:.1f}x (PRESSURE!) + "
+                                     f"RSI {rsi6:.1f} (OVERSOLD!) + "
+                                     f"OI ↓{oi_delta:.2f}% (COVERING). "
+                                     f"REAL REVERSAL! Not Fake Squeeze!",
+                            "override_fvc_false_squeeze": True
+                        }
+        
+        # CHECK FOR DISTRIBUTION TRAP (Existing Logic)
+        elif flow < FVC_REV_FALSE_SQUEEZE_FLOW_MAX:
+            return {
+                "is_fake_reversal": True,
+                "fake_type": "NO_VOLUME_SUPPORT",
+                "confidence": "MEDIUM",
+                "reason": f"FVC_NO_VOLUME: Flow {flow:.1f}x (LOW). No real buying.",
+                "override_fvc_false_squeeze": False
+            }
+        
+        return {"is_real_reversal": False, "is_fake_reversal": False, "confidence": "LOW"}
 
 
 # ================= V92: CONFLICT RESOLVER (ENERGY + DEATH + LGD) =================
@@ -5894,6 +6061,162 @@ class ConflictResolverV88_PLUS_FINAL:
             "reason": "No critical pattern detected.",
             "phase": "NEUTRAL",
             "priority": 99
+        }
+
+# ================= V88PLUS: CONFLICT RESOLVER WITH PHAUSDT PATCH =================
+class ConflictResolverV88Plus:
+
+
+# ================= V88_FINAL_REVOLUTION: UPDATED CONFLICT RESOLVER =================
+class ConflictResolverV88_FINAL_REVOLUTION:
+    """
+    🔥 FINAL VERSION - ALL CRIMINAL PATTERNS COVERED
+    
+    URUTAN PRIORITAS MUTLAK:
+    ┌─────────────────────────────────────────────────────┐
+    │  LEVEL 0: NUCLEAR OVERRIDE (OVERRIDE ALL OTHERS)     │
+    ├─────────────────────────────────────────────────────┤
+    │  0. V98-EVR (Extreme Vacuum Reversal) ← NEW!         │ ← CRITICAL!
+    │  1. V99-SCE (Short Crowd Exhaustion) ← NEW!          │ ← CRITICAL!
+    │  2. V100-FVC-REV (Flow Velocity Confirmation) ← NEW! │ ← CRITICAL!
+    │  3. V99-RSC-PRIORITY (Real Short Covering)           │
+    │  4. V97-ZVA (Zero Aggression Vacuum)                 │
+    │  5. V100-AFA (Absorption/Flow Anomaly)               │
+    ├─────────────────────────────────────────────────────┤
+    │  LEVEL 1: CORE STRATEGIC MODULES                     │
+    ├─────────────────────────────────────────────────────┤
+    │  6. V99-NOS (Nuclear Overbought Shield)              │
+    │  7. V99-WMI_VETO (With New Validation)               │
+    │  8. V90-SAT (Saturation Check)                       │
+    │  9. V89-WSC (Singularity Check)                      │
+    ├─────────────────────────────────────────────────────┤
+    │  LEVEL 2: TIMING & CONFIRMATION                      │
+    ├─────────────────────────────────────────────────────┤
+    │  10. V87-SAD (Stealth Accumulation)                   │
+    │  11. V87-LBD (Liquidity Bait Detection)               │
+    │  12. V100-LFC (Liquidity Flush Coordinator)           │
+    └─────────────────────────────────────────────────────┘
+    """
+    
+    @staticmethod
+    def resolve_all_hft_signals(results):
+        """
+        Args:
+            results: Dictionary berisi hasil dari semua module
+        """
+        
+        # STEP 1: Check Nuclear Override Modules FIRST!
+        evr_res = results.get('evr_v98')
+        if evr_res and evr_res.get('is_extreme_reversal'):
+            return {
+                "final_bias": "LONG",
+                "confidence": evr_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V98-EVR_OVERRIDE: {evr_res.get('reason', '')}",
+                "phase": "EXTREME_REVERSAL_CONFIRMED",
+                "priority_level": 0,
+            }
+        
+        sce_res = results.get('sce_v99')
+        if sce_res and sce_res.get('is_exhausted_crowd'):
+            return {
+                "final_bias": "LONG",
+                "confidence": sce_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99-SCE_OVERRIDE: {sce_res.get('reason', '')}",
+                "phase": "SHORT_CROWD_EXHAUSTION_CONFIRMED",
+                "priority_level": 0
+            }
+        
+        fvc_rev_res = results.get('fvc_rev_v100')
+        if fvc_rev_res and fvc_rev_res.get('is_real_reversal'):
+            return {
+                "final_bias": "LONG",
+                "confidence": fvc_rev_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-FVC-REV_OVERRIDE: {fvc_rev_res.get('reason', '')}",
+                "phase": "FLOW_VELOCITY_REVERSAL_CONFIRMED",
+                "priority_level": 0
+            }
+        
+        # STEP 2: Existing Critical Override Modules
+        rsc_res = results.get('rsc_priority')
+        if rsc_res and rsc_res.get('is_real_covering'):
+            return {
+                "final_bias": rsc_res.get('bias', 'LONG'),
+                "confidence": rsc_res.get('confidence', 'SUPREME'),
+                "reason": f"V99-RSC_OVERRIDE: {rsc_res.get('reason', '')}",
+                "phase": "FORCE_BUYING_CONFIRMED",
+                "priority_level": 1
+            }
+        
+        zva_res = results.get('zva_v97')
+        if zva_res and zva_res.get('is_vacuum_squeeze'):
+            return {
+                "final_bias": zva_res.get('bias', 'LONG'),
+                "confidence": zva_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V97-ZVA_OVERRIDE: {zva_res.get('reason', '')}",
+                "phase": "VACUUM_SQUEEZE_IMMINENT",
+                "priority_level": 1
+            }
+        
+        afa_res = results.get('afa_v100')
+        if afa_res and afa_res.get('is_absorption_trap'):
+            return {
+                "final_bias": afa_res.get('bias', 'LONG'),
+                "confidence": afa_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-AFA_OVERRIDE: {afa_res.get('reason', '')}",
+                "phase": "ABSORPTION_CONFIRMED",
+                "priority_level": 1
+            }
+        
+        # STEP 3: LFC Enhanced Validation
+        lfc_res = results.get('lfc_enhanced')
+        if lfc_res and lfc_res.get('lfc_override'):
+            return {
+                "final_bias": lfc_res.get('bias', 'NEUTRAL'),
+                "confidence": "HIGH",
+                "reason": f"V100-LFC-OVERRIDE: {lfc_res.get('reason', '')}",
+                "phase": "LIQUIDATION_TARGET_VALIDATED",
+                "priority_level": 2
+            }
+        
+        # STEP 4: Core Strategic Checks
+        nos_res = results.get('nos_v100')
+        if nos_res and nos_res.get('is_nuclear'):
+            return {
+                "final_bias": nos_res.get('bias', 'SHORT'),
+                "confidence": nos_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-NOS_OVERRIDE: {nos_res.get('reason', '')}",
+                "phase": "NUCLEAR_DISTRIBUTION_TOP",
+                "priority_level": 3
+            }
+        
+        wmi_res = results.get('wmi_veto')
+        if wmi_res and wmi_res.get('is_veto'):
+            return {
+                "final_bias": wmi_res.get('bias', 'NEUTRAL'),
+                "confidence": "HIGH",
+                "reason": wmi_res.get('reason', ''),
+                "phase": "WHALE_SINGULARITY_CONFIRMED",
+                "priority_level": 4
+            }
+        
+        # STEP 5: Fallback to Lower Priority
+        sat_res = results.get('sat_v90')
+        if sat_res and sat_res.get('active') and sat_res.get('imbalance_ratio', 0) > 50.0:
+            return {
+                "final_bias": "NEUTRAL",
+                "confidence": "LOW",
+                "reason": "High saturation, wait for clearer signal",
+                "phase": "SATURATION_WAIT",
+                "priority_level": 5
+            }
+        
+        # DEFAULT Fallback
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "NONE",
+            "reason": "No override signals detected. Market in neutral phase.",
+            "phase": "NORMAL",
+            "priority_level": 10
         }
 
 # ================= V88PLUS: CONFLICT RESOLVER WITH PHAUSDT PATCH =================
@@ -14585,6 +14908,12 @@ class BinanceAnalyzerV87:
         self.lfc_enhanced = LiquidationFlushCoordinatorEnhancedV100() # V100-LFC-ENHANCED
         self.final_resolver = ConflictResolverV88_PLUS_FINAL()       # Final resolver
         
+        # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
+        self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
+        self.sce_v99 = ShortCrowdExhaustionValidatorV99()            # V99-SCE (Short Crowd Exhaustion) ⭐ NEW!
+        self.fvc_rev_v100 = FlowVelocityConfirmationReversalV100()   # V100-FVC-REV (Flow Velocity Reversal) ⭐ NEW!
+        self.resolver_v88_final = ConflictResolverV88_FINAL_REVOLUTION()  # V88 FINAL REVOLUTION Resolver ⭐ NEW!
+        
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
         
@@ -15642,6 +15971,33 @@ class BinanceAnalyzerV87:
                 rsi=rsi6
             )
 
+            # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
+            # V98-EVR: Extreme Vacuum Reversal
+            evr_result = self.evr_v98.detect(
+                rsi6=rsi6,
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0),
+                flow=trades.get('ratio', 0),
+                agg_ratio=trades.get('aggressive_ratio', 0),
+                oi_delta=oi_delta_5m,
+                long_dist=liq.get('long_dist', 0)
+            )
+
+            # V99-SCE: Short Crowd Exhaustion
+            sce_result = self.sce_v99.validate(
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0),
+                rsi6=rsi6,
+                wmi_ratio=wmi_ratio,
+                oi_delta=oi_delta_5m
+            )
+
+            # V100-FVC-REV: Flow Velocity Reversal
+            fvc_rev_result = self.fvc_rev_v100.validate_flow_for_reversal(
+                flow=trades.get('ratio', 0),
+                agg_ratio=trades.get('aggressive_ratio', 0),
+                rsi6=rsi6,
+                oi_delta=oi_delta_5m
+            )
+
             # LFC Enhanced - Liquidation Target Correlation
             lpc_result_enhanced = {
                 'short_payout': liq.get('short_vol', 0) / max(liq.get('short_dist', 0.01), 0.01),
@@ -15686,27 +16042,21 @@ class BinanceAnalyzerV87:
             )
             
             # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
-            final_decision = self.final_resolver.resolve_all_hft_signals(
-                # LEVEL 0: CRITICAL PATTERNS
-                rsc_res=rsc_priority_result,
-                zva_res=zva_result,
-                afa_res=afa_result,
-                nos_res=nos_result,
-                lfc_enhanced_res=lfc_enhanced_result,
+            final_decision = self.resolver_v88_final.resolve_all_hft_signals({
+                # NEW MODULES - PRIORITAS TERTINGGI (BTRUSDT PATTERNS)
+                'evr_v98': evr_result,
+                'sce_v99': sce_result,
+                'fvc_rev_v100': fvc_rev_result,
                 
-                # LEVEL 1: CORE STRATEGIC
-                wmi_veto_res=wmi_veto_result,
-                sat_res=sat_result,
-                wsc_res=wsc_result,
-                sct_res=sct_result,
-                
-                # LEVEL 2: TIMING & CONFIRMATION
-                sad_res=sad_result,
-                zas_res=zas_result,
-                lbd_res=lbd_result,
-                psv_res=psv_result,
-                lft_res=lft_result
-            )
+                # EXISTING CRITICAL MODULES
+                'rsc_priority': rsc_priority_result,
+                'zva_v97': zva_result,
+                'afa_v100': afa_result,
+                'lfc_enhanced': lfc_enhanced_result,
+                'nos_v100': nos_result,
+                'wmi_veto': wmi_veto_result,
+                'sat_v90': sat_result,
+            })
             
             # Jika final resolver tidak memberikan keputusan kuat, fallback ke nuclear resolver
             if final_decision['bias'] == "NEUTRAL" and final_decision.get('priority', 99) > 10:
