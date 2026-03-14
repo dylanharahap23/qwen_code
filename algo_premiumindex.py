@@ -351,7 +351,13 @@ class ZeroAggressionOverrideV100:
                             "estimated_pump_minutes": 5  # Fast squeeze
                         }
         
-        return {"is_zero_aggression_trap": False, "bias": "NEUTRAL"}
+        # 🔴 PERBAIKAN: Selalu return dictionary dengan struktur lengkap
+        return {
+            "is_zero_aggression_trap": False, 
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No zero aggression trap detected"
+        }
 
 
 # ================= V100-WMO: WHOLE MARKET OBSOLETE LOGIC =================
@@ -401,7 +407,12 @@ class WholeMarketObsoleteLogicV100:
                          f"Target LONG_Liq below is REAL!"
             }
         
-        return {"wmi_valid": False, "bias": "NEUTRAL", "reason": ""}
+        # 🔴 PERBAIKAN: Selalu return dictionary dengan struktur lengkap
+        return {
+            "wmi_valid": False, 
+            "bias": "NEUTRAL", 
+            "reason": "WMI not relevant in current condition"
+        }
 
 
 # ================= V99-SCT-AF: SHORT CROWD EXTREMES VALIDATOR =================
@@ -454,7 +465,13 @@ class ShortCrowdExtremesAFValidatorV99:
                 "reason": f"SCT_SHORT_CROWD_WARNING: Imbalance {imbalance_ratio:.1f}x. Monitor closely."
             }
         
-        return {"is_extreme_crowd": False, "confidence": "LOW", "bias": "NEUTRAL"}
+        # 🔴 PERBAIKAN: Selalu return dictionary dengan struktur lengkap
+        return {
+            "is_extreme_crowd": False, 
+            "confidence": "LOW", 
+            "bias": "NEUTRAL",
+            "reason": "No extreme crowd detected"
+        }
 
 
 # ================= V100-FVC-TWO: TWO-PHASE FLOW VALIDATION =================
@@ -497,12 +514,14 @@ class FlowVelocityCorrelationTwoPhaseV100:
                 "wait_minutes": 5  # Wait for confirmation
             }
         
-        else:
-            return {
-                "is_valid_squeeze": False,
-                "warning": "FLOW_TOO_LOW_FOR_SQUEEZE",
-                "confidence": "LOW"
-            }
+        # 🔴 PERBAIKAN: Selalu return dictionary dengan struktur lengkap, bukan None
+        return {
+            "is_valid_squeeze": False,
+            "warning": "FLOW_TOO_LOW_FOR_SQUEEZE",
+            "confidence": "LOW",
+            "phase": "NONE",
+            "reason": f"Flow {flow:.2f}x insufficient for squeeze"
+        }
 
 
 # ================= V91: LIQUIDITY GRAVITY DRAIN (LGD) - ANTI-VOID TRAP =================
@@ -4408,6 +4427,16 @@ def safe_div(a, b, default=1.0):
     except:
         return default
 
+# 🔴 TAMBAHKAN HELPER INI - Memastikan result selalu dictionary, bukan None
+def safe_dict(result, default=None):
+    """Memastikan result selalu dictionary, bukan None"""
+    if result is None:
+        return default or {}
+    if isinstance(result, dict):
+        return result
+    # Jika result bukan dict (misalnya string, int, dll), kembalikan default
+    return default or {}
+
 # ================= V99: REVISED CONFLICT RESOLVER (THE ULTIMATE HIERARCHY) =================
 class ConflictResolverV99:
     """
@@ -6491,8 +6520,9 @@ class ConflictResolverV88_FINAL_REVOLUTION:
         """
         
         # STEP 1: Check Level 0 Modules FIRST! (NEW ZAO, SCT-AF, FVC-TWO)
-        zao_res = results.get('zao_v100', {})
-        if zao_res.get('is_zero_aggression_trap'):
+        # 🔴 PERBAIKAN: Gunakan .get dengan default {} dan pastikan hasilnya bukan None dengan isinstance
+        zao_res = results.get('zao_v100')
+        if zao_res and isinstance(zao_res, dict) and zao_res.get('is_zero_aggression_trap'):
             return {
                 "final_bias": "LONG",
                 "confidence": zao_res.get('confidence', 'ABSOLUTE'),
@@ -6502,8 +6532,8 @@ class ConflictResolverV88_FINAL_REVOLUTION:
                 "entry_allowed": True
             }
         
-        sct_af_res = results.get('sct_af_v99', {})
-        if sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
+        sct_af_res = results.get('sct_af_v99')
+        if sct_af_res and isinstance(sct_af_res, dict) and sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
             return {
                 "final_bias": sct_af_res.get('bias', 'LONG'),
                 "confidence": sct_af_res.get('confidence', 'ABSOLUTE'),
@@ -6513,10 +6543,11 @@ class ConflictResolverV88_FINAL_REVOLUTION:
             }
         
         # WMO - WMI Obsolete Logic (tidak return, hanya mempengaruhi)
-        wmo_res = results.get('wmo_v100', {})
+        wmo_res = results.get('wmo_v100')
         
-        fvc_two_res = results.get('fvc_two_v100', {})
-        if fvc_two_res.get('is_valid_squeeze') and fvc_two_res.get('phase') == 'EXECUTION_READY':
+        # 🔴 PERBAIKAN: Guard condition untuk fvc_two_res
+        fvc_two_res = results.get('fvc_two_v100')
+        if fvc_two_res and isinstance(fvc_two_res, dict) and fvc_two_res.get('is_valid_squeeze') and fvc_two_res.get('phase') == 'EXECUTION_READY':
             return {
                 "final_bias": "LONG",
                 "confidence": fvc_two_res.get('confidence', 'SUPREME'),
@@ -16501,6 +16532,13 @@ class BinanceAnalyzerV87:
                 agg_ratio=trades.get('aggressive_ratio', 0),
                 imbalance_ratio=imbalance_ratio
             )
+            
+            # 🔴 PERBAIKAN: Pastikan semua hasil module adalah dictionary valid, bukan None
+            # Gunakan safe_dict helper untuk memastikan tidak ada None yang masuk ke resolver
+            zao_result = safe_dict(zao_result)
+            wmo_result = safe_dict(wmo_result)
+            sct_af_result = safe_dict(sct_af_result)
+            fvc_two_result = safe_dict(fvc_two_result)
             
             # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
             final_decision = self.resolver_v88_final.resolve_all_hft_signals({
