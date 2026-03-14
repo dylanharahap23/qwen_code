@@ -280,6 +280,231 @@ FVC_REV_RSI_REVERSAL_MAX = 20.0         # Extreme Oversold
 FVC_REV_OI_COVERING_THRESHOLD = -1.5    # OI Drop = covering
 FVC_REV_FALSE_SQUEEZE_FLOW_MAX = 1.5    # Low flow check
 
+# ================= V100-ZAO: ZERO AGGRESSION OVERRIDE CONFIG =================
+ZAO_AGG_DEAD_MAX = 0.10             # Agg < 0.1x = Seller Exhaustion
+ZAO_RSI_REVERSAL_MIN = 20.0         # RSI > 20 (not panic crash)
+ZAO_RSI_REVERSAL_MAX = 70.0         # RSI < 70 (not overbought trap)
+ZAO_FLOW_SUFFICIENT_MIN = 0.3       # Flow > 0.3x still active
+ZAO_IMBALANCE_CROWD_MIN = 10.0      # Any imbalance supports squeeze
+
+# ================= V100-WMO: WHOLE MARKET OBSOLETE CONFIG =================
+WMO_AGGR_THRESHOLD = 0.2             # Agg < 0.2 = WMI obsolete
+WMO_WMI_HIGH_THRESHOLD = 95.0        # WMI > 95 = extreme
+WMO_AGGR_CONFIRM_THRESHOLD = 0.5     # Agg > 0.5 = WMI confirmed
+
+# ================= V99-SCT-AF: SHORT CROWD EXTREMES CONFIG =================
+SCT_AF_NORMAL_THRESHOLD = 50.0       # Start watch
+SCT_AF_CROWDED_THRESHOLD = 100.0     # Guarantee Squeeze
+SCT_AF_EXTREME_THRESHOLD = 200.0     # Instant Priority!
+
+# ================= V100-FVC-TWO: TWO-PHASE FLOW VALIDATION CONFIG =================
+FVC_TWO_INITIAL_MIN = 0.3            # Minimal untuk setup detection
+FVC_TWO_EXECUTION_REQUIRED = 0.5     # Minimal untuk actual pump confirmation
+FVC_TWO_ANOMALOUS_HIGH = 5.0         # Suspiciously high flow indicator
+
+# ================= V100-ZAO: ZERO AGGRESSION OVERRIDE MODULE =================
+class ZeroAggressionOverrideV100:
+    """
+    🔥 V100-ZAO: ZERO AGGRESSION OVERRIDE - ANTI-LYNUSDT TRAP
+    
+    Logika: Jika Aggressive Ratio = 0.0x atau < 0.1x, itu artinya
+    MARKET SELLERS SUDAH HABIS. Harga WAJIB NAIK terlepas dari
+    WMI, LPC, atau sinyal bearish lainnya.
+    
+    Kaedah: ZERO AGGRESSION > ANY LIQUIDATION TARGET!
+    """
+    
+    ZAO_AGG_DEAD_MAX = 0.10             # Agg < 0.1x = Seller Exhaustion
+    ZAO_RSI_REVERSAL_MIN = 20.0         # RSI > 20 (not panic crash)
+    ZAO_RSI_REVERSAL_MAX = 70.0         # RSI < 70 (not overbought trap)
+    ZAO_FLOW_SUFFICIENT_MIN = 0.3       # Flow > 0.3x still active
+    ZAO_IMBALANCE_CROWD_MIN = 10.0      # Any imbalance supports squeeze
+    
+    @staticmethod
+    def detect(agg_ratio: float, rsi6: float, flow: float, 
+               imbalance_ratio: float, wmi_ratio: float) -> Dict:
+        """
+        LYNUSDT Case Validation:
+        - Agg: 0.00x (<0.1x) ✅
+        - RSI: 37.3 (between 20-70) ✅
+        - Flow: 0.89x (>0.3x) ✅
+        - Imbalance: 190.5x (>10x) ✅
+        - WMI: -99.9x (ignored)
+        """
+        
+        if agg_ratio <= ZeroAggressionOverrideV100.ZAO_AGG_DEAD_MAX:
+            if (ZeroAggressionOverrideV100.ZAO_RSI_REVERSAL_MIN <= rsi6 <= 
+                ZeroAggressionOverrideV100.ZAO_RSI_REVERSAL_MAX):
+                if flow >= ZeroAggressionOverrideV100.ZAO_FLOW_SUFFICIENT_MIN:
+                    if imbalance_ratio >= ZeroAggressionOverrideV100.ZAO_IMBALANCE_CROWD_MIN:
+                        return {
+                            "is_zero_aggression_trap": True,
+                            "bias": "LONG",
+                            "confidence": "ABSOLUTE",
+                            "reason": f"ZAO_ZERO_AGGRESSION_OVERRIDE: Aggression {agg_ratio:.2f}x (HABIS!) + "
+                                     f"RSI {rsi6:.1f} (Reversal Zone!) + "
+                                     f"Flow {flow:.2f}x (Still Active!) + "
+                                     f"Imbalance {imbalance_ratio:.1f}x (Shorts Crowded!). "
+                                     f"TIDAK ADA SELLER SISA! MM Squeeze Up INSTANT!",
+                            "override_modules": ["WMI_VETO", "LPC_PAYOUT_OVERRIDE", "SDD"],
+                            "priority_level": 0,  # HIGHEST BEFORE ALL OTHERS!
+                            "estimated_pump_minutes": 5  # Fast squeeze
+                        }
+        
+        return {"is_zero_aggression_trap": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-WMO: WHOLE MARKET OBSOLETE LOGIC =================
+class WholeMarketObsoleteLogicV100:
+    """
+    🔥 V100-WMO: WMI OBSOLETE WHEN NO AGGRESSION
+    
+    Kaedah Baru: WMI hanya valid jika Ada Aggression dalam arah tersebut.
+    Jika Agg = 0.0x, WMI tidak relevan lagi!
+    """
+    
+    WMO_AGGR_THRESHOLD = 0.2             # Agg < 0.2 = WMI obsolete
+    WMO_WMI_HIGH_THRESHOLD = 95.0        # WMI > 95 = extreme
+    WMO_AGGR_CONFIRM_THRESHOLD = 0.5     # Agg > 0.5 = WMI confirmed
+    
+    @staticmethod
+    def validate_wmi_relevance(wmi_ratio: float, short_dist: float, 
+                               long_dist: float, agg_ratio: float) -> Dict:
+        """
+        WMI Interpretasi Updated:
+        - WMI + Aggression in same direction = REAL SIGNAL
+        - WMI + No Aggression = IRRELEVANT!
+        """
+        
+        if abs(agg_ratio) < WholeMarketObsoleteLogicV100.WMO_AGGR_THRESHOLD:
+            return {
+                "wmi_valid": False,
+                "bias": "NEUTRAL",
+                "reason": f"WMO_WMI_OBSOLETE: Aggression {agg_ratio:.2f}x = Too low for WMI validity. "
+                         f"Will ignore WMI {wmi_ratio:.1f}x - No direction confirmed!",
+                "recommendation": "WAIT FOR AGGRESSION OR USE ZAO MODULE"
+            }
+        
+        elif wmi_ratio > WholeMarketObsoleteLogicV100.WMO_WMI_HIGH_THRESHOLD and agg_ratio > WholeMarketObsoleteLogicV100.WMO_AGGR_CONFIRM_THRESHOLD:
+            return {
+                "wmi_valid": True,
+                "bias": "LONG",
+                "reason": f"WMO_WMI_VALID: WMI {wmi_ratio:.1f}x + Agg {agg_ratio:.2f}x (Confirmed). "
+                         f"Target SHORT_Liq above is REAL!"
+            }
+        
+        elif wmi_ratio < -WholeMarketObsoleteLogicV100.WMO_WMI_HIGH_THRESHOLD and agg_ratio < -WholeMarketObsoleteLogicV100.WMO_AGGR_CONFIRM_THRESHOLD:
+            return {
+                "wmi_valid": True,
+                "bias": "SHORT",
+                "reason": f"WMO_WMI_VALID: WMI {wmi_ratio:.1f}x + No Buy Agg Confirmed. "
+                         f"Target LONG_Liq below is REAL!"
+            }
+        
+        return {"wmi_valid": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V99-SCT-AF: SHORT CROWD EXTREMES VALIDATOR =================
+class ShortCrowdExtremesAFValidatorV99:
+    """
+    🔥 V99-SCT-AF: SHORT CROWD EXTREMES - BEYOND 100x
+    
+    Kaedah Baru:
+    - Imbalance 50-100x = Caution Required
+    - Imbalance > 100x = SQUEEZE GUARANTEE
+    - Imbalance > 200x = INSTANT SQUEEZE PRIORITY!
+    """
+    
+    SCT_NORMAL_THRESHOLD = 50.0     # Start watch
+    SCT_CROWDED_THRESHOLD = 100.0   # Guarantee Squeeze
+    SCT_EXTREME_THRESHOLD = 200.0   # Instant Priority!
+    
+    @staticmethod
+    def check_imbalance_extreme(imbalance_ratio: float, agg_ratio: float) -> Dict:
+        """
+        LYNUSDT Case: Imbalance = 190.5x (Between 100x-200x)
+        TOWNSUSDT Case: Imbalance = 33.7x (Normal, but supported by Flow)
+        """
+        
+        if imbalance_ratio >= ShortCrowdExtremesAFValidatorV99.SCT_EXTREME_THRESHOLD:
+            return {
+                "is_extreme_crowd": True,
+                "confidence": "ABSOLUTE",
+                "bias": "LONG",
+                "reason": f"SCT_EXTREME_SHORT_CROWD: Imbalance {imbalance_ratio:.1f}x crowd SHORT! "
+                         f"This is beyond normal limits. One buy triggers cascade!",
+                "priority_level": 0,
+                "override_conflicting_signals": True
+            }
+        
+        elif imbalance_ratio >= ShortCrowdExtremesAFValidatorV99.SCT_CROWDED_THRESHOLD:
+            return {
+                "is_extreme_crowd": True,
+                "confidence": "HIGH",
+                "bias": "LONG",
+                "reason": f"SCT_SHORT_CROWD_GUARANTEED: Imbalance {imbalance_ratio:.1f}x. Strong squeeze signal!",
+                "priority_level": 1
+            }
+        
+        elif imbalance_ratio >= ShortCrowdExtremesAFValidatorV99.SCT_NORMAL_THRESHOLD:
+            return {
+                "is_extreme_crowd": False,
+                "confidence": "MODERATE",
+                "bias": "LONG",
+                "reason": f"SCT_SHORT_CROWD_WARNING: Imbalance {imbalance_ratio:.1f}x. Monitor closely."
+            }
+        
+        return {"is_extreme_crowd": False, "confidence": "LOW", "bias": "NEUTRAL"}
+
+
+# ================= V100-FVC-TWO: TWO-PHASE FLOW VALIDATION =================
+class FlowVelocityCorrelationTwoPhaseV100:
+    """
+    🔥 V100-FVC-TWO: TWO-PHASE FLOW VALIDATION
+    
+    Phase 1: Initial Detection - Flow minimal untuk squeeze setup
+    Phase 2: Execution Confirmation - Flow untuk actual pump
+    """
+    
+    FVC_INITIAL_MIN = 0.3           # Minimal untuk setup detection
+    FVC_EXECUTION_REQUIRED = 0.5    # Minimal untuk actual pump confirmation
+    FVC_ANOMALOUS_HIGH = 5.0        # Suspiciously high flow indicator
+    
+    @staticmethod
+    def validate_for_squeeze(flow: float, agg_ratio: float, imbalance_ratio: float) -> Dict:
+        """
+        LYNUSDT Case: Flow=0.89x (>0.5x required) ✅ Valid squeeze
+        TOWNSUSDT Case: Flow=2.7x (>0.5x required) ✅ Valid squeeze
+        """
+        
+        if flow >= FlowVelocityCorrelationTwoPhaseV100.FVC_EXECUTION_REQUIRED:
+            if imbalance_ratio >= 10.0:
+                return {
+                    "is_valid_squeeze": True,
+                    "phase": "EXECUTION_READY",
+                    "confidence": "SUPREME",
+                    "reason": f"FVC_TWO_PHASE: Flow {flow:.2f}x + Imbalance {imbalance_ratio:.1f}x "
+                             f"= Squeeze Setup COMPLETE. Ready to execute!",
+                    "wait_minutes": 0  # Immediate entry allowed
+                }
+        
+        elif flow >= FlowVelocityCorrelationTwoPhaseV100.FVC_INITIAL_MIN:
+            return {
+                "is_valid_squeeze": True,
+                "phase": "INITIAL_SETUP",
+                "confidence": "HIGH",
+                "reason": f"FVC_INIT_ONLY: Flow {flow:.2f}x (Basic setup). Wait for confirmation.",
+                "wait_minutes": 5  # Wait for confirmation
+            }
+        
+        else:
+            return {
+                "is_valid_squeeze": False,
+                "warning": "FLOW_TOO_LOW_FOR_SQUEEZE",
+                "confidence": "LOW"
+            }
+
+
 # ================= V91: LIQUIDITY GRAVITY DRAIN (LGD) - ANTI-VOID TRAP =================
 class LiquidityGravityDrainV91:
     """
@@ -6232,25 +6457,29 @@ class ConflictResolverV88_FINAL_REVOLUTION:
     ┌─────────────────────────────────────────────────────┐
     │  LEVEL 0: NUCLEAR OVERRIDE (OVERRIDE ALL OTHERS)     │
     ├─────────────────────────────────────────────────────┤
-    │  0. V98-EVR (Extreme Vacuum Reversal) ← NEW!         │ ← CRITICAL!
-    │  1. V99-SCE (Short Crowd Exhaustion) ← NEW!          │ ← CRITICAL!
-    │  2. V100-FVC-REV (Flow Velocity Confirmation) ← NEW! │ ← CRITICAL!
-    │  3. V99-RSC-PRIORITY (Real Short Covering)           │
-    │  4. V97-ZVA (Zero Aggression Vacuum)                 │
-    │  5. V100-AFA (Absorption/Flow Anomaly)               │
+    │  0. V100-ZAO (Zero Aggression Override) ← NEW!      │ ← MOST CRITICAL!
+    │  1. V99-SCT-AF (Extreme Imbalance) ← NEW!            │
+    │  2. V100-WMO (WMI Obsolete Logic) ← NEW!             │
+    │  3. V100-FVC-TWO (Flow Velocity Two-Phase) ← NEW!    │
+    │  4. V98-EVR (Extreme Vacuum Reversal)                │
+    │  5. V99-SCE (Short Crowd Exhaustion)                 │
+    │  6. V100-FVC-REV (Flow Velocity Confirmation)        │
+    │  7. V99-RSC-PRIORITY (Real Short Covering)           │
+    │  8. V97-ZVA (Zero Aggression Vacuum)                 │
+    │  9. V100-AFA (Absorption/Flow Anomaly)               │
     ├─────────────────────────────────────────────────────┤
     │  LEVEL 1: CORE STRATEGIC MODULES                     │
     ├─────────────────────────────────────────────────────┤
-    │  6. V99-NOS (Nuclear Overbought Shield)              │
-    │  7. V99-WMI_VETO (With New Validation)               │
-    │  8. V90-SAT (Saturation Check)                       │
-    │  9. V89-WSC (Singularity Check)                      │
+    │  10. V99-NOS (Nuclear Overbought Shield)              │
+    │  11. V99-WMI_VETO (With New Validation)               │
+    │  12. V90-SAT (Saturation Check)                       │
+    │  13. V89-WSC (Singularity Check)                      │
     ├─────────────────────────────────────────────────────┤
     │  LEVEL 2: TIMING & CONFIRMATION                      │
     ├─────────────────────────────────────────────────────┤
-    │  10. V87-SAD (Stealth Accumulation)                   │
-    │  11. V87-LBD (Liquidity Bait Detection)               │
-    │  12. V100-LFC (Liquidity Flush Coordinator)           │
+    │  14. V87-SAD (Stealth Accumulation)                   │
+    │  15. V87-LBD (Liquidity Bait Detection)               │
+    │  16. V100-LFC (Liquidity Flush Coordinator)           │
     └─────────────────────────────────────────────────────┘
     """
     
@@ -6261,7 +6490,42 @@ class ConflictResolverV88_FINAL_REVOLUTION:
             results: Dictionary berisi hasil dari semua module
         """
         
-        # STEP 1: Check Nuclear Override Modules FIRST!
+        # STEP 1: Check Level 0 Modules FIRST! (NEW ZAO, SCT-AF, FVC-TWO)
+        zao_res = results.get('zao_v100', {})
+        if zao_res.get('is_zero_aggression_trap'):
+            return {
+                "final_bias": "LONG",
+                "confidence": zao_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-ZAO_OVERRIDE: {zao_res.get('reason', '')}",
+                "phase": "ZERO_AGGRESSION_CONFIRMED",
+                "priority_level": 0,
+                "entry_allowed": True
+            }
+        
+        sct_af_res = results.get('sct_af_v99', {})
+        if sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
+            return {
+                "final_bias": sct_af_res.get('bias', 'LONG'),
+                "confidence": sct_af_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99-SCT-AF_OVERRIDE: {sct_af_res.get('reason', '')}",
+                "phase": "EXTREME_SHORT_CROWD_CONFIRMED",
+                "priority_level": 0
+            }
+        
+        # WMO - WMI Obsolete Logic (tidak return, hanya mempengaruhi)
+        wmo_res = results.get('wmo_v100', {})
+        
+        fvc_two_res = results.get('fvc_two_v100', {})
+        if fvc_two_res.get('is_valid_squeeze') and fvc_two_res.get('phase') == 'EXECUTION_READY':
+            return {
+                "final_bias": "LONG",
+                "confidence": fvc_two_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-FVC-TWO: {fvc_two_res.get('reason', '')}",
+                "phase": "FUEL_VERIFIED",
+                "priority_level": 1
+            }
+        
+        # STEP 2: Existing Critical Override Modules
         evr_res = results.get('evr_v98')
         if evr_res and evr_res.get('is_extreme_reversal'):
             return {
@@ -6269,7 +6533,7 @@ class ConflictResolverV88_FINAL_REVOLUTION:
                 "confidence": evr_res.get('confidence', 'ABSOLUTE'),
                 "reason": f"V98-EVR_OVERRIDE: {evr_res.get('reason', '')}",
                 "phase": "EXTREME_REVERSAL_CONFIRMED",
-                "priority_level": 0,
+                "priority_level": 2,
             }
         
         sce_res = results.get('sce_v99')
@@ -15068,6 +15332,13 @@ class BinanceAnalyzerV87:
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
         self.sce_v99 = ShortCrowdExhaustionValidatorV99()            # V99-SCE (Short Crowd Exhaustion) ⭐ NEW!
         self.fvc_rev_v100 = FlowVelocityConfirmationReversalV100()   # V100-FVC-REV (Flow Velocity Reversal) ⭐ NEW!
+        
+        # ===== NEW MODULES FROM DOSEN - LYNUSDT & TOWNSUSDT PATTERNS =====
+        self.zao_v100 = ZeroAggressionOverrideV100()                 # V100-ZAO (ZERO AGGRESSION) ⭐ TERTINGGI!
+        self.wmo_v100 = WholeMarketObsoleteLogicV100()               # V100-WMO (WMI Obsolete Logic)
+        self.sct_af_v99 = ShortCrowdExtremesAFValidatorV99()         # V99-SCT-AF (Extreme Imbalance)
+        self.fvc_two_v100 = FlowVelocityCorrelationTwoPhaseV100()    # V100-FVC-TWO (Two-Phase Flow)
+        
         self.resolver_v88_final = ConflictResolverV88_FINAL_REVOLUTION()  # V88 FINAL REVOLUTION Resolver ⭐ NEW!
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
@@ -16197,14 +16468,54 @@ class BinanceAnalyzerV87:
                 lpc_result=lpc_result  # dari perhitungan V100 sebelumnya
             )
             
+            # ===== NEW MODULES FROM DOSEN - LYNUSDT & TOWNSUSDT PATTERNS =====
+            # Ambil imbalance_ratio dari LIM jika tersedia
+            imbalance_ratio = lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0
+            
+            # V100-ZAO: Zero Aggression Override
+            zao_result = self.zao_v100.detect(
+                agg_ratio=trades.get('aggressive_ratio', 0),
+                rsi6=rsi6,
+                flow=trades.get('ratio', 0),
+                imbalance_ratio=imbalance_ratio,
+                wmi_ratio=wmi_ratio
+            )
+            
+            # V100-WMO: Whole Market Obsolete Logic
+            wmo_result = self.wmo_v100.validate_wmi_relevance(
+                wmi_ratio=wmi_ratio,
+                short_dist=liq.get('short_dist', 0),
+                long_dist=liq.get('long_dist', 0),
+                agg_ratio=trades.get('aggressive_ratio', 0)
+            )
+            
+            # V99-SCT-AF: Short Crowd Extremes
+            sct_af_result = self.sct_af_v99.check_imbalance_extreme(
+                imbalance_ratio=imbalance_ratio,
+                agg_ratio=trades.get('aggressive_ratio', 0)
+            )
+            
+            # V100-FVC-TWO: Flow Velocity Two-Phase
+            fvc_two_result = self.fvc_two_v100.validate_for_squeeze(
+                flow=trades.get('ratio', 0),
+                agg_ratio=trades.get('aggressive_ratio', 0),
+                imbalance_ratio=imbalance_ratio
+            )
+            
             # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
             final_decision = self.resolver_v88_final.resolve_all_hft_signals({
-                # NEW MODULES - PRIORITAS TERTINGGI (BTRUSDT PATTERNS)
+                # NEW MODULES - PRIORITAS TERTINGGI (ZAO, SCT-AF, FVC-TWO) ⭐
+                'zao_v100': zao_result,
+                'sct_af_v99': sct_af_result,
+                'wmo_v100': wmo_result,
+                'fvc_two_v100': fvc_two_result,
+                
+                # EXISTING CRITICAL MODULES (BTRUSDT PATTERNS)
                 'evr_v98': evr_result,
                 'sce_v99': sce_result,
                 'fvc_rev_v100': fvc_rev_result,
                 
-                # EXISTING CRITICAL MODULES
+                # OTHER CRITICAL MODULES
                 'rsc_priority': rsc_priority_result,
                 'zva_v97': zva_result,
                 'afa_v100': afa_result,
