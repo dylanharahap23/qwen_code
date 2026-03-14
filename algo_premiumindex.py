@@ -207,6 +207,28 @@ import math
 # Nonaktifkan SSL warning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ================= V100-SSE: SIGNAL STABILITY ENGINE CONFIG =================
+SSE_MIN_DURATION_MINUTES = 5            # Signal harus tahan 5 menit
+SSE_CONFIDENCE_DELTA_THRESHOLD = 0.30   # Delta kepercayaan 30% baru boleh flip
+SSE_VOLUME_SUSTAINED_PERIODS = 2        # Flow harus konsisten 2x perioda
+SSE_CRITICAL_OVERRIDE_IMBALANCE = 100   # Imbalance > 100x = Auto Flip
+SSE_CRITICAL_OVERRIDE_WMI = 95          # WMI > 95 = Auto Flip
+SSE_MAX_FLIP_PER_HOUR = 2               # Max 2 flip per jam per koin
+
+# ================= V100-VTF: VOLUME-TIME FRAME VALIDATOR CONFIG =================
+VTF_SPIKE_MINUTE_MAX = 1                 # Volume spike < 1 menit = suspect
+VTF_SUSTAINED_MINUTE_MIN = 5             # Volume sustained > 5 menit = real
+VTF_FLOW_DEVIATION_MAX = 0.5             # Flow deviasi > 50% = suspicious
+VTF_CONFIRMATION_PERIODS = 3             # Butuh konfirmasi 3 periode
+
+# ================= V100-CPT: CRITICAL PATH THRESHOLD CONFIG =================
+CPT_IMBALANCE_THRESHOLD = 200            # Imbalance > 200x = Auto Flip
+CPT_WMI_EXTREME = 98                      # WMI > 98 = Auto Flip
+CPT_AGGRESSION_DEAD = 0.05                # Agg < 0.05 + WMI Extreme = Auto Flip
+CPT_FLUSH_PROB_THRESHOLD = 80              # Flush Prob > 80% = Warning
+CPT_RSI_EXTREME_OVERBOUGHT = 98            # RSI > 98 = Potential Top
+CPT_RSI_EXTREME_OVERSOLD = 2               # RSI < 2 = Potential Bottom
+
 # ================= V95: LOW ENERGY PRIORITY (LEP) CONFIG =================
 LEP_OI_THRESHOLD = 3.0           # OI > 3% untuk validasi
 LEP_PRICE_DROP_THRESHOLD = -1.0  # Price drop > 1%
@@ -6475,6 +6497,459 @@ class ConflictResolverV88Plus:
             "reason": "No strong signal detected.",
             "phase": "NEUTRAL"
         }
+
+
+# ================= V100-SSE: SIGNAL STABILITY ENGINE =================
+class SignalStabilityEngineV100:
+    """🔥 V100-SSE: SIGNAL STABILITY ENGINE - ANTI-HFT FLICKER
+    
+    Prinsip HFT China Algo:
+    "Jika signal hanya bertahan < 5 menit tanpa konfirmasi volume, 
+    itu adalah FALSE SIGNAL."
+    
+    Kaedah:
+    • Min Durasi Signal: 5 menit sebelum bisa flip
+    • Confidence Delta: 30% sebelum flip diperbolehkan
+    • Volume Sustained: Flow harus konsisten > 2 periode
+    • Critical Override: Hanya jika Imbalance > 100x atau WMI > 95
+    """
+    
+    # CONFIGURATIONS
+    SSE_MIN_DURATION_MINUTES = 5
+    SSE_CONFIDENCE_DELTA_THRESHOLD = 0.30
+    SSE_VOLUME_SUSTAINED_PERIODS = 2
+    SSE_CRITICAL_OVERRIDE_IMBALANCE = 100
+    SSE_CRITICAL_OVERRIDE_WMI = 95
+    SSE_MAX_FLIP_PER_HOUR = 2
+    
+    _instance = None
+    signal_history = {}  # Symbol -> List[Dict]
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.signal_history = {}
+        return cls._instance
+    
+    @classmethod
+    def can_flip_signal(cls, current_result: Dict, last_result: Dict = None, 
+                        symbol: str = None) -> Dict:
+        """Mengecek apakah flip signal diperbolehkan berdasarkan kriteria HFT"""
+        
+        # Jika tidak ada last_result, ini sinyal pertama
+        if last_result is None or not last_result:
+            # Simpan history untuk sinyal pertama
+            cls._update_history(symbol, current_result)
+            return {
+                "allow_flip": True,
+                "reason": "SSE_FIRST_SIGNAL: No previous signal to compare",
+                "keep_last_bias": current_result.get('final_bias', 'NEUTRAL')
+            }
+        
+        # Ambil history untuk symbol ini
+        if symbol not in cls._instance.signal_history:
+            cls._instance.signal_history[symbol] = []
+        
+        history = cls._instance.signal_history[symbol]
+        
+        # Jika history kosong, ini sinyal pertama
+        if not history:
+            cls._update_history(symbol, current_result)
+            return {
+                "allow_flip": True,
+                "reason": "SSE_FIRST_SIGNAL: No history for this symbol",
+                "keep_last_bias": current_result.get('final_bias', 'NEUTRAL')
+            }
+        
+        # Ambil last entry dari history
+        last_entry = history[-1]
+        
+        # Ekstrak data dari current_result
+        current_bias = current_result.get('final_bias', 'NEUTRAL')
+        current_confidence = cls._confidence_to_number(current_result.get('confidence', 'LOW'))
+        current_flow = current_result.get('trade_flow', 0)
+        lim_data = current_result.get('lim', {})
+        if not isinstance(lim_data, dict):
+            lim_data = {}
+        current_imbalance = lim_data.get('imbalance_ratio', 0)
+        current_wmi = current_result.get('wmi_ratio', 0)
+        current_timestamp = time.time()
+        
+        # Ekstrak data dari last_entry
+        last_bias = last_entry.get('bias', 'NEUTRAL')
+        last_confidence = last_entry.get('confidence_level', 0)
+        last_timestamp = last_entry.get('timestamp', 0)
+        last_flow = last_entry.get('flow', 0)
+        
+        # Jika bias sama, tidak perlu flip
+        if current_bias == last_bias:
+            cls._update_history(symbol, current_result)
+            return {
+                "allow_flip": False,
+                "reason": f"SSE_SAME_BIAS: Bias masih {current_bias}",
+                "keep_last_bias": last_bias
+            }
+        
+        # CHECK 1: TIME DURATION (Min 5 menit)
+        duration_minutes = (current_timestamp - last_timestamp) / 60
+        
+        if duration_minutes < cls.SSE_MIN_DURATION_MINUTES:
+            return {
+                "allow_flip": False,
+                "reason": f"SSE_NO_TIME_WINDOW: Signal baru {duration_minutes:.1f} menit (<{cls.SSE_MIN_DURATION_MINUTES} min)",
+                "keep_last_bias": last_bias,
+                "confidence_delta": 0
+            }
+        
+        # CHECK 2: CONFIDENCE DELTA (Min 30% perubahan)
+        confidence_delta = abs(current_confidence - last_confidence)
+        
+        if confidence_delta < cls.SSE_CONFIDENCE_DELTA_THRESHOLD:
+            return {
+                "allow_flip": False,
+                "reason": f"SSE_LOW_CONFIDENCE_DELTA: Delta {confidence_delta:.2f} (<{cls.SSE_CONFIDENCE_DELTA_THRESHOLD:.2f})",
+                "keep_last_bias": last_bias,
+                "confidence_delta": confidence_delta
+            }
+        
+        # CHECK 3: VOLUME SUSTAINED (Flow harus stabil)
+        if last_flow > 3.0 and current_flow < last_flow * 0.7:
+            return {
+                "allow_flip": False,
+                "reason": f"SSE_FLOW_FALLING_KNIFE: Flow turun {abs(current_flow - last_flow):.2f}x saat flip",
+                "keep_last_bias": last_bias,
+                "confidence_delta": confidence_delta
+            }
+        
+        # CHECK 4: CRITICAL OVERRIDE (Auto flip jika sangat ekstrem)
+        if current_imbalance > cls.SSE_CRITICAL_OVERRIDE_IMBALANCE:
+            cls._update_history(symbol, current_result)
+            return {
+                "allow_flip": True,
+                "reason": f"SSE_CRITICAL_OVERRIDE: Imbalance > {cls.SSE_CRITICAL_OVERRIDE_IMBALANCE}x (Extreme Liquidity Shift)",
+                "override_type": "IMBALANCE"
+            }
+        
+        if abs(current_wmi) > cls.SSE_CRITICAL_OVERRIDE_WMI:
+            cls._update_history(symbol, current_result)
+            return {
+                "allow_flip": True,
+                "reason": f"SSE_CRITICAL_OVERRIDE: WMI > {cls.SSE_CRITICAL_OVERRIDE_WMI} (Whale Singularity Detected)",
+                "override_type": "WMI"
+            }
+        
+        # CHECK 5: MAX FLIPS PER HOUR (Anti-Flicker Protection)
+        one_hour_ago = current_timestamp - 3600
+        flips_last_hour = len([h for h in history if h.get('timestamp', 0) > one_hour_ago and h.get('bias') != h.get('prev_bias')])
+        
+        if flips_last_hour >= cls.SSE_MAX_FLIP_PER_HOUR:
+            return {
+                "allow_flip": False,
+                "reason": f"SSE_FLIP_LIMIT_EXCEEDED: {flips_last_hour}/{cls.SSE_MAX_FLIP_PER_HOUR} flips dalam 1 jam terakhir",
+                "keep_last_bias": last_bias,
+                "confidence_delta": confidence_delta
+            }
+        
+        # APPROVED - Update history
+        cls._update_history(symbol, current_result, prev_bias=last_bias)
+        
+        return {
+            "allow_flip": True,
+            "reason": "SSE_ALL_CHECKS_PASSED: Stable signal confirmed",
+            "confidence_delta": confidence_delta
+        }
+    
+    @classmethod
+    def _update_history(cls, symbol: str, result: Dict, prev_bias: str = None):
+        """Update history untuk symbol tertentu"""
+        if symbol not in cls._instance.signal_history:
+            cls._instance.signal_history[symbol] = []
+        
+        history = cls._instance.signal_history[symbol]
+        
+        # Batasi history maksimal 100 entries
+        if len(history) > 100:
+            history = history[-100:]
+        
+        history.append({
+            'timestamp': time.time(),
+            'bias': result.get('final_bias', 'NEUTRAL'),
+            'confidence_level': cls._confidence_to_number(result.get('confidence', 'LOW')),
+            'flow': result.get('trade_flow', 0),
+            'prev_bias': prev_bias
+        })
+        
+        cls._instance.signal_history[symbol] = history
+    
+    @classmethod
+    def _confidence_to_number(cls, confidence_str: str) -> float:
+        """Konversi string confidence ke angka untuk perhitungan delta"""
+        mapping = {
+            'ABSOLUTE': 1.0,
+            'SUPREME': 0.9,
+            'HIGH': 0.7,
+            'MEDIUM': 0.5,
+            'LOW': 0.3,
+            'NONE': 0.1
+        }
+        return mapping.get(confidence_str if confidence_str else 'LOW', 0.3)
+
+
+# ================= V100-VTF: VOLUME-TIME FRAME VALIDATOR =================
+class VolumeTimeFrameValidatorV100:
+    """🔥 V100-VTF: VOLUME-TIME FRAME VALIDATOR - DISTINGUISH REAL vs SPIKE VOLUME
+    
+    Prinsip China Algo:
+    "Spike Volume hanya lasted < 1 minute = Wash Trading Noise"
+    "Sustained Volume > 5 minutes = Real Accumulation/Distribution"
+    """
+    
+    VTF_SPIKE_MINUTE_MAX = 1
+    VTF_SUSTAINED_MINUTE_MIN = 5
+    VTF_FLOW_DEVIATION_MAX = 0.5
+    VTF_CONFIRMATION_PERIODS = 3
+    
+    @staticmethod
+    def validate_volume_change(
+        current_flow: float,
+        previous_flows: list,  # Last 5 flow values
+        current_oi_delta: float,
+        current_price_change: float
+    ) -> Dict:
+        """
+        Validasi apakah volume sekarang REAL atau fake spike
+        """
+        
+        # Jika tidak ada data cukup
+        if not previous_flows or len(previous_flows) < 3:
+            return {
+                "is_real": False,
+                "confidence": "LOW",
+                "reason": "VTF_INSUFFICIENT_DATA: Need at least 3 previous flow values",
+                "action": "WAIT_FOR_MORE_DATA"
+            }
+        
+        avg_prev_flow = sum(previous_flows) / len(previous_flows)
+        max_prev_flow = max(previous_flows) if previous_flows else 0
+        
+        # CHECK 1: SPIKE DETECTION
+        if current_flow > max_prev_flow * 1.5 and current_flow > 5.0:
+            return {
+                "is_spike": True,
+                "confidence": "HIGH",
+                "reason": f"VTF_SPIKE_DETECTED: Flow {current_flow:.1f}x >> Previous Avg {avg_prev_flow:.1f}x",
+                "action": "IGNORE_UNLESS_CRITICAL_OVERRIDE"
+            }
+        
+        # CHECK 2: SUSTAINED VOLUME
+        if len(previous_flows) > 1:
+            try:
+                flow_std_dev = np.std(previous_flows)
+                if flow_std_dev < VolumeTimeFrameValidatorV100.VTF_FLOW_DEVIATION_MAX and current_flow > 1.5:
+                    return {
+                        "is_sustained": True,
+                        "confidence": "SUPREME",
+                        "reason": f"VTF_SUSTAINED_VOLUME: Flow stabilized at {current_flow:.1f}x (StdDev={flow_std_dev:.2f})",
+                        "action": "VALIDATE_SIGNAL_STRONG"
+                    }
+            except:
+                pass
+        
+        # CHECK 3: PRICE-WEIGHT CORRELATION
+        if current_flow > 0:
+            try:
+                price_impact_factor = abs(current_price_change) / max(current_flow, 0.1)
+                if price_impact_factor < 0.05 and current_flow > 2.0:
+                    return {
+                        "correlation_valid": True,
+                        "confidence": "HIGH",
+                        "reason": f"VTF_PRICE_WEIGHT_CORRELATION: Price moved {current_price_change:+.2f}% with Flow {current_flow:.1f}x = Efficient absorption",
+                        "action": "CONFIRM_TREND"
+                    }
+            except:
+                pass
+        
+        return {
+            "is_real": False,
+            "confidence": "LOW",
+            "reason": "VTF_INCONCLUSIVE: Cannot confirm volume sustainability",
+            "action": "WAIT_FOR_NEXT_CYCLE"
+        }
+
+
+# ================= V100-CPT: CRITICAL PATH THRESHOLD =================
+class CriticalPathThresholdV100:
+    """🔥 V100-CPT: CRITICAL PATH THRESHOLD - AUTO-FLIP IF CRITICAL CHANGE
+    
+    Kriteria Wajib Update (Ignore SSE):
+    1. Imbalance Ratio > 200x
+    2. WMI > 98 OR WMI < -98
+    3. Aggression = 0.00x dengan WMI Extreme
+    4. Liquidation Flush Probability > 80%
+    5. RSI > 98 OR RSI < 2 (Extreme Overbought/Oversold)
+    """
+    
+    CPT_IMBALANCE_THRESHOLD = 200
+    CPT_WMI_EXTREME = 98
+    CPT_AGGRESSION_DEAD = 0.05
+    CPT_FLUSH_PROB_THRESHOLD = 80
+    CPT_RSI_EXTREME_OVERBOUGHT = 98
+    CPT_RSI_EXTREME_OVERSOLD = 2
+    
+    @staticmethod
+    def check_critical_update(
+        imbalance: float,
+        wmi: float,
+        agg: float,
+        flush_prob: float,
+        rsi: float
+    ) -> Dict:
+        """Cek apakah ada kondisi kritis yang WAJIB update sinyal"""
+        
+        reasons = []
+        severity = "NORMAL"
+        
+        if imbalance > CriticalPathThresholdV100.CPT_IMBALANCE_THRESHOLD:
+            reasons.append(f"IMBALANCE_CRITICAL: {imbalance:.1f}x")
+            severity = "CRITICAL"
+        
+        if abs(wmi) > CriticalPathThresholdV100.CPT_WMI_EXTREME:
+            reasons.append(f"WMI_EXTREME: {wmi:.1f}x")
+            severity = "CRITICAL"
+        
+        if agg < CriticalPathThresholdV100.CPT_AGGRESSION_DEAD and abs(wmi) > 80:
+            reasons.append("AGGRESSION_DEAD_WITH_WMI")
+            severity = "WARNING"
+        
+        if flush_prob > CriticalPathThresholdV100.CPT_FLUSH_PROB_THRESHOLD:
+            reasons.append(f"FLUSH_PROB_HIGH: {flush_prob:.1f}%")
+            severity = "WARNING"
+        
+        if rsi > CriticalPathThresholdV100.CPT_RSI_EXTREME_OVERBOUGHT or rsi < CriticalPathThresholdV100.CPT_RSI_EXTREME_OVERSOLD:
+            reasons.append(f"RSI_EXTREME: {rsi:.1f}")
+            severity = "CRITICAL"
+        
+        if severity == "CRITICAL":
+            return {
+                "must_update": True,
+                "severity": severity,
+                "reason": f"CPT_CRITICAL_PATH: {', '.join(reasons)}",
+                "ignore_se_time_limit": True
+            }
+        
+        elif severity == "WARNING":
+            return {
+                "must_update": False,
+                "severity": severity,
+                "reason": f"CPT_WARNING_PATH: {', '.join(reasons)}",
+                "require_stability_check": True
+            }
+        
+        return {
+            "must_update": False,
+            "severity": "NORMAL",
+            "reason": "CPT_NORMAL: No critical path detected",
+            "require_se_time_limit": True
+        }
+
+
+# ================= V88_STABLE: CONFLICT RESOLVER WITH STABILITY ENGINE =================
+class ConflictResolverV88_STABLE:
+    """🔥 V88+V100-STABLE: FINAL CONFLICT RESOLVER WITH STABILITY ENGINE"""
+    
+    @staticmethod
+    def resolve_with_stability(current_result: Dict, last_result: Dict = None) -> Dict:
+        """
+        Resolution dengan Integrasi Stability Engine
+        
+        Args:
+            current_result: Hasil analisis terbaru dari BinanceAnalyzer
+            last_result: Hasil analisis sebelumnya (untuk perbandingan)
+        """
+        
+        print("="*80)
+        print(f"🔍 Analyzing {current_result.get('symbol', 'UNKNOWN')} with Stability Engine...")
+        print("="*80)
+        
+        symbol = current_result.get('symbol', 'UNKNOWN')
+        
+        # STEP 1: Check Critical Path First (Before any other checks!)
+        lim_data = current_result.get('lim', {})
+        if not isinstance(lim_data, dict):
+            lim_data = {}
+        
+        cpt_res = CriticalPathThresholdV100.check_critical_update(
+            imbalance=lim_data.get('imbalance_ratio', 0),
+            wmi=current_result.get('wmi_ratio', 0),
+            agg=current_result.get('aggressive_ratio', 1.0),
+            flush_prob=current_result.get('flush_probability', 0),
+            rsi=current_result.get('rsi6', 50)
+        )
+        
+        if cpt_res.get('must_update') and cpt_res.get('severity') == 'CRITICAL':
+            # IGNORE STE LIMIT - MUST UPDATE NOW
+            print(f"⚡ CRITICAL PATH OVERRIDE: {cpt_res['reason']}")
+            current_result['stability_override'] = True
+            current_result['override_reason'] = cpt_res['reason']
+            current_result['priority_level'] = 0
+            return current_result
+        
+        # STEP 2: Run Stability Check (If not Critical Override)
+        sse_res = SignalStabilityEngineV100.can_flip_signal(
+            current_result=current_result,
+            last_result=last_result,
+            symbol=symbol
+        )
+        
+        if not sse_res.get('allow_flip'):
+            # KEEP LAST SIGNAL
+            print(f"🛡️ SIGNAL STABILITY LOCKED: {sse_res['reason']}")
+            
+            # Jika ada last_result, gunakan bias dan confidence dari last_result
+            if last_result:
+                current_result['final_bias'] = last_result.get('final_bias', 'NEUTRAL')
+                current_result['confidence'] = last_result.get('confidence', 'LOW')
+                current_result['reason'] = f"STABILITY LOCK: {sse_res['reason']} | Original: {current_result.get('reason', '')}"
+            
+            current_result['stability_override'] = False
+            current_result['override_reason'] = f"STS_LOCK: {sse_res['reason']}"
+            current_result['priority_level'] = 1
+            return current_result
+        
+        # STEP 3: Check Volume Sustainability
+        # Ambil flow history dari state_mgr atau dari result
+        flow_history = current_result.get('flow_history', [])
+        if not flow_history and last_result:
+            flow_history = last_result.get('flow_history', [])
+        
+        vtf_res = VolumeTimeFrameValidatorV100.validate_volume_change(
+            current_flow=current_result.get('trade_flow', 0),
+            previous_flows=flow_history[-5:] if len(flow_history) >= 5 else flow_history,
+            current_oi_delta=current_result.get('oi_delta_5m', 0),
+            current_price_change=current_result.get('change_5m', 0)
+        )
+        
+        if vtf_res.get('is_spike'):
+            print(f"⚠️ VOLUME SPIKE DETECTED: {vtf_res['reason']}")
+            # Apply additional filter
+            if vtf_res.get('action') == "IGNORE_UNLESS_CRITICAL_OVERRIDE":
+                if not cpt_res.get('must_update'):
+                    # KEEP LAST SIGNAL
+                    if last_result:
+                        current_result['final_bias'] = last_result.get('final_bias', 'NEUTRAL')
+                        current_result['confidence'] = last_result.get('confidence', 'LOW')
+                        current_result['reason'] = f"VOLUME SPIKE IGNORED: {vtf_res['reason']} | Original: {current_result.get('reason', '')}"
+                    
+                    current_result['stability_override'] = False
+                    current_result['override_reason'] = f"VTF_SPIKE_IGNORED: {vtf_res['reason']}"
+                    current_result['priority_level'] = 2
+                    return current_result
+        
+        # STEP 4: Final Decision (Proceed with New Signal)
+        print(f"✅ STABILITY CHECK PASSED: Signal updated")
+        current_result['stability_override'] = False
+        current_result['priority_level'] = 3
+        return current_result
 
 
 # ================= V88_FINAL_REVOLUTION: UPDATED CONFLICT RESOLVER =================
@@ -14965,6 +15440,15 @@ class OutputFormatterV87:
 
         if result['entry_ready']:
             print(f"\n{'✅'*10} ENTRY READY! {'✅'*10}")
+        
+        # ===== V100-STABLE: STABILITY ENGINE STATUS =====
+        if result.get('stability', {}).get('override'):
+            print(f"\n🛡️ STABILITY ENGINE: ACTIVE - Signal Locked")
+            print(f"   📌 {result['stability'].get('override_reason', '')}")
+        elif result.get('stability', {}).get('engine_active'):
+            print(f"\n✅ STABILITY ENGINE: PASSED - Signal Updated")
+            if result['stability'].get('allow_flip'):
+                print(f"   📌 {result['stability'].get('reason', 'Stable signal confirmed')}")
 
         # V88 WDI Metrics (TERTINGGI!)
         print(f"\n{'='*40}")
@@ -15371,6 +15855,18 @@ class BinanceAnalyzerV87:
         self.fvc_two_v100 = FlowVelocityCorrelationTwoPhaseV100()    # V100-FVC-TWO (Two-Phase Flow)
         
         self.resolver_v88_final = ConflictResolverV88_FINAL_REVOLUTION()  # V88 FINAL REVOLUTION Resolver ⭐ NEW!
+        
+        # ===== V100-STABLE: STABILITY ENGINE MODULES =====
+        self.sse_engine = SignalStabilityEngineV100()           # V100-SSE (Singleton)
+        self.vtf_validator = VolumeTimeFrameValidatorV100()     # V100-VTF
+        self.cpt_checker = CriticalPathThresholdV100()          # V100-CPT
+        self.stable_resolver = ConflictResolverV88_STABLE()     # New resolver with stability
+        
+        # Storage untuk last result (per symbol)
+        self.last_result = None
+        
+        # Storage untuk flow history (untuk VTF)
+        self.flow_history = deque(maxlen=10)
         
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
@@ -17458,6 +17954,54 @@ class BinanceAnalyzerV87:
                 "bias": rsc_short_covering_result.get('bias', 'NEUTRAL'),
                 "reason": rsc_short_covering_result.get('reason', '')
             }
+            
+            # ===== V100-STABLE: STABILITY ENGINE RESULTS =====
+            # Update flow history
+            self.flow_history.append(trades.get('ratio', 0))
+            
+            # Siapkan dictionary dengan semua data yang diperlukan untuk stability check
+            stability_data = {
+                'symbol': self.symbol,
+                'final_bias': final_decision.get('final_bias', final_decision.get('bias', 'NEUTRAL')),
+                'confidence': final_decision.get('confidence', 'LOW'),
+                'trade_flow': trades.get('ratio', 0),
+                'flow_history': list(self.flow_history),
+                'lim': lim_result if 'lim_result' in locals() else {},
+                'wmi_ratio': wmi_ratio,
+                'aggressive_ratio': trades.get('aggressive_ratio', 0),
+                'flush_probability': flush_probability if 'flush_probability' in locals() else 0,
+                'rsi6': rsi6,
+                'oi_delta_5m': oi_delta_5m,
+                'change_5m': change_5m,
+                'reason': final_decision.get('reason', ''),
+            }
+            
+            # TERAPKAN STABILITY ENGINE
+            stable_result = self.stable_resolver.resolve_with_stability(
+                current_result=stability_data,
+                last_result=self.last_result
+            )
+            
+            # Update last_result untuk iterasi berikutnya
+            self.last_result = stable_result.copy() if stable_result else None
+            
+            # Update final_decision dengan hasil dari stability engine
+            final_decision['final_bias'] = stable_result.get('final_bias', final_decision.get('final_bias', 'NEUTRAL'))
+            final_decision['confidence'] = stable_result.get('confidence', final_decision.get('confidence', 'LOW'))
+            final_decision['reason'] = stable_result.get('reason', final_decision.get('reason', ''))
+            final_decision['stability_override'] = stable_result.get('stability_override', False)
+            final_decision['override_reason'] = stable_result.get('override_reason', '')
+            final_decision['priority_level'] = stable_result.get('priority_level', final_decision.get('priority_level', 99))
+            
+            # Tambahkan informasi stability ke result
+            result["stability"] = {
+                "engine_active": True,
+                "override": stable_result.get('stability_override', False),
+                "override_reason": stable_result.get('override_reason', ''),
+                "priority_level": stable_result.get('priority_level', 99),
+                "allow_flip": stable_result.get('allow_flip', True),
+                "reason": stable_result.get('reason', '')
+            }
 
             return result
         except Exception as e:
@@ -17620,7 +18164,15 @@ if __name__ == "__main__":
             batch_mode_v87(symbols)
         elif sys.argv[1] == "--help":
             print("""
-🔥 BINANCE LIQUIDATION HUNTER V87 - GHOST IN THE SHELL EDITION
+🔥 BINANCE LIQUIDATION HUNTER V88+STABLE - ANTI-FLICKER EDITION
+
+🎯 V100-STABLE FEATURES:
+    • 5-Minute Minimum Signal Duration
+    • 30% Confidence Delta Required for Flip
+    • Volume Spike Filter (Ignore Fake Volume)
+    • Critical Path Auto-Flip (Imbalance >200x, WMI >98)
+    • Max 2 Flips per Hour (Anti-Flicker Protection)
+
 Usage:
 python script.py SYMBOL           # Analyze single symbol
 python script.py SYMBOL --loop     # Auto-refresh every 10s
@@ -17630,9 +18182,11 @@ python script.py --help            # Show this help
 
 Examples:
 python script.py BTCUSDT
-python script.py POWERUSDT --loop  # Test V87 SAD (Stealth Accumulation)
-python script.py ROBOUSDT --loop   # Test V87 ZAS (Zero Aggression Squeeze)
-python script.py TRIAUSDT --loop   # Test V86 ODF (Overbought Distribution)
+python script.py RIVERUSDT --loop      # Test anti-flicker pada RIVER
+python script.py LYNUSDT --loop        # Test zero aggression stability
+python script.py POWERUSDT --loop      # Test V87 SAD (Stealth Accumulation)
+python script.py ROBOUSDT --loop       # Test V87 ZAS (Zero Aggression Squeeze)
+python script.py TRIAUSDT --loop       # Test V86 ODF (Overbought Distribution)
 
 🎯 HIERARKI MUTLAK V87 (Filter Kriminalitas - GHOST IN THE SHELL EDITION):
     0. SAD (Stealth Accumulation Detector) - ANTI-POWER/ROBO GHOSTING (V87) ⭐ TERTINGGI!
@@ -17649,10 +18203,12 @@ python script.py TRIAUSDT --loop   # Test V86 ODF (Overbought Distribution)
     'Market maker selalu mengikuti path of least resistance. Jika seller tidak ada, satu market buy bisa gerakkan harga jauh.'
     'Agg = 0 ≠ weak momentum. Agg = 0 artinya no sellers left. Ini justru bullish precursor.'
 
-🧠 V100 - LIQUIDATION PAYOUT & PRE-FLUSH DETECTOR:
-    'MM memilih target berdasarkan REWARD, bukan jarak.'
-    'Jika payout long > short + short liq dekat = FLUSH DULU baru PUMP'
-    'Double sweep zone = JANGAN ENTRY!'
+🧠 V100-STABLE ENGINE:
+    'Signal harus stabil minimal 5 menit sebelum boleh flip.'
+    'Confidence delta minimal 30% untuk flip signal.'
+    'Volume spike < 1 menit = fake, diabaikan kecuali critical override.'
+    'Imbalance > 200x atau WMI > 98 = auto flip (ignore time limit).'
+    'Max 2 flips per jam untuk mencegah flicker.'
             """)
         else:
             main_v87()
