@@ -16214,8 +16214,9 @@ class BinanceAnalyzerV87:
                 'sat_v90': sat_result,
             })
             
+            # 🔴 PERBAIKAN 1: Gunakan 'final_bias' dari resolver_v88_final
             # Jika final resolver tidak memberikan keputusan kuat, fallback ke nuclear resolver
-            if final_decision['bias'] == "NEUTRAL" and final_decision.get('priority', 99) > 10:
+            if final_decision.get('final_bias', 'NEUTRAL') == "NEUTRAL" and final_decision.get('priority', 99) > 10:
                 final_decision = self.nuclear_resolver.resolve_with_nuclear_protection(
                     nos_res=nos_result,           # V100-NOS Nuclear Overbought Shield
                     pbv_res=pbv_result,           # V100-PBV Position Build Verification
@@ -16231,8 +16232,9 @@ class BinanceAnalyzerV87:
                     lfc_res=lfc_result            # V100-LFC
                 )
             
+            # 🔴 PERBAIKAN 2: Sekarang nuclear_resolver mengembalikan dict dengan key 'bias'
             # Jika nuclear resolver tidak memberikan keputusan kuat, fallback ke V88+ resolver
-            if final_decision['bias'] == "NEUTRAL" and final_decision.get('priority_level', 99) > 10:
+            if final_decision.get('bias', 'NEUTRAL') == "NEUTRAL" and final_decision.get('priority_level', 99) > 10:
                 final_decision = self.conflict_resolver_v88plus.resolve(
                     # PHAUSDT MODULES - PRIORITAS TERTINGGI!
                     apm_res=apm_result,           # V99-APM Absorption Priority Module ⭐
@@ -16283,9 +16285,18 @@ class BinanceAnalyzerV87:
                     lim_res=lim_result
                 )
 
-            entry_ready = self.state_mgr.update_entry(final_decision['bias'])
-            if entry_ready and self.state_mgr.can_enter(final_decision['bias'], market_phase['phase']):
-                self.state_mgr.execute_entry(final_decision['bias'], price, rsi6)
+            # 🔴 PERBAIKAN 3: Normalisasi final_decision untuk memiliki key 'bias'
+            # Pastikan final_decision memiliki key 'bias' untuk digunakan di bagian selanjutnya
+            if 'final_bias' in final_decision and 'bias' not in final_decision:
+                final_decision['bias'] = final_decision['final_bias']
+            
+            # 🔴 PERBAIKAN 4: Pastikan menggunakan key yang benar untuk entry_ready
+            # Gunakan 'bias' jika ada, fallback ke 'final_bias'
+            decision_bias = final_decision.get('bias', final_decision.get('final_bias', 'NEUTRAL'))
+            
+            entry_ready = self.state_mgr.update_entry(decision_bias)
+            if entry_ready and self.state_mgr.can_enter(decision_bias, market_phase['phase']):
+                self.state_mgr.execute_entry(decision_bias, price, rsi6)
                 entry_status = "✅ READY TO ENTRY!"
             else:
                 entry_status = f"⏳ WAITING ({len(self.state_mgr.entry_signals)}/{CONFIRM_DEFAULT})"
@@ -16877,9 +16888,9 @@ class BinanceAnalyzerV87:
                 "energy_type": energy['type'],
                 "mpe_bias": mpe_result['bias'],
                 # Final Decision from V88
-                "bias": final_decision['bias'],
-                "confidence": final_decision['confidence'],
-                "reason": final_decision['reason'],
+                "bias": final_decision.get('bias', final_decision.get('final_bias', 'NEUTRAL')),
+                "confidence": final_decision.get('confidence', 0),
+                "reason": final_decision.get('reason', ''),
                 "phase_v90": final_decision.get('phase', 'NORMAL'),
                 "entry_status": entry_status,
                 "hold_status": hold_status,
