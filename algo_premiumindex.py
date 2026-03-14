@@ -15602,6 +15602,16 @@ class BinanceAnalyzerV87:
                 flow=trades.get('ratio', 0)
             )
 
+            # V99-LFT: Liquidity Flush Trap (Placeholder - belum ada implementasi)
+            lft_result = {
+                "is_trap": False,
+                "bias": "NEUTRAL",
+                "confidence": "LOW",
+                "reason": "",
+                "trap_phase": "NONE",
+                "wait_seconds": 0
+            }
+
             # ================= V100: CRITICAL PATTERN DETECTORS =================
             # AFA - Absorption Flow Anomaly (BANANAS31 Pattern)
             afa_result = self.afa_detector.detect(
