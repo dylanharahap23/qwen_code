@@ -16719,6 +16719,25 @@ def api_mode_v87(symbol: str) -> str:
     return json.dumps({"error": f"Failed to analyze {symbol}"})
 
 
+# ================= POPULAR SYMBOLS =================
+# Daftar simbol populer untuk Binance Futures
+POPULAR_SYMBOLS = [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+    "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+    "MATICUSDT", "UNIUSDT", "LTCUSDT", "BCHUSDT", "ATOMUSDT",
+    "ETCUSDT", "FILUSDT", "NEARUSDT", "APTUSDT", "OPUSDT",
+    "ARBUSDT", "ICPUSDT", "ALGOUSDT", "VETUSDT", "THETAUSDT",
+    "TRXUSDT", "FTMUSDT", "SANDUSDT", "MANAUSDT", "AXSUSDT",
+    "EGLDUSDT", "AAVEUSDT", "SNXUSDT", "COMPUSDT", "MKRUSDT",
+    "YFIUSDT", "SUSHIUSDT", "CRVUSDT", "1INCHUSDT", "ENJUSDT",
+    "CHZUSDT", "BATUSDT", "ZILUSDT", "KAVAUSDT", "IOSTUSDT",
+    "IOTAUSDT", "XEMUSDT", "WAVESUSDT", "OMGUSDT", "LSKUSDT",
+    "RIVERUSDT", "POWERUSDT", "ROBOUSDT", "TRIAUSDT", "UAIUSDT",
+    "STABLEUSDT", "PHAUSDT", "KITEUSDT", "SIGNUSDT", "SIRENUSDT",
+    "HUMAUSDT", "OPNUSDT", "BARDUSDT", "LYNUSDT", "PIXELUSDT",
+    "PLAYUSDT", "ARIAUSDT", "BANANAS31USDT", "DEGOUSDT", "NAORISUSDT"
+]
+
 # ================= MAIN EXECUTION =================
 if __name__ == "__main__":
     import sys
@@ -16727,7 +16746,11 @@ if __name__ == "__main__":
             symbol = sys.argv[2] if len(sys.argv) > 2 else "BTCUSDT"
             print(api_mode_v87(symbol))
         elif sys.argv[1] == "--batch":
-            symbols = sys.argv[2:] if len(sys.argv) > 2 else POPULAR_SYMBOLS
+            # Jika ada argumen setelah --batch, gunakan sebagai daftar simbol
+            if len(sys.argv) > 2:
+                symbols = sys.argv[2:]
+            else:
+                symbols = POPULAR_SYMBOLS
             batch_mode_v87(symbols)
         elif sys.argv[1] == "--help":
             print("""
