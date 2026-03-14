@@ -2173,6 +2173,26 @@ SCT_CROWD_LEVEL_EXTREME = 70.0         # 70x rule - extreme crowd
 SCT_AGG_MAX = 0.1                      # Agg < 0.1 = seller exhaustion
 SCT_OI_DELTA_MIN = 0.0                 # OI Build = new positions entering
 
+# ================= V100 CONFIG - CRITICAL PATTERN DETECTORS =================
+
+# V100-AFA: ABSORPTION-FLOW ANOMALY DETECTOR (BANANAS31 Pattern)
+AFA_AGG_MIN = 2.0               # Aggregation > 2.0x = real whale activity
+AFA_FLOW_MAX = 0.3              # Flow < 0.3x = retail manipulation only
+AFA_RATIO_THRESHOLD = 5.0       # If Agg/Flow > 5.0x = ABSORPTION CONFIRMED
+
+# V97-ZVA: ZERO AGGRESSION VACUUM OVERRIDE (PLAYUSDT Pattern)
+ZVA_AGG_DEAD_MAX = 0.1          # Agg must be near zero for vacuum
+ZVA_FLOW_ACTIVE_MIN = 1.0       # But Flow must be active to confirm pressure
+ZVA_WMI_PROTECTION_MIN = -50     # WMI protection shield for downside
+
+# V99-RSC-PRIO: REAL SHORT COVERING PRIORITY MODULE (PIXELUSDT Pattern)
+RSC_PRIORITY_THRESHOLD = 0.0     # RSC Active Always Priority!
+RSC_OI_DROP_MIN = -0.5           # OI must drop to confirm covering
+
+# V100-LFC-ENHANCED: LIQUIDATION TARGET CORRELATION (Payout Flaw Fix)
+LFC_PAYOUT_RATIO_THRESHOLD = 1.5  # Payout ratio threshold
+LFC_WMI_MIN_THRESHOLD = 50.0      # Minimal WMI untuk validasi payout
+
 class SuperiorWDMVIP99:
     """
     🔥 V99: SUPERIOR WHALE DOMINANCE PROTOCOL - FIXED LOGIC
@@ -5366,6 +5386,515 @@ class NuclearConflictResolverV100:
             "priority_level": 99
         }
 
+
+# ================= V100-AFA: ABSORPTION-FLOW ANOMALY DETECTOR =================
+class AbsorptionFlowAnomalyDetectorV100:
+    """
+    🔥 V100-AFA: Deteksi 'Low Flow + High Agg = Whale Absorption'
+    
+    Kasus BANANAS31:
+        - Agg: 2.33x (TINGGI!)
+        - Flow: 0.18x (RENDAH!)
+        - Ratio: 2.33/0.18 = 12.94x >> 5.0 threshold
+        - Bot salah: SHORT (kira fake squeeze)
+        - Realita: PUMP +8% (Whale absorbing sells via limit orders)
+    
+    Prinsip:
+        Jika Agg > 2.0x dan Flow < 0.3x, ini BUKAN distribution – 
+        ini whale accumulation silent! Whale menyerap semua sell orders
+        via limit orders tanpa menciptakan volume (flow rendah).
+    """
+    
+    AFA_AGG_MIN = 2.0
+    AFA_FLOW_MAX = 0.3
+    AFA_RATIO_THRESHOLD = 5.0
+    
+    @staticmethod
+    def detect(agg_ratio: float, flow: float, oi_delta: float, price_change: float = None) -> Dict:
+        """
+        Args:
+            agg_ratio: Aggressive Ratio (>2.0 = high)
+            flow: Trade Flow (<0.3 = low)
+            oi_delta: OI Delta (untuk konteks)
+            price_change: Perubahan harga (optional)
+        
+        Returns:
+            Dict dengan is_absorption_trap, bias, reason
+        """
+        
+        if agg_ratio > AbsorptionFlowAnomalyDetectorV100.AFA_AGG_MIN:
+            if flow < AbsorptionFlowAnomalyDetectorV100.AFA_FLOW_MAX:
+                ratio = agg_ratio / max(flow, 0.1)
+                
+                if ratio > AbsorptionFlowAnomalyDetectorV100.AFA_RATIO_THRESHOLD:
+                    price_context = f" Price {price_change:+.2f}%" if price_change else ""
+                    
+                    return {
+                        "is_absorption_trap": True,
+                        "absorption_type": "LIMIT_ABSORPTION",
+                        "confidence": "ABSOLUTE",
+                        "bias": "LONG",
+                        "reason": f"AFA_ABSORPTION_DETECTED: Agg {agg_ratio:.2f}x (HIGH!) + "
+                                 f"Flow {flow:.2f}x (LOW!) = Ratio {ratio:.2f}x!{price_context} "
+                                 f"Whale absorbing ALL market sells via LIMIT orders! "
+                                 f"SQUEEZE IMMINENT!",
+                        "override_modules": ["FVC_FLOW_INSUFFICIENT", "LER_LOW_ENERGY_DOWNTREND"],
+                        "phase": "SILENT_ACCUMULATION"
+                    }
+        
+        return {"is_absorption_trap": False, "bias": "NEUTRAL"}
+
+
+# ================= V97-ZVA: ZERO AGGRESSION VACUUM OVERRIDE =================
+class ZeroAggressionVacuumOverrideV97:
+    """
+    🔥 V97-ZVA: Jika Agg=0 + Flow>1.0 = VACUUM SQUEEZE!
+    
+    Kasus PLAYUSDT:
+        - Agg: 0.00x (DEAD!)
+        - Flow: 1.70x (ACTIVE)
+        - WMI: -97.9x (Long Below 0.27%)
+        - Bot salah: SHORT (karena WMI negatif = target bawah)
+        - Realita: PUMP +8% (No sellers left, satu buy push price up!)
+    
+    Prinsip:
+        "Jika Aggression = 0 tapi ada Flow masuk, itu bukan exit – 
+        itu squeeze persiapan!"
+        
+        Orderbook kosong di atas, seller exhausted, satu market buy
+        bisa mendorong harga jauh.
+    """
+    
+    ZVA_AGG_DEAD_MAX = 0.1
+    ZVA_FLOW_ACTIVE_MIN = 1.0
+    ZVA_WMI_PROTECTION_MIN = -50
+    
+    @staticmethod
+    def detect(agg_ratio: float, flow: float, wmi_ratio: float, short_dist: float = None) -> Dict:
+        """
+        Args:
+            agg_ratio: Aggressive Ratio (<0.1 = dead)
+            flow: Trade Flow (>1.0 = active)
+            wmi_ratio: Whale Migration Index (< -50 = long protection)
+            short_dist: Jarak ke short liquidation (optional)
+        
+        Returns:
+            Dict dengan is_vacuum_squeeze, bias, reason
+        """
+        
+        if agg_ratio <= ZeroAggressionVacuumOverrideV97.ZVA_AGG_DEAD_MAX:
+            if flow > ZeroAggressionVacuumOverrideV97.ZVA_FLOW_ACTIVE_MIN:
+                # Jika WMI sangat negatif, long pool di bawah = proteksi tambahan
+                if wmi_ratio < ZeroAggressionVacuumOverrideV97.ZVA_WMI_PROTECTION_MIN:
+                    dist_context = f" Short Liq {short_dist:.2f}%" if short_dist else ""
+                    
+                    return {
+                        "is_vacuum_squeeze": True,
+                        "confidence": "ABSOLUTE",
+                        "bias": "LONG",
+                        "reason": f"ZVA_VACUUM_TRIGGER: Agg {agg_ratio:.2f}x (DEAD) + "
+                                 f"Flow {flow:.2f}x (ACTIVE) + "
+                                 f"WMI {wmi_ratio:.1f}x (PROTECTION)!{dist_context} "
+                                 f"No sellers left, one market buy pushes price UP!",
+                        "override_modules": ["WMI_VETO", "LPC_PAYOUT_OVERRIDE"],
+                        "phase": "VACUUM_SQUEEZE"
+                    }
+                
+                # WMI tidak terlalu ekstrim, tapi tetap vacuum
+                return {
+                    "is_vacuum_squeeze": True,
+                    "confidence": "HIGH",
+                    "bias": "LONG",
+                    "reason": f"ZVA_VACUUM: Agg {agg_ratio:.2f}x (DEAD) + Flow {flow:.2f}x (ACTIVE). "
+                             f"Seller exhaustion! Siap squeeze!",
+                    "phase": "VACUUM_SQUEEZE"
+                }
+        
+        return {"is_vacuum_squeeze": False, "bias": "NEUTRAL"}
+
+
+# ================= V99-RSC-PRIO: REAL SHORT COVERING PRIORITY MODULE =================
+class RealShortCoveringPriorityModuleV99:
+    """
+    🔥 V99-RSC-PRIORITAS: RSC Active + OI Down = IMMEDIATE LONG!
+    
+    Kasus PIXELUSDT:
+        - RSI: 83.8 (Overbought)
+        - OI: -1.44% (DOWN!)
+        - RSC: REAL_SHORT_COVERING (dari modul V96)
+        - Flow: 1.13x (MODERATE)
+        - Bot salah: SHORT (karena overbought + flow moderate)
+        - Realita: PUMP +8% (Shorts forced buying!)
+    
+    Prinsip:
+        "RSC (Real Short Covering) Aktif + OI Turun = Wajib LONG!
+        Jangan lawan force buying!"
+    """
+    
+    RSC_OI_DROP_MIN = -0.5
+    
+    @staticmethod
+    def detect(rsc_active: bool, oi_delta: float, flow: float = None, rsi: float = None) -> Dict:
+        """
+        Args:
+            rsc_active: Apakah RSC (Real Short Covering) aktif
+            oi_delta: OI Delta (< -0.5% = drop)
+            flow: Trade Flow (optional)
+            rsi: RSI (optional, untuk konteks)
+        
+        Returns:
+            Dict dengan is_real_covering, bias, reason
+        """
+        
+        if rsc_active and oi_delta < RealShortCoveringPriorityModuleV99.RSC_OI_DROP_MIN:
+            flow_context = f" + Flow {flow:.2f}x" if flow else ""
+            rsi_context = f" meskipun RSI {rsi:.1f}" if rsi and rsi > 80 else ""
+            
+            return {
+                "is_real_covering": True,
+                "confidence": "SUPREME",
+                "bias": "LONG",
+                "reason": f"RSC_REAL_COVERING_CONFIRMED: RSC Active + OI ↓{oi_delta:.2f}%{flow_context}{rsi_context}. "
+                         f"Shorts FORCE BUYING! NOT Distribution! SQUEEZE IMMINENT!",
+                "override_modules": ["FVC_FLOW_INSUFFICIENT", "WDI_VETO", "WMI_CHECK", "ZGH_CEILING"],
+                "phase": "SHORT_COVERING_RALLY"
+            }
+        
+        return {"is_real_covering": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-LFC-ENHANCED: LIQUIDATION TARGET CORRELATION =================
+class LiquidationFlushCoordinatorEnhancedV100:
+    """
+    🔥 V100-LFC-ENHANCED: Don't trust Payout Ratio Alone!
+    
+    Kasus BANANAS31, PLAYUSDT, PIXELUSDT:
+        - Payout ratio sering menipu karena mengabaikan kondisi
+          Agg/Flow, Vacuum, dan Short Covering.
+    
+    Prinsip:
+        Jangan pernah percaya Payout Ratio jika ada:
+        - Agg/Flow Anomaly (AFA)
+        - Zero Aggression Vacuum (ZVA)
+        - Real Short Covering (RSC)
+    """
+    
+    LFC_PAYOUT_RATIO_THRESHOLD = 1.5
+    LFC_WMI_MIN_THRESHOLD = 50.0
+    
+    @staticmethod
+    def validate_target(
+        lpc_result: Dict,           # Hasil dari Liquidity Path Calculator
+        afa_result: Dict,            # V100-AFA result
+        zva_result: Dict,            # V97-ZVA result
+        rsc_result: Dict,            # V99-RSC result
+        wmi_ratio: float,            # WMI ratio
+        short_dist: float = None,    # Jarak short liquidation
+        long_dist: float = None      # Jarak ke long liquidation
+    ) -> Dict:
+        """
+        Enhanced Validation Layer Before LFC Decision
+        
+        Args:
+            lpc_result: Dict dengan short_payout, long_payout
+            afa_result: Hasil dari AbsorptionFlowAnomalyDetector
+            zva_result: Hasil dari ZeroAggressionVacuumOverride
+            rsc_result: Hasil dari RealShortCoveringPriorityModule
+            wmi_ratio: Whale Migration Index
+            short_dist: Jarak ke short liquidation
+            long_dist: Jarak ke long liquidation
+        
+        Returns:
+            Dict dengan lfc_override, bias, reason, priority_level
+        """
+        
+        # Extract payout dari LPC (sesuaikan dengan struktur result Anda)
+        short_payout = lpc_result.get('short_payout', 0) if lpc_result else 0
+        long_payout = lpc_result.get('long_payout', 0) if lpc_result else 0
+        payout_ratio = short_payout / max(long_payout, 1.0) if long_payout > 0 else 0
+        
+        # ============================================
+        # CRITICAL: Check other overrides FIRST
+        # ============================================
+        
+        # 1. Real Short Covering - PRIORITAS TERTINGGI!
+        if rsc_result.get('is_real_covering'):
+            return {
+                "lfc_override": True,
+                "bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "reason": f"LFC_OVERRIDE_BY_RSC: {rsc_result['reason']}",
+                "priority_level": 0
+            }
+        
+        # 2. Zero Aggression Vacuum
+        if zva_result.get('is_vacuum_squeeze'):
+            return {
+                "lfc_override": True,
+                "bias": zva_result['bias'],
+                "confidence": zva_result.get('confidence', 'ABSOLUTE'),
+                "reason": f"LFC_OVERRIDE_BY_ZVA: {zva_result['reason']}",
+                "priority_level": 0
+            }
+        
+        # 3. Absorption/Flow Anomaly
+        if afa_result.get('is_absorption_trap'):
+            return {
+                "lfc_override": True,
+                "bias": afa_result['bias'],
+                "confidence": afa_result.get('confidence', 'ABSOLUTE'),
+                "reason": f"LFC_OVERRIDE_BY_AFA: {afa_result['reason']}",
+                "priority_level": 0
+            }
+        
+        # ============================================
+        # Only check Payout if no overrides present
+        # ============================================
+        
+        # Jika payout ratio > 1.5, favor short target
+        if payout_ratio > LiquidationFlushCoordinatorEnhancedV100.LFC_PAYOUT_RATIO_THRESHOLD:
+            target = "SHORT_LIQ" if wmi_ratio > 0 else "LONG_LIQ"
+            
+            # Validasi WMI: jika terlalu rendah, jangan percaya payout
+            if abs(wmi_ratio) < LiquidationFlushCoordinatorEnhancedV100.LFC_WMI_MIN_THRESHOLD:
+                return {
+                    "lfc_override": False,
+                    "bias": "NEUTRAL",
+                    "reason": f"LFC_REJECTED: WMI {wmi_ratio:.1f}x terlalu rendah. Trust other modules.",
+                    "priority_level": 1
+                }
+            
+            # Payout valid
+            return {
+                "lfc_override": True,
+                "bias": "LONG" if target == "SHORT_LIQ" else "SHORT",
+                "confidence": "HIGH",
+                "reason": f"LFC_VALIDATED: Payout ratio {payout_ratio:.2f}x favors {target} with WMI {wmi_ratio:.1f}x.",
+                "priority_level": 2
+            }
+        
+        return {"lfc_override": False, "bias": "NEUTRAL", "reason": "No strong signal", "priority_level": 3}
+
+
+# ================= V100: FINAL CONFLICT RESOLVER - CRIMINAL PATTERNS =================
+class ConflictResolverV88_PLUS_FINAL:
+    """
+    🔥 FINAL PRIORITAS – COMBAT ALL CRIMINAL PATTERNS
+    
+    URUTAN PRIORITAS MUTLAK:
+    
+    LEVEL 0: CRITICAL PATTERNS (OVERRIDE ALL OTHERS)
+        0. V99-RSC-PRIORITAS (Real Short Covering) ← CRITICAL!
+        1. V97-ZVA (Zero Aggression Vacuum)        ← CRITICAL!
+        2. V100-AFA (Absorption/Flow Anomaly)      ← NEW!
+        3. V100-NOS (Nuclear Overbought Shield)    ← Existing
+        4. V100-LFC-ENHANCED (Payout Validator)    ← NEW!
+    
+    LEVEL 1: CORE STRATEGIC MODULES
+        5. V99-WMI_VETO
+        6. V90-SAT (Saturation)
+        7. V89-WSC (Singularity Check)
+        8. V99-SCT (Short Crowd Trap)
+    
+    LEVEL 2: TIMING & CONFIRMATION
+        9. V87-SAD (Stealth Accumulation)
+        10. V87-ZAS (Zero Aggression Squeeze)
+        11. V87-LBD (Liquidity Bait Detection)
+        12. V99-PSV (Pre-Squeeze Flush Validator)
+        13. V99-LFT (Liquidity Flush Trap)
+    """
+    
+    @staticmethod
+    def resolve_all_hft_signals(
+        # LEVEL 0: CRITICAL PATTERNS
+        rsc_res: Dict,           # V99-RSC-PRIORITAS
+        zva_res: Dict,            # V97-ZVA
+        afa_res: Dict,            # V100-AFA
+        nos_res: Dict,            # V100-NOS (Nuclear Overbought)
+        lfc_enhanced_res: Dict,   # V100-LFC-ENHANCED
+        
+        # LEVEL 1: CORE STRATEGIC
+        wmi_veto_res: Dict,
+        sat_res: Dict,
+        wsc_res: Dict,
+        sct_res: Dict,
+        
+        # LEVEL 2: TIMING & CONFIRMATION
+        sad_res: Dict,
+        zas_res: Dict,
+        lbd_res: Dict,
+        psv_res: Dict,
+        lft_res: Dict,
+        
+        # Fallback modules
+        **kwargs
+    ) -> Dict:
+        
+        # ============================================
+        # LEVEL 0: CRITICAL PATTERNS (OVERRIDE ALL)
+        # ============================================
+        
+        # 1. Real Short Covering - PRIORITAS TERTINGGI!
+        if rsc_res.get('is_real_covering'):
+            return {
+                "bias": rsc_res['bias'],
+                "confidence": rsc_res.get('confidence', 'SUPREME'),
+                "reason": f"V99-RSC_OVERRIDE: {rsc_res['reason']}",
+                "phase": "FORCE_BUYING_CONFIRMED",
+                "priority": 0
+            }
+        
+        # 2. Zero Aggression Vacuum
+        if zva_res.get('is_vacuum_squeeze'):
+            return {
+                "bias": zva_res['bias'],
+                "confidence": zva_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V97-ZVA_OVERRIDE: {zva_res['reason']}",
+                "phase": "VACUUM_SQUEEZE_IMMINENT",
+                "priority": 1
+            }
+        
+        # 3. Absorption/Flow Anomaly
+        if afa_res.get('is_absorption_trap'):
+            return {
+                "bias": afa_res['bias'],
+                "confidence": afa_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-AFA_OVERRIDE: {afa_res['reason']}",
+                "phase": "ABSORPTION_CONFIRMED",
+                "priority": 2
+            }
+        
+        # 4. Nuclear Overbought Shield
+        if nos_res.get('is_nuclear'):
+            return {
+                "bias": nos_res['bias'],
+                "confidence": nos_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-NOS_OVERRIDE: {nos_res['reason']}",
+                "phase": "NUCLEAR_DISTRIBUTION_TOP",
+                "priority": 3
+            }
+        
+        # 5. LFC Enhanced Validation
+        if lfc_enhanced_res.get('lfc_override'):
+            return {
+                "bias": lfc_enhanced_res['bias'],
+                "confidence": lfc_enhanced_res.get('confidence', 'HIGH'),
+                "reason": f"V100-LFC-OVERRIDE: {lfc_enhanced_res['reason']}",
+                "phase": "LIQUIDATION_TARGET_VALIDATED",
+                "priority": lfc_enhanced_res.get('priority_level', 4)
+            }
+        
+        # ============================================
+        # LEVEL 1: CORE STRATEGIC MODULES
+        # ============================================
+        
+        # 6. WMI Veto
+        if wmi_veto_res.get('is_veto'):
+            return {
+                "bias": wmi_veto_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V99_WMI_VETO: {wmi_veto_res['reason']}",
+                "phase": wmi_veto_res.get('phase', 'WHALE_SINGULARITY_OVERRIDE'),
+                "priority": 5
+            }
+        
+        # 7. Liquidity Saturation
+        if sat_res.get('active'):
+            return {
+                "bias": sat_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V90_SAT: {sat_res['reason']}",
+                "phase": "SATURATION_SQUEEZE",
+                "priority": 6
+            }
+        
+        # 8. Whale Singularity
+        if wsc_res.get('is_active'):
+            return {
+                "bias": wsc_res['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": f"V89_WSC: {wsc_res['reason']}",
+                "phase": "SINGULARITY_EXECUTION",
+                "priority": 7
+            }
+        
+        # 9. Short Crowd Trap
+        if sct_res.get('is_trap'):
+            return {
+                "bias": sct_res['bias'],
+                "confidence": sct_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99_SCT: {sct_res['reason']}",
+                "phase": sct_res.get('phase', 'CROWDED_SQUEEZE'),
+                "priority": 8
+            }
+        
+        # ============================================
+        # LEVEL 2: TIMING & CONFIRMATION
+        # ============================================
+        
+        # 10. Stealth Accumulation
+        if sad_res.get('is_active'):
+            return {
+                "bias": sad_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V87_SAD: {sad_res['reason']}",
+                "phase": "STEALTH_PUMP_LOADING",
+                "priority": 9
+            }
+        
+        # 11. Zero Aggression Squeeze
+        if zas_res.get('is_squeeze'):
+            return {
+                "bias": zas_res['bias'],
+                "confidence": "SUPREME",
+                "reason": f"V87_ZAS: {zas_res['reason']}",
+                "phase": "LIQUIDITY_FREEZE",
+                "priority": 10
+            }
+        
+        # 12. Liquidity Bait
+        if lbd_res.get('is_bait'):
+            return {
+                "bias": "NEUTRAL",
+                "confidence": "HIGH",
+                "reason": f"V87_LBD: {lbd_res['reason']}",
+                "phase": "BAIT_ZONE",
+                "warning": "DO NOT ENTRY - WAIT FOR REAL SWEEP",
+                "priority": 11
+            }
+        
+        # 13. Pre-Squeeze Flush Validator
+        if psv_res.get('is_trap'):
+            return {
+                "bias": "NEUTRAL",
+                "confidence": "ABSOLUTE",
+                "reason": f"V99_PSV: {psv_res['reason']}",
+                "phase": "WASH_TRADE_DETECTED",
+                "wait_minutes": psv_res.get('wait_minutes', 240),
+                "entry_signal": psv_res.get('entry_signal', 'WAIT'),
+                "priority": 12
+            }
+        
+        # 14. Liquidity Flush Trap
+        if lft_res.get('is_trap'):
+            return {
+                "bias": lft_res['bias'],
+                "confidence": lft_res.get('confidence', 'SUPREME'),
+                "reason": f"V99_LFT: {lft_res['reason']}",
+                "phase": lft_res.get('trap_phase', 'PRE_FLUSH_WAIT'),
+                "warning": "JANGAN ENTRY LANGSUNG! Tunggu setelah flush.",
+                "wait_seconds": lft_res.get('wait_seconds', 300),
+                "priority": 13
+            }
+        
+        # Fallback
+        return {
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No critical pattern detected.",
+            "phase": "NEUTRAL",
+            "priority": 99
+        }
 
 # ================= V88PLUS: CONFLICT RESOLVER WITH PHAUSDT PATCH =================
 class ConflictResolverV88Plus:
@@ -14049,6 +14578,13 @@ class BinanceAnalyzerV87:
         self.tlf_detector = TargetLiquidationFocusV100()           # V100-TLF (Target Liquidation Focus)
         self.nuclear_resolver = NuclearConflictResolverV100()       # V100 Nuclear Resolver
         
+        # ===== V100: CRITICAL PATTERN DETECTORS (BARU!) =====
+        self.afa_detector = AbsorptionFlowAnomalyDetectorV100()      # V100-AFA (BANANAS31)
+        self.zva_detector = ZeroAggressionVacuumOverrideV97()        # V97-ZVA (PLAYUSDT)
+        self.rsc_priority = RealShortCoveringPriorityModuleV99()     # V99-RSC-PRIO (PIXELUSDT)
+        self.lfc_enhanced = LiquidationFlushCoordinatorEnhancedV100() # V100-LFC-ENHANCED
+        self.final_resolver = ConflictResolverV88_PLUS_FINAL()       # Final resolver
+        
         # Tetap pertahankan resolver lama untuk kompatibilitas (opsional)
         self.conflict_resolver_v82 = ConflictResolverV82()
         
@@ -15066,6 +15602,52 @@ class BinanceAnalyzerV87:
                 flow=trades.get('ratio', 0)
             )
 
+            # ================= V100: CRITICAL PATTERN DETECTORS =================
+            # AFA - Absorption Flow Anomaly (BANANAS31 Pattern)
+            afa_result = self.afa_detector.detect(
+                agg_ratio=trades.get('aggressive_ratio', 0),
+                flow=trades.get('ratio', 0),
+                oi_delta=oi_delta_5m,
+                price_change=change_5m
+            )
+
+            # ZVA - Zero Aggression Vacuum Override (PLAYUSDT Pattern)
+            zva_result = self.zva_detector.detect(
+                agg_ratio=trades.get('aggressive_ratio', 0),
+                flow=trades.get('ratio', 0),
+                wmi_ratio=wmi_ratio,
+                short_dist=liq.get('short_dist', 0)
+            )
+
+            # RSC Priority - Real Short Covering Priority (PIXELUSDT Pattern)
+            rsc_active = False
+            if hasattr(self, 'rsc') and self.rsc is not None:
+                if hasattr(self.rsc, 'is_valid'):
+                    rsc_active = self.rsc.is_valid
+
+            rsc_priority_result = self.rsc_priority.detect(
+                rsc_active=rsc_active,
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 0),
+                rsi=rsi6
+            )
+
+            # LFC Enhanced - Liquidation Target Correlation
+            lpc_result_enhanced = {
+                'short_payout': liq.get('short_vol', 0) / max(liq.get('short_dist', 0.01), 0.01),
+                'long_payout': liq.get('long_vol', 0) / max(liq.get('long_dist', 0.01), 0.01)
+            }
+
+            lfc_enhanced_result = self.lfc_enhanced.validate_target(
+                lpc_result=lpc_result_enhanced,
+                afa_result=afa_result,
+                zva_result=zva_result,
+                rsc_result=rsc_priority_result,
+                wmi_ratio=wmi_ratio,
+                short_dist=liq.get('short_dist', 0),
+                long_dist=liq.get('long_dist', 0)
+            )
+
             # ================= PHAUSDT PATCH MODULES =================
             # V99-APM: Absorption Priority Module
             apm_result = self.apm_v99.detect(
@@ -15093,21 +15675,45 @@ class BinanceAnalyzerV87:
                 lpc_result=lpc_result  # dari perhitungan V100 sebelumnya
             )
             
-            # Gunakan Nuclear Conflict Resolver untuk prioritas tertinggi (V100)
-            final_decision = self.nuclear_resolver.resolve_with_nuclear_protection(
-                nos_res=nos_result,           # V100-NOS Nuclear Overbought Shield
-                pbv_res=pbv_result,           # V100-PBV Position Build Verification
-                fvc_res=fvc_result,           # V100-FVC Flow Volume Correlation
-                tlf_res=tlf_result,           # V100-TLF Target Liquidation Focus
-                sdd_res=sdd_result,           # V97-SDD Silent Distribution Detector
-                sct_res=sct_result,           # V99-SCT Short Crowd Trap
-                wmi_veto_res=wmi_veto_result, # V99-WMI Veto
-                lim_res=lim_result,           # V99-LIM Liquidity Imbalance
-                lft_res={},                   # V99-LFT placeholder
-                psv_res={},                   # V99-PSV placeholder
-                fvt_res={},                   # V99-FVT placeholder
-                lfc_res=lfc_result            # V100-LFC
+            # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
+            final_decision = self.final_resolver.resolve_all_hft_signals(
+                # LEVEL 0: CRITICAL PATTERNS
+                rsc_res=rsc_priority_result,
+                zva_res=zva_result,
+                afa_res=afa_result,
+                nos_res=nos_result,
+                lfc_enhanced_res=lfc_enhanced_result,
+                
+                # LEVEL 1: CORE STRATEGIC
+                wmi_veto_res=wmi_veto_result,
+                sat_res=sat_result,
+                wsc_res=wsc_result,
+                sct_res=sct_result,
+                
+                # LEVEL 2: TIMING & CONFIRMATION
+                sad_res=sad_result,
+                zas_res=zas_result,
+                lbd_res=lbd_result,
+                psv_res=psv_result,
+                lft_res=lft_result
             )
+            
+            # Jika final resolver tidak memberikan keputusan kuat, fallback ke nuclear resolver
+            if final_decision['bias'] == "NEUTRAL" and final_decision.get('priority', 99) > 10:
+                final_decision = self.nuclear_resolver.resolve_with_nuclear_protection(
+                    nos_res=nos_result,           # V100-NOS Nuclear Overbought Shield
+                    pbv_res=pbv_result,           # V100-PBV Position Build Verification
+                    fvc_res=fvc_result,           # V100-FVC Flow Volume Correlation
+                    tlf_res=tlf_result,           # V100-TLF Target Liquidation Focus
+                    sdd_res=sdd_result,           # V97-SDD Silent Distribution Detector
+                    sct_res=sct_result,           # V99-SCT Short Crowd Trap
+                    wmi_veto_res=wmi_veto_result, # V99-WMI Veto
+                    lim_res=lim_result,           # V99-LIM Liquidity Imbalance
+                    lft_res={},                   # V99-LFT placeholder
+                    psv_res={},                   # V99-PSV placeholder
+                    fvt_res={},                   # V99-FVT placeholder
+                    lfc_res=lfc_result            # V100-LFC
+                )
             
             # Jika nuclear resolver tidak memberikan keputusan kuat, fallback ke V88+ resolver
             if final_decision['bias'] == "NEUTRAL" and final_decision.get('priority_level', 99) > 10:
@@ -15329,7 +15935,33 @@ class BinanceAnalyzerV87:
                     "predicted_move": tlf_result.get('predicted_move', 'UNKNOWN'),
                     "confidence": tlf_result.get('confidence', 'LOW')
                 },
+                # V100: CRITICAL PATTERN DETECTORS RESULTS
+                "afa": {
+                    "is_absorption_trap": afa_result.get('is_absorption_trap', False),
+                    "bias": afa_result.get('bias', 'NEUTRAL'),
+                    "reason": afa_result.get('reason', ''),
+                    "phase": afa_result.get('phase', 'NORMAL')
+                },
+                "zva": {
+                    "is_vacuum_squeeze": zva_result.get('is_vacuum_squeeze', False),
+                    "bias": zva_result.get('bias', 'NEUTRAL'),
+                    "reason": zva_result.get('reason', ''),
+                    "phase": zva_result.get('phase', 'NORMAL')
+                },
+                "rsc_priority": {
+                    "is_real_covering": rsc_priority_result.get('is_real_covering', False),
+                    "bias": rsc_priority_result.get('bias', 'NEUTRAL'),
+                    "reason": rsc_priority_result.get('reason', ''),
+                    "phase": rsc_priority_result.get('phase', 'NORMAL')
+                },
+                "lfc_enhanced": {
+                    "lfc_override": lfc_enhanced_result.get('lfc_override', False),
+                    "bias": lfc_enhanced_result.get('bias', 'NEUTRAL'),
+                    "reason": lfc_enhanced_result.get('reason', ''),
+                    "priority_level": lfc_enhanced_result.get('priority_level', 99)
+                },
                 "priority_level": final_decision.get('priority_level', 99),
+                "priority": final_decision.get('priority', 99),
                 "sad": {
                     "is_active": sad_result.get('is_active', False),
                     "bias": sad_result.get('bias', 'NEUTRAL'),
