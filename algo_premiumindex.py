@@ -376,6 +376,23 @@ IER_PRIORITY_CONFIDENCE_MIN = 0.7        # Minimum confidence level (tidak digun
 IER_PRIORITY_DURATION_THRESHOLD = 1      # Min 1 period active
 IER_PRIORITY_FLOW_OI_MISMATCH = True     # Check Flow/OI mismatch
 
+# ================= V100-DKT: DEADSTICK FALLING KNIGHT CONFIG =================
+DKT_RSI_FALLING_KNIFE_MAX = 20.0        # RSI < 20 = Danger Zone
+DKT_FLOW_ABSORPTION_MIN = 2.0           # Flow > 2.0x needed for safe bottom
+DKT_AGG_BUYER_ACTIVE_MIN = 1.0          # Agg > 1.0 means real buyers exist
+DKT_OI_BUILD_DISTRIBUTION_THRESHOLD = 2.0   # OI ↑ + Price ↓ = Distribution!
+
+# ================= V100-OBD: OI BUILD DISTRIBUTION VALIDATOR CONFIG =================
+OBD_SHORT_BUILD_CONFIDENCE = True        # (flag saja)
+
+# ================= V100-AEF: AGGRESSION EXTINCTION FILTER CONFIG =================
+AEF_MARKET_DEATH_FLOW = 0.1              # Flow < 0.1 = Market freeze
+AEF_MARKET_DEATH_AGG = 0.05              # Agg < 0.05 = Zero participants
+AEF_NO_DIRECTION_PRIORITY = True         # Ketika market mati, tidak ada sinyal valid
+
+# ================= V100-LPF-ENHANCED: LIQUIDATION PRE-FLUSH ENHANCED CONFIG =================
+LPF_ENHANCED_WAIT_SECONDS = 300          # 5 menit default wait
+
 # ================= V100-LGT: LIQUIDATION GRAVITY TRAP DETECTOR =================
 class LiquidationGravityTrapDetectorV100:
     """🔥 V100-LGT: LIQUIDATION GRAVITY TRAP - ANTI-COSUSDT TRAP
@@ -759,6 +776,232 @@ class InstitutionalExitPriorityV100:
                     }
         
         return {"ier_override_active": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-DKT: DEADSTICK FALLING KNIGHT DETECTOR =================
+class DeadstickFallingKnightDetectorV100:
+    """🔥 V100-DKT: DEADSTICK FALLING KNIGHT DETECTOR - ANTI-REVERSAL TRAP
+    
+    Prinsip HFT Binance:
+    "Jika RSI < 20 tapi Flow < 1.0x + Agg = 0.0, 
+    itu bukan exhaustion, tapi 'Death Stick' - pasar siap crash lebih jauh!"
+    
+    Kaedah:
+    • Jangan pernah entry LONG saat RSI < 20 tanpa Flow konfirmasi whale buying
+    • RSI rendah + OI naik + Price turun = Short building (DONT LONG!)
+    • RSI rendah + Flow tinggi + Agg tinggi = Real bottom
+    """
+    
+    DKT_RSI_FALLING_KNIFE_MAX = 20.0
+    DKT_FLOW_ABSORPTION_MIN = 2.0
+    DKT_AGG_BUYER_ACTIVE_MIN = 1.0
+    DKT_OI_BUILD_DISTRIBUTION_THRESHOLD = 2.0
+    
+    @staticmethod
+    def detect(
+        rsi6: float,
+        trade_flow: float,
+        aggressive_ratio: float,
+        oi_delta_5m: float,
+        price_change: float,
+        obv_value: float
+    ) -> Dict:
+        """
+        LYNUSDT Case Validation:
+        - RSI: 17.5 (< 20) ✅ Triggered
+        - Flow: 0.03x (< 1.0, way below 2.0 minimum) ✅ Danger!
+        - Agg: 0.00x (= Zero buyers) ✅ Fatal!
+        - OI: +5.35% (> 0 AND increasing) ✅ Short building!
+        - Price: -1.97% ✅ Continuation trend
+        - OBV: -24.4M (NEGATIVE) ✅ Money outflow!
+        """
+        
+        danger_signals = []
+        risk_score = 0
+        
+        # CHECK 1: RSI Oversold Without Volume Support
+        if rsi6 <= DeadstickFallingKnightDetectorV100.DKT_RSI_FALLING_KNIFE_MAX:
+            danger_signals.append("RSI_OVERSOLD")
+            risk_score += 30
+            
+            if trade_flow <= DeadstickFallingKnightDetectorV100.DKT_FLOW_ABSORPTION_MIN / 5:
+                danger_signals.append("NO_WHALE_ABSORPTION")
+                risk_score += 35
+                
+        # CHECK 2: Zero Aggression Buyers
+        if aggressive_ratio <= DeadstickFallingKnightDetectorV100.DKT_AGG_BUYER_ACTIVE_MIN * 0.5:
+            danger_signals.append("ZERO_BUYER_AGGRESSION")
+            risk_score += 25
+            
+        # CHECK 3: OI Building During Drop
+        if oi_delta_5m >= DeadstickFallingKnightDetectorV100.DKT_OI_BUILD_DISTRIBUTION_THRESHOLD:
+            if price_change < 0:
+                danger_signals.append("OI_BUILD_DURING_DROP")
+                risk_score += 30
+                
+        # CHECK 4: OBV Divergence
+        if obv_value < 0:
+            danger_signals.append("OBV_NEGATIVE_DIVERGENCE")
+            risk_score += 20
+            
+        # DECISION LOGIC
+        if len(danger_signals) >= 3 and risk_score >= 80:
+            return {
+                "is_falling_knife_trap": True,
+                "trap_type": "DEADSTICK_CONTINUATION",
+                "confidence": "ABSOLUTE",
+                "bias": "SHORT",
+                "reason": f"DKT_DEADSTICK_TRAP DETECTED: RSI {rsi6:.1f} (OVERSOLD!) + "
+                         f"Flow {trade_flow:.2f}x (NO ABSORPTION!) + "
+                         f"Agg {aggressive_ratio:.2f}x (ZERO BUYERS!) + "
+                         f"OI ↑{oi_delta_5m:+.2f}% (SHORT BUILDING!) + "
+                         f"OBV ↓{abs(obv_value):,.0f} (MONEY OUTFLOW!). "
+                         f"Ini BUKAN REVERSAL SETUP, ini FALLING KNIFE ASLI! "
+                         f"MM lanjutkan menghajar retail longs di bawah!",
+                "override_modules": ["ZAS_SQUEEZE", "RSC_COVERING", "LIM_CROWDED_LONG"],
+                "priority_level": 0,
+                "predicted_dump_distance": f"-{risk_score//10:.1f}%",
+                "wait_condition": "FLOW_RECOVERY"
+            }
+        
+        return {"is_falling_knife_trap": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-OBD: OI BUILD DISTRIBUTION VALIDATOR =================
+class OIBuildDistributionValidatorV100:
+    """🔥 V100-OBD: OI BUILD DISTRIBUTION VALIDATOR - DISTINGUISH SHORT vs COVERAGE
+    
+    Prinsip Penting:
+    • OI ↑ + Price ↓ = Short Building (Bearish!)
+    • OI ↓ + Price ↑ = Short Covering (Bullish!)
+    • OI ↑ + Price ↑ = Long Building (Neutral/Bullish)
+    • OI ↓ + Price ↓ = Long Liquidation (Bearish)
+    """
+    
+    OBD_SHORT_BUILD_CONFIDENCE = True
+    
+    @staticmethod
+    def validate(
+        oi_delta: float,
+        price_change: float,
+        flow: float,
+        agg_ratio: float
+    ) -> Dict:
+        """
+        LYNUSDT Case:
+        - OI Delta: +5.35% (BUILDING)
+        - Price Change: -1.97% (DROPPING)
+        - Flow: 0.03x (NO ACTIVITY)
+        - Agg: 0.00x (NO BUYERS)
+        """
+        
+        if oi_delta > 0 and price_change < 0:
+            # OI NAIK + Harga TURUN = Short Building!
+            if flow < 1.0 and agg_ratio < 1.0:
+                # Plus no buy activity = Institutional SHORTING via limits!
+                return {
+                    "is_short_building": True,
+                    "distribution_type": "LIMIT_ORDER_SHORTING",
+                    "confidence": "SUPREME",
+                    "bias": "SHORT",
+                    "reason": f"OBD_SHORT_BUILD_CONFIRMED: OI ↑{oi_delta:+.2f}% + "
+                             f"Price ↓{price_change:+.2f}% = WHALES BUILDING SHORTS VIA LIMIT ORDERS! "
+                             f"Flow {flow:.2f}x (No retail cover). "
+                             f"JANGAN LONG SETAAP SAMA SEKALI! Ini DUMP LANJUTAN!",
+                    "override_modules": ["LIM_CROWDED_LONG", "PLR_SQUEEZE", "LGD_GAP_UP"],
+                    "priority_level": 0
+                }
+        
+        elif oi_delta < 0 and price_change > 0:
+            # OI Turun + Price Naik = Short Covering (Good for Longs!)
+            if flow > 1.0:
+                return {
+                    "is_short_covering": True,
+                    "confidence": "HIGH",
+                    "bias": "LONG",
+                    "reason": f"OBD_SHORT_COVERING: OI ↓{abs(oi_delta):.2f}% + "
+                             f"Price ↑{price_change:+.2f}% = Forced short covering rally!",
+                    "priority_level": 1
+                }
+        
+        return {"is_short_building": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-AEF: AGGRESSION EXTINCTION FILTER =================
+class AggressionExtinctionFilterV100:
+    """🔥 V100-AEF: AGGRESSION EXTINCTION FILTER - MARKET DEATH WARNING
+    
+    Jika Aggression = 0 + Flow = 0 + RSI Ekstrem = 
+    Itu bukan opportunity, itu KEMATIAN PASAR (no one willing to participate)
+    --> MM bebas menggerakkan harga kemana saja untuk sweep liquidity
+    """
+    
+    AEF_MARKET_DEATH_FLOW = 0.1
+    AEF_MARKET_DEATH_AGG = 0.05
+    AEF_NO_DIRECTION_PRIORITY = True
+    
+    @staticmethod
+    def detect(trade_flow: float, aggressive_ratio: float) -> Dict:
+        """
+        LYNUSDT Case:
+        - Flow: 0.03x (< 0.1)
+        - Agg: 0.00x (= 0 participants)
+        """
+        
+        if trade_flow <= AggressionExtinctionFilterV100.AEF_MARKET_DEATH_FLOW and \
+           aggressive_ratio <= AggressionExtinctionFilterV100.AEF_MARKET_DEATH_AGG:
+            
+            return {
+                "is_market_death": True,
+                "market_state": "FREEZE_WITH_NO_PARTICIPANTS",
+                "confidence": "HIGH",
+                "bias": "NEUTRAL",  # Cannot determine direction when market is dead!
+                "reason": f"AEF_MARKET_DEATH: Flow {trade_flow:.2f}x + Agg {aggressive_ratio:.2f}x = "
+                         f"PASAR MATI! Tidak ada buyer/seller aktif! "
+                         f"Harga TIDAK RESPONSIVE TO INDICATORS! "
+                         f"MM bisa hajar ke arah LIQUIDASI terdekat kapan saja! "
+                         f"TIDAK ADA SIGNAL RELIABLE saat market mati!",
+                "action": "WAIT_FOR_VOLUME_SPIKE",
+                "recommended_wait_minutes": 15
+            }
+        
+        return {"is_market_death": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-LPF-ENHANCED: LIQUIDATION PRE-FLUSH ENHANCED =================
+class LiquidationPreFlushEnhancedV100:
+    """🔥 V100-LPF-ENHANCED: LIQUIDATION PRE-FLUSH ENHANCED - PRIORITY OVERRIDE
+    
+    Jika LPF detected = WAJIB TUNGGU FLUSH SELESAI SEBELUM ENTRY ANY DIRECTION
+    """
+    
+    LPF_ENHANCED_WAIT_SECONDS = 300
+    
+    @staticmethod
+    def check_flush_conflict(lp_res: Dict, other_signals: Dict) -> Dict:
+        """
+        LYNUSDT Case:
+        - LPF: flush_detected = true
+        - Expected range: -3.0% to -7.0%
+        - Confidence: HIGH
+        """
+        
+        if lp_res.get('flush_detected', False):
+            confidence = lp_res.get('confidence', 'LOW')
+            expected_range = lp_res.get('expected_flush_range', '')
+            
+            if confidence == 'HIGH':
+                return {
+                    "lpf_override_active": True,
+                    "bias": "WAIT",
+                    "confidence": "SUPREME",
+                    "reason": f"LPF_PRE_FLUSH_WARNING: Flush {expected_range} detected! "
+                             f"DO NOT ENTER until pre-flush completes!",
+                    "wait_seconds": LiquidationPreFlushEnhancedV100.LPF_ENHANCED_WAIT_SECONDS,
+                    "priority_level": 0  # HIGHEST PRIORITY!
+                }
+        
+        return {"lpf_override_active": False, "bias": "NEUTRAL"}
 
 
 # ================= V100-ZAO: ZERO AGGRESSION OVERRIDE MODULE =================
@@ -7850,6 +8093,169 @@ class ConflictResolverV88_PLUS_FINAL_XAN_FIXED:
             "reason": "No override signals detected.",
             "phase": "NORMAL",
             "priority_level": 9
+        }
+
+
+# ================= V88_PLUS_FINAL_LYNUS_FIXED: UPDATED CONFLICT RESOLVER =================
+class ConflictResolverV88_PLUS_FINAL_LYNUS_FIXED:
+    """🔥 FINAL PRIORITAS – ANTI-FALLING KNIFE TRAPS (LYNUSDT PATCH)"""
+    
+    @staticmethod
+    def resolve_all_hft_signals_final(results):
+        """
+        URUTAN PRIORITAS MUTLAK:
+        ┌─────────────────────────────────────────────────────┐
+        │  LEVEL -1: MARKET CONDITION FIRST (BEFORE ALL ELSE)   │
+        ├─────────────────────────────────────────────────────┤
+        │  -1. V100-AEF (Aggression Extinction Filter)         │ ← NEW!
+        │  -1. V100-LPF-ENHANCED (Pre-Flush Priority)          │
+        ├─────────────────────────────────────────────────────┤
+        │  0. V100-DKT (Deadstick Falling Knight)              │ ← CRITICAL!
+        │  1. V100-OBD (OI Build Distribution Validator)       │ ← CRITICAL!
+        │  2. V100-GOD (Gravity Overdrive Module)              │
+        │  3. V100-VOD (Volume-OI Divergence)                  │
+        │  4. V100-LGT (Liquidation Gravity Trap)              │
+        │  5. V100-RST (RSI Threshold)                         │
+        │  6. V100-ZAO (Zero Aggression Override)              │
+        │  7. V99-SCT-AF (Extreme Imbalance)                   │
+        │  8. V99-WMI_VETO                                     │
+        └─────────────────────────────────────────────────────┘
+        """
+        
+        # STEP 1: Check Market Death (AEF) - Level -1
+        aef_res = results.get('aef_v100', {})
+        if aef_res.get('is_market_death'):
+            return {
+                "final_bias": "NEUTRAL",
+                "confidence": aef_res.get('confidence', 'HIGH'),
+                "reason": f"V100-AEF_OVERRIDE: {aef_res.get('reason', '')}",
+                "phase": "MARKET_DEADLOCK",
+                "priority_level": -1,
+                "entry_forbidden": True,
+                "wait_minutes": aef_res.get('recommended_wait_minutes', 15)
+            }
+        
+        # STEP 2: Check Pre-Flush Priority (LPF Enhanced) - Level -1
+        lpf_res = LiquidationPreFlushEnhancedV100.check_flush_conflict(
+            lp_res=results.get('lpf_v100', {}),
+            other_signals=results
+        )
+        if lpf_res.get('lpf_override_active'):
+            return {
+                "final_bias": "WAIT",
+                "confidence": lpf_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-LPF_OVERRIDE: {lpf_res.get('reason', '')}",
+                "phase": "PRE_FLUSH_WAIT_TRIGGER",
+                "priority_level": -1,
+                "wait_seconds": lpf_res.get('wait_seconds', 300)
+            }
+        
+        # STEP 3: Check Deadstick Falling Knight (DKT) - Level 0
+        dkt_res = results.get('dkt_v100', {})
+        if dkt_res.get('is_falling_knife_trap'):
+            return {
+                "final_bias": dkt_res.get('bias', 'SHORT'),
+                "confidence": dkt_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-DKT_OVERRIDE: {dkt_res.get('reason', '')}",
+                "phase": "DEADSTICK_FALLING_KNIFE_DETECTED",
+                "priority_level": 0
+            }
+        
+        # STEP 4: Check OI Build Distribution (OBD) - Level 0
+        obd_res = results.get('obd_v100', {})
+        if obd_res.get('is_short_building'):
+            return {
+                "final_bias": obd_res.get('bias', 'SHORT'),
+                "confidence": obd_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-OBD_OVERRIDE: {obd_res.get('reason', '')}",
+                "phase": "SHORT_BUILDING_CONFIRMED",
+                "priority_level": 0
+            }
+        
+        # STEP 5: Gravity Overdrive (GOD)
+        god_res = results.get('god_v100', {})
+        if god_res.get('gravity_override_active'):
+            return {
+                "final_bias": god_res.get('bias', 'NEUTRAL'),
+                "confidence": god_res.get('override_confidence', 'ABSOLUTE'),
+                "reason": f"V100-GOD_OVERRIDE: {god_res.get('reason', '')}",
+                "phase": "GRAVITY_OVERDRIVE_ACTIVE",
+                "priority_level": 1
+            }
+        
+        # STEP 6: VOD (Volume-OI Divergence)
+        vod_res = results.get('vod_v100', {})
+        if vod_res.get('is_distribution_trap'):
+            return {
+                "final_bias": vod_res.get('bias', 'SHORT'),
+                "confidence": vod_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-VOD_OVERRIDE: {vod_res.get('reason', '')}",
+                "phase": "LIQUIDITY_TRAP_DETECTED",
+                "priority_level": 2
+            }
+        
+        # STEP 7: LGT (Liquidation Gravity Trap)
+        lgt_res = results.get('lgt_v100', {})
+        if lgt_res.get('is_liquidity_gravity_trap'):
+            return {
+                "final_bias": lgt_res.get('bias', 'SHORT'),
+                "confidence": lgt_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-LGT_OVERRIDE: {lgt_res.get('reason', '')}",
+                "phase": "LIQUIDATION_GRAVITY_TRAP_DETECTED",
+                "priority_level": 3
+            }
+        
+        # STEP 8: RST (RSI Threshold)
+        rst_res = results.get('rst_v100', {})
+        if rst_res.get('is_trap'):
+            return {
+                "final_bias": rst_res.get('bias', 'SHORT'),
+                "confidence": rst_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-RST_OVERRIDE: {rst_res.get('reason', '')}",
+                "phase": "RSI_SQUEEZE_BLOCKED",
+                "priority_level": 4
+            }
+        
+        # STEP 9: ZAO (Zero Aggression Override)
+        zao_res = results.get('zao_v100', {})
+        if zao_res.get('is_zero_aggression_trap'):
+            return {
+                "final_bias": zao_res.get('bias', 'LONG'),
+                "confidence": zao_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-ZAO_OVERRIDE: {zao_res.get('reason', '')}",
+                "phase": "ZERO_AGGRESSION_CONFIRMED",
+                "priority_level": 5
+            }
+        
+        # STEP 10: SCT-AF (Extreme Imbalance)
+        sct_af_res = results.get('sct_af_v99', {})
+        if sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
+            return {
+                "final_bias": sct_af_res.get('bias', 'LONG'),
+                "confidence": sct_af_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99-SCT-AF_OVERRIDE: {sct_af_res.get('reason', '')}",
+                "phase": "EXTREME_SHORT_CROWD_CONFIRMED",
+                "priority_level": 6
+            }
+        
+        # STEP 11: WMI Veto
+        wmi_res = results.get('wmi_veto', {})
+        if wmi_res.get('is_veto'):
+            return {
+                "final_bias": wmi_res.get('bias', 'NEUTRAL'),
+                "confidence": "HIGH",
+                "reason": wmi_res.get('reason', ''),
+                "phase": "WHALE_SINGULARITY_CONFIRMED",
+                "priority_level": 7
+            }
+        
+        # DEFAULT
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "NONE",
+            "reason": "No override signals detected.",
+            "phase": "NORMAL",
+            "priority_level": 8
         }
 
 
@@ -16932,6 +17338,13 @@ class BinanceAnalyzerV87:
         self.ier_priority_v100 = InstitutionalExitPriorityV100()  # V100-IER-PRIORITY
         self.xan_resolver = ConflictResolverV88_PLUS_FINAL_XAN_FIXED()  # New resolver for XAN
         
+        # ===== NEW ANTI-LYNUSDT MODULES =====
+        self.dkt_v100 = DeadstickFallingKnightDetectorV100()          # V100-DKT
+        self.obd_v100 = OIBuildDistributionValidatorV100()            # V100-OBD
+        self.aef_v100 = AggressionExtinctionFilterV100()             # V100-AEF
+        self.lpf_enhanced_v100 = LiquidationPreFlushEnhancedV100()   # V100-LPF-ENHANCED
+        self.lyn_resolver = ConflictResolverV88_PLUS_FINAL_LYNUS_FIXED()  # New resolver for LYN
+        
         # ===== V100-STABLE: STABILITY ENGINE MODULES =====
         self.sse_engine = SignalStabilityEngineV100()           # V100-SSE (Singleton)
         self.vtf_validator = VolumeTimeFrameValidatorV100()     # V100-VTF
@@ -18209,6 +18622,44 @@ class BinanceAnalyzerV87:
             # Safe dict untuk hasil anti-XANUSDT
             vod_result = safe_dict(vod_result)
             ier_priority_result = safe_dict(ier_priority_result)
+            
+            # ===== NEW ANTI-LYNUSDT MODULES =====
+            # V100-AEF: Aggression Extinction Filter
+            aef_result = self.aef_v100.detect(
+                trade_flow=trades.get('ratio', 0),
+                aggressive_ratio=trades.get('aggressive_ratio', 0)
+            )
+            
+            # V100-LPF-ENHANCED: Pre-Flush Priority (menggunakan hasil LPF asli jika ada)
+            lpf_original = lpf_result if 'lpf_result' in locals() else {}
+            lpf_enhanced_result = self.lpf_enhanced_v100.check_flush_conflict(
+                lp_res=lpf_original,
+                other_signals={}
+            )
+            
+            # V100-DKT: Deadstick Falling Knight
+            dkt_result = self.dkt_v100.detect(
+                rsi6=rsi6,
+                trade_flow=trades.get('ratio', 0),
+                aggressive_ratio=trades.get('aggressive_ratio', 0),
+                oi_delta_5m=oi_delta_5m,
+                price_change=change_5m,
+                obv_value=current_obv
+            )
+            
+            # V100-OBD: OI Build Distribution
+            obd_result = self.obd_v100.validate(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                flow=trades.get('ratio', 0),
+                agg_ratio=trades.get('aggressive_ratio', 0)
+            )
+            
+            # Safe dict untuk hasil anti-LYNUSDT
+            aef_result = safe_dict(aef_result)
+            lpf_enhanced_result = safe_dict(lpf_enhanced_result)
+            dkt_result = safe_dict(dkt_result)
+            obd_result = safe_dict(obd_result)
             
             # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
             final_decision = self.resolver_v88_final.resolve_all_hft_signals({
