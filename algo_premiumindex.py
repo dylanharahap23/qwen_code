@@ -18624,8 +18624,9 @@ class BinanceAnalyzerV87:
             ier_priority_result = safe_dict(ier_priority_result)
             
             # ===== NEW ANTI-LYNUSDT MODULES =====
-            # V100-AEF: Aggression Extinction Filter
-            aef_result = self.aef_v100.detect(
+            # V100-AEF: Aggression Extinction Filter (Market Death Detection)
+            # ⚠️ PENTING: Gunakan nama variabel berbeda agar tidak konflik dengan aef_result (V77 AEF)
+            market_death_result = self.aef_v100.detect(
                 trade_flow=trades.get('ratio', 0),
                 aggressive_ratio=trades.get('aggressive_ratio', 0)
             )
@@ -18656,7 +18657,7 @@ class BinanceAnalyzerV87:
             )
             
             # Safe dict untuk hasil anti-LYNUSDT
-            aef_result = safe_dict(aef_result)
+            market_death_result = safe_dict(market_death_result)
             lpf_enhanced_result = safe_dict(lpf_enhanced_result)
             dkt_result = safe_dict(dkt_result)
             obd_result = safe_dict(obd_result)
