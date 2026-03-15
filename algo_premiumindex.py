@@ -365,6 +365,17 @@ GOD_WMI_PRIORITY_THRESHOLD = 95
 GOD_PAYOUT_RATIO_PRIORITY = 50
 GOD_NEARBY_LIQ_THRESHOLD = 1.0
 
+# ================= V100-VOD: VOLUME-OI DIVERGENCE CONFIG =================
+VOD_RSI_OVERBOUGHT_THRESHOLD = 75.0      # RSI > 75 = Danger
+VOD_OI_BUILDING_MIN = 0.5                # OI increase > 0.5% = New Positions
+VOD_FLOW_HIGH_THRESHOLD = 2.0            # Flow > 2.0x = Distribution Volume
+VOD_OBV_NEGATIVE_CHECK = True            # Must check OBV sign
+
+# ================= V100-IER-PRIORITY: INSTITUTIONAL EXIT OVERRIDE CONFIG =================
+IER_PRIORITY_CONFIDENCE_MIN = 0.7        # Minimum confidence level (tidak digunakan langsung, lihat mapping)
+IER_PRIORITY_DURATION_THRESHOLD = 1      # Min 1 period active
+IER_PRIORITY_FLOW_OI_MISMATCH = True     # Check Flow/OI mismatch
+
 # ================= V100-LGT: LIQUIDATION GRAVITY TRAP DETECTOR =================
 class LiquidationGravityTrapDetectorV100:
     """🔥 V100-LGT: LIQUIDATION GRAVITY TRAP - ANTI-COSUSDT TRAP
@@ -619,6 +630,135 @@ class GravityOverdriveModuleV100:
             "override_confidence": "LOW",
             "bias": "NEUTRAL"
         }
+
+
+# ================= V100-VOD: VOLUME-OI DIVERGENCE DETECTOR =================
+class VolumeOIDivergenceDetectorV100:
+    """🔥 V100-VOD: VOLUME-OI DIVERGENCE DETECTOR - ANTI-DISTRIBUTION TRAP
+    
+    Prinsip HFT Binances:
+    Jika RSI OVERBOUGHT (>75) + OI Building POSITIVE + High Flow 
+    -> Ini BUKAN Accumulation, ini WHALE DISTRIBUTION ke retail!
+    
+    Kaedah:
+    • Jangan pernah entry LONG saat RSI Overbought jika OBV Negatif
+    • OI Building di area Overbought = Weak Hands Entry (Easy Target)
+    """
+    
+    VOD_RSI_OVERBOUGHT_THRESHOLD = 75.0
+    VOD_OI_BUILDING_MIN = 0.5
+    VOD_FLOW_HIGH_THRESHOLD = 2.0
+    VOD_OBV_NEGATIVE_CHECK = True
+    
+    @staticmethod
+    def detect(
+        rsi6: float,
+        oi_delta_5m: float,
+        trade_flow: float,
+        obv_value: float,
+        price_change: float
+    ) -> Dict:
+        """
+        XANUSDT Case Validation:
+        - RSI: 79.3 (> 75) ✅ Triggered
+        - OI: +1.31% (>0.5%) ✅ Building
+        - Flow: 3.00x (>2.0) ✅ High Volume
+        - OBV: -162M (NEGATIVE) ✅ Money Out
+        - Price: +1.35% (Stable/Rising) ✅ Distraction
+        """
+        
+        distribution_signals = []
+        severity_score = 0
+        
+        # CHECK 1: RSI Overbought
+        if rsi6 >= VolumeOIDivergenceDetectorV100.VOD_RSI_OVERBOUGHT_THRESHOLD:
+            distribution_signals.append("RSI_OVERBOUGHT")
+            severity_score += 30
+            
+        # CHECK 2: OI Building While Expensive
+        if oi_delta_5m > VolumeOIDivergenceDetectorV100.VOD_OI_BUILDING_MIN:
+            distribution_signals.append("OI_BUILDING_AT_RESISTANCE")
+            severity_score += 25
+            
+        # CHECK 3: High Volume Distribution
+        if trade_flow >= VolumeOIDivergenceDetectorV100.VOD_FLOW_HIGH_THRESHOLD:
+            distribution_signals.append("HIGH_VOLUME_DISTRIBUTION")
+            severity_score += 25
+            
+        # CHECK 4: OBV Divergence (MONEY FLOW CHECK)
+        if obv_value < 0:
+            distribution_signals.append("OBV_MONEY_OUTFLOW")
+            severity_score += 40  # Critical weight!
+        
+        # DECISION LOGIC
+        if len(distribution_signals) >= 2 and severity_score >= 60:
+            return {
+                "is_distribution_trap": True,
+                "trap_type": "EXIT_LIQUIDITY",
+                "confidence": "ABSOLUTE",
+                "bias": "SHORT",
+                "reason": f"VOD_DISTRIBUTION_TRAP DETECTED: RSI {rsi6:.1f} (Overbought!) + "
+                         f"OI ↑{oi_delta_5m:+.2f}% (New Weak Hands!) + "
+                         f"Flow {trade_flow:.1f}x (Volume Dist.) + "
+                         f"OBV ↓{abs(obv_value):,.0f} (MONEY OUT!). "
+                         f"Ini bukan squeeze, ini MM exit! LONG TRAPPED!",
+                "override_modules": ["LFC_PAYOUT_OVERRIDE", "WMI_SQUEEZE_LOGIC", "FVC_SQUEEZE_SETUP"],
+                "priority_level": 0,
+                "predicted_move": "DROP_TO_LONG_LIQ",
+                "wait_condition": "OBV_RECOVERY"
+            }
+        
+        return {"is_distribution_trap": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-IER-PRIORITY: INSTITUTIONAL EXIT OVERRIDE =================
+class InstitutionalExitPriorityV100:
+    """🔥 V100-IER-PRIORITY: INSTITUTIONAL EXIT OVERRIDE
+    
+    Jika IER aktif dengan confidence tinggi -> Ignore semua Squeeze Signals!
+    """
+    
+    IER_CONFIDENCE_MIN = 0.7              # Minimum confidence level (mapping dari string)
+    IER_DURATION_THRESHOLD = 1            # Min 1 period active
+    IER_FLOW_OI_MISMATCH = True           # Check Flow/OI mismatch
+    
+    @staticmethod
+    def validate(ier_data: Dict, wmi_data: Dict, lfc_data: Dict) -> Dict:
+        """
+        XANUSDT Case:
+        - IER: Active, Confidence HIGH
+        - Reason: "Flow 3.0x tinggi TAPI OI 1.31% mampet"
+        """
+        
+        # Mapping confidence string ke numeric untuk perbandingan
+        conf_map = {
+            'ABSOLUTE': 1.0,
+            'SUPREME': 0.9,
+            'HIGH': 0.7,
+            'MEDIUM': 0.5,
+            'LOW': 0.3,
+            'NONE': 0.1
+        }
+        
+        if ier_data.get('is_exit', False):
+            confidence_str = ier_data.get('confidence', 'LOW')
+            confidence_num = conf_map.get(confidence_str, 0.3)
+            reason = ier_data.get('reason', '')
+            
+            # Jika confidence tinggi (>= HIGH) dan WMI tidak terlalu ekstrim (agar tidak override jika WMI benar-benar kuat)
+            if confidence_num >= 0.7:   # HIGH or above
+                # Jangan override jika WMI di atas 95 (sinyal squeeze sangat kuat) – opsional, bisa disesuaikan
+                if abs(wmi_data.get('mass_ratio', 0)) < 95:  
+                    return {
+                        "ier_override_active": True,
+                        "bias": "SHORT",
+                        "confidence": confidence_str,
+                        "reason": f"IER_INSTITUTIONAL_EXIT_CONFIRMED: {reason}",
+                        "override_all_squeeze_logic": True,
+                        "priority_level": -1  # Highest Priority!
+                    }
+        
+        return {"ier_override_active": False, "bias": "NEUTRAL"}
 
 
 # ================= V100-ZAO: ZERO AGGRESSION OVERRIDE MODULE =================
@@ -7431,19 +7571,18 @@ class ConflictResolverV88_PLUS_FINAL_COSUSDT_FIXED:
     URUTAN PRIORITAS MUTLAK – ANTI-ALL-PATTERNS
     
     ┌─────────────────────────────────────────────────────┐
-    │  LEVEL -1: GRAVITY OVERDRIVE (BEFORE ALL ELSE)       │ ← NEW!
+    │  LEVEL -1: GRAVITY + EXIT OVERRIDE (BEFORE ALL ELSE)  │
     ├─────────────────────────────────────────────────────┤
-    │  -1. V100-GOD (Gravity Overdrive Module)             │ ← HIGHEST!
-    │  0. V100-LGT (Liquidation Gravity Trap)              │ ← CRITICAL!
-    │  1. V100-FDF (Flush Probability Calculator)          │
-    │  2. V100-TDI (Trend Integrity Filter)                │
-    │  3. V100-ZAO (Zero Aggression Override)              │
-    │  4. V99-SCT-AF (Extreme Imbalance Validator)         │
-    │  5. V100-LFC Enhanced (Liquidity Flush Coordinator)  │
-    │  6. V87-ZAS (Zero Aggression Squeeze)                │
-    │  7. V87-LCD (Liquidity Compression Detector)         │
-    │  8. V100-RST (RSI Threshold)                         │
-    │  9. V99-WMI_VETO                                      │
+    │  -1. V100-IER-PRIORITY (Institutional Exit)          │ ← NEW!
+    │  0. V100-GOD (Gravity Overdrive)                     │
+    │  1. V100-VOD (Volume-OI Divergence)                  │ ← NEW!
+    │  2. V100-LGT (Liquidation Gravity Trap)              │
+    │  3. V100-FDF (Flush Probability)                     │
+    │  4. V100-TDI (Trend Integrity Filter)                │
+    │  5. V100-ZAO (Zero Aggression Override)              │
+    │  6. V99-SCT-AF (Extreme Imbalance)                   │
+    │  7. V100-RST (RSI Threshold)                         │
+    │  8. V99-WMI_VETO                                     │
     └─────────────────────────────────────────────────────┘
     """
     
@@ -7454,110 +7593,265 @@ class ConflictResolverV88_PLUS_FINAL_COSUSDT_FIXED:
             results: Dictionary berisi hasil dari semua module
         """
         
-        # STEP 1: Check Gravity Priority FIRST (Level -1 Priority!)
-        god_res = GravityOverdriveModuleV100.check_gravity_priority(
-            wmi_ratio=results.get('wmi_ratio', 0),
-            payout_long=results.get('lpc_payout_long', 0),
-            payout_short=results.get('lpc_payout_short', 0),
-            nearest_liq=results.get('nearest_liquidity', ''),
-            liq_dist=results.get('long_liq', 999),
-            odf_bias=results.get('odf_bias', ''),
-            lep_bias=results.get('lep_bias', 'NEUTRAL'),
-            sat_bias=results.get('sat_bias', 'NEUTRAL')
-        )
-        
-        if god_res.get('gravity_override_active'):
+        # STEP 1: Check Institutional Exit FIRST (Level -1)
+        ier_res = results.get('ier_priority_v100', {})
+        if ier_res.get('ier_override_active'):
             return {
-                "final_bias": god_res['bias'],
-                "confidence": god_res['override_confidence'],
-                "reason": f"V100-GOD_OVERRIDE: {god_res['reason']}",
-                "phase": "GRAVITY_OVERDRIVE_ACTIVE",
+                "final_bias": ier_res['bias'],
+                "confidence": ier_res['confidence'],
+                "reason": f"V100-IER_OVERRIDE: {ier_res['reason']}",
+                "phase": "INSTITUTIONAL_EXIT_DETECTED",
                 "priority_level": -1,
                 "override_all_others": True
             }
         
-        # STEP 2: Check Liquidation Gravity Trap
-        lgt_res = LiquidationGravityTrapDetectorV100.detect(
-            long_dist=results.get('long_liq', 999),
-            wmi_ratio=results.get('wmi_ratio', 0),
-            agg=results.get('aggressive_ratio', 1.0),
-            flow=results.get('trade_flow', 1.0),
-            rsi=results.get('rsi6', 50)
-        )
+        # STEP 2: Check Gravity Priority FIRST (Level -1 Priority!)
+        god_res = results.get('god_v100', {})
+        if god_res.get('gravity_override_active'):
+            return {
+                "final_bias": god_res['bias'],
+                "confidence": god_res.get('override_confidence', 'ABSOLUTE'),
+                "reason": f"V100-GOD_OVERRIDE: {god_res.get('reason', '')}",
+                "phase": "GRAVITY_OVERDRIVE_ACTIVE",
+                "priority_level": 0
+            }
         
+        # STEP 3: Check VOD Distribution Trap (Level 1)
+        vod_res = results.get('vod_v100', {})
+        if vod_res.get('is_distribution_trap'):
+            return {
+                "final_bias": vod_res['bias'],
+                "confidence": vod_res['confidence'],
+                "reason": f"V100-VOD_OVERRIDE: {vod_res['reason']}",
+                "phase": "LIQUIDITY_TRAP_DETECTED",
+                "priority_level": 1
+            }
+        
+        # STEP 4: Check Liquidation Gravity Trap
+        lgt_res = results.get('lgt_v100', {})
         if lgt_res.get('is_liquidity_gravity_trap'):
             return {
                 "final_bias": lgt_res['bias'],
                 "confidence": lgt_res['confidence'],
                 "reason": f"V100-LGT_OVERRIDE: {lgt_res['reason']}",
                 "phase": "LIQUIDATION_GRAVITY_TRAP_DETECTED",
-                "priority_level": 0
+                "priority_level": 2
             }
         
-        # STEP 3: Flush Probability Calculation
-        fdf_res = FlushProbabilityCalculatorV100.calculate(
-            long_liq_pct=results.get('long_liq', 999),
-            agg=results.get('aggressive_ratio', 1.0),
-            flow=results.get('trade_flow', 1.0),
-            rsi=results.get('rsi6', 50),
-            price_change=results.get('change_5m', 0),
-            wmi=results.get('wmi_ratio', 0)
-        )
-        
+        # STEP 5: Flush Probability Calculation
+        fdf_res = results.get('fdf_v100', {})
         if fdf_res.get('is_critical_flush_zone'):
             return {
                 "final_bias": fdf_res['bias'],
                 "confidence": fdf_res['confidence'],
                 "reason": f"V100-FDF_WARNING: {fdf_res['reason']}",
                 "phase": "FLUSH_ZONE_HIGH_RISK",
-                "priority_level": 1
+                "priority_level": 3
             }
         
-        # STEP 4: Trend Integrity Check
-        tdi_res = TrendIntegrityFilterV100.check_trend_integrity(
-            macd_bearish=results.get('macd_bearish', False),
-            obv=results.get('obv', 0),
-            price_change_5m=results.get('change_5m', 0),
-            flow=results.get('trade_flow', 1.0),
-            oi_delta=results.get('oi_delta_5m', 0)
-        )
-        
+        # STEP 6: Trend Integrity Check
+        tdi_res = results.get('tdi_v100', {})
         if tdi_res.get('trend_integrity_violated'):
             return {
                 "final_bias": tdi_res['bias'],
                 "confidence": tdi_res['confidence'],
                 "reason": f"V100-TDI_OVERRIDE: {tdi_res['reason']}",
                 "phase": "TREND_INTEGRITY_BEARISH",
-                "priority_level": 1
+                "priority_level": 4
             }
         
-        # STEP 5: Zero Aggression (Now Lower Priority!)
+        # STEP 7: Zero Aggression (Now Lower Priority!)
         zao_res = results.get('zao_v100', {})
         if zao_res and isinstance(zao_res, dict) and zao_res.get('is_zero_aggression_trap'):
             return {
                 "final_bias": zao_res['bias'],
                 "confidence": zao_res['confidence'],
                 "reason": f"V100-ZAO_OVERRIDE: {zao_res['reason']}",
-                "priority_level": 3
+                "priority_level": 5
             }
         
-        # STEP 6: Extreme Imbalance (SCT-AF)
+        # STEP 8: Extreme Imbalance (SCT-AF)
         sct_af_res = results.get('sct_af_v99', {})
         if sct_af_res and isinstance(sct_af_res, dict) and sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
             return {
                 "final_bias": sct_af_res['bias'],
                 "confidence": sct_af_res['confidence'],
                 "reason": f"V99-SCT-AF_OVERRIDE: {sct_af_res['reason']}",
-                "priority_level": 4
+                "priority_level": 6
+            }
+        
+        # STEP 9: RSI Threshold
+        rst_res = results.get('rst_v100', {})
+        if rst_res.get('is_trap'):
+            return {
+                "final_bias": rst_res['bias'],
+                "confidence": rst_res['confidence'],
+                "reason": f"V100-RST_OVERRIDE: {rst_res['reason']}",
+                "priority_level": 7
+            }
+        
+        # STEP 10: WMI Veto
+        wmi_res = results.get('wmi_veto', {})
+        if wmi_res and wmi_res.get('is_veto'):
+            return {
+                "final_bias": wmi_res['bias'],
+                "confidence": "HIGH",
+                "reason": wmi_res.get('reason', ''),
+                "phase": "WHALE_SINGULARITY_CONFIRMED",
+                "priority_level": 8
             }
         
         # DEFAULT
         return {
             "final_bias": "NEUTRAL",
             "confidence": "NONE",
-            "reason": "No override signals detected",
-            "priority_level": 10
+            "reason": "No override signals detected.",
+            "phase": "NORMAL",
+            "priority_level": 9
         }
+
+
+# ================= V88_PLUS_FINAL_XAN_FIXED: UPDATED CONFLICT RESOLVER =================
+class ConflictResolverV88_PLUS_FINAL_XAN_FIXED:
+    """🔥 FINAL PRIORITAS – ANTI-LIQUIDITY TRAPS (XANUSDT PATCH)"""
+    
+    @staticmethod
+    def resolve_all_hft_signals_v88_xan(results):
+        """
+        URUTAN PRIORITAS MUTLAK:
+        ┌─────────────────────────────────────────────────────┐
+        │  LEVEL -1: GRAVITY + EXIT OVERRIDE (BEFORE ALL ELSE)  │
+        ├─────────────────────────────────────────────────────┤
+        │  -1. V100-IER-PRIORITY (Institutional Exit)          │ ← NEW!
+        │  0. V100-GOD (Gravity Overdrive)                     │
+        │  1. V100-VOD (Volume-OI Divergence)                  │ ← NEW!
+        │  2. V100-LGT (Liquidation Gravity Trap)              │
+        │  3. V100-FDF (Flush Probability)                     │
+        │  4. V100-TDI (Trend Integrity Filter)                │
+        │  5. V100-ZAO (Zero Aggression Override)              │
+        │  6. V99-SCT-AF (Extreme Imbalance)                   │
+        │  7. V100-RST (RSI Threshold)                         │
+        │  8. V99-WMI_VETO                                     │
+        └─────────────────────────────────────────────────────┘
+        """
+        
+        # STEP 1: Check Institutional Exit FIRST (Level -1)
+        ier_res = results.get('ier_priority_v100', {})
+        if ier_res.get('ier_override_active'):
+            return {
+                "final_bias": ier_res['bias'],
+                "confidence": ier_res['confidence'],
+                "reason": f"V100-IER_OVERRIDE: {ier_res['reason']}",
+                "phase": "INSTITUTIONAL_EXIT_DETECTED",
+                "priority_level": -1,
+                "override_all_others": True
+            }
+        
+        # STEP 2: Check Gravity Overdrive (GOD)
+        god_res = results.get('god_v100', {})
+        if god_res.get('gravity_override_active'):
+            return {
+                "final_bias": god_res['bias'],
+                "confidence": god_res.get('override_confidence', 'ABSOLUTE'),
+                "reason": f"V100-GOD_OVERRIDE: {god_res.get('reason', '')}",
+                "phase": "GRAVITY_OVERDRIVE_ACTIVE",
+                "priority_level": 0
+            }
+        
+        # STEP 3: Check VOD Distribution Trap (Level 1)
+        vod_res = results.get('vod_v100', {})
+        if vod_res.get('is_distribution_trap'):
+            return {
+                "final_bias": vod_res['bias'],
+                "confidence": vod_res['confidence'],
+                "reason": f"V100-VOD_OVERRIDE: {vod_res['reason']}",
+                "phase": "LIQUIDITY_TRAP_DETECTED",
+                "priority_level": 1
+            }
+        
+        # STEP 4: Check Liquidation Gravity Trap (LGT)
+        lgt_res = results.get('lgt_v100', {})
+        if lgt_res.get('is_liquidity_gravity_trap'):
+            return {
+                "final_bias": lgt_res['bias'],
+                "confidence": lgt_res['confidence'],
+                "reason": f"V100-LGT_OVERRIDE: {lgt_res['reason']}",
+                "phase": "LIQUIDATION_GRAVITY_TRAP_DETECTED",
+                "priority_level": 2
+            }
+        
+        # STEP 5: Flush Probability Calculation
+        fdf_res = results.get('fdf_v100', {})
+        if fdf_res.get('is_critical_flush_zone'):
+            return {
+                "final_bias": fdf_res['bias'],
+                "confidence": fdf_res['confidence'],
+                "reason": f"V100-FDF_WARNING: {fdf_res['reason']}",
+                "phase": "FLUSH_ZONE_HIGH_RISK",
+                "priority_level": 3
+            }
+        
+        # STEP 6: Trend Integrity Check
+        tdi_res = results.get('tdi_v100', {})
+        if tdi_res.get('trend_integrity_violated'):
+            return {
+                "final_bias": tdi_res['bias'],
+                "confidence": tdi_res['confidence'],
+                "reason": f"V100-TDI_OVERRIDE: {tdi_res['reason']}",
+                "phase": "TREND_INTEGRITY_BEARISH",
+                "priority_level": 4
+            }
+        
+        # STEP 7: Zero Aggression Override
+        zao_res = results.get('zao_v100', {})
+        if zao_res and zao_res.get('is_zero_aggression_trap'):
+            return {
+                "final_bias": zao_res['bias'],
+                "confidence": zao_res['confidence'],
+                "reason": f"V100-ZAO_OVERRIDE: {zao_res['reason']}",
+                "priority_level": 5
+            }
+        
+        # STEP 8: Extreme Imbalance (SCT-AF)
+        sct_af_res = results.get('sct_af_v99', {})
+        if sct_af_res and sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
+            return {
+                "final_bias": sct_af_res['bias'],
+                "confidence": sct_af_res['confidence'],
+                "reason": f"V99-SCT-AF_OVERRIDE: {sct_af_res['reason']}",
+                "priority_level": 6
+            }
+        
+        # STEP 9: RSI Threshold
+        rst_res = results.get('rst_v100', {})
+        if rst_res.get('is_trap'):
+            return {
+                "final_bias": rst_res['bias'],
+                "confidence": rst_res['confidence'],
+                "reason": f"V100-RST_OVERRIDE: {rst_res['reason']}",
+                "priority_level": 7
+            }
+        
+        # STEP 10: WMI Veto
+        wmi_res = results.get('wmi_veto', {})
+        if wmi_res and wmi_res.get('is_veto'):
+            return {
+                "final_bias": wmi_res['bias'],
+                "confidence": "HIGH",
+                "reason": wmi_res.get('reason', ''),
+                "phase": "WHALE_SINGULARITY_CONFIRMED",
+                "priority_level": 8
+            }
+        
+        # DEFAULT
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "NONE",
+            "reason": "No override signals detected.",
+            "phase": "NORMAL",
+            "priority_level": 9
+        }
+
 
 
 class ConflictResolverV88_PLUS_FINAL_TRIA_FIXED:
@@ -16633,6 +16927,11 @@ class BinanceAnalyzerV87:
         self.god_v100 = GravityOverdriveModuleV100()               # V100-GOD
         self.cosu_resolver = ConflictResolverV88_PLUS_FINAL_COSUSDT_FIXED()  # New resolver
         
+        # ===== NEW ANTI-XANUSDT MODULES =====
+        self.vod_v100 = VolumeOIDivergenceDetectorV100()          # V100-VOD
+        self.ier_priority_v100 = InstitutionalExitPriorityV100()  # V100-IER-PRIORITY
+        self.xan_resolver = ConflictResolverV88_PLUS_FINAL_XAN_FIXED()  # New resolver for XAN
+        
         # ===== V100-STABLE: STABILITY ENGINE MODULES =====
         self.sse_engine = SignalStabilityEngineV100()           # V100-SSE (Singleton)
         self.vtf_validator = VolumeTimeFrameValidatorV100()     # V100-VTF
@@ -17842,6 +18141,74 @@ class BinanceAnalyzerV87:
             rst_result = safe_dict(rst_result)
             dsz_result = safe_dict(dsz_result)
             dtf_result = safe_dict(dtf_result)
+            
+            # ===== PANGGIL ANTI-COSUSDT MODULES =====
+            # V100-LGT: Liquidation Gravity Trap
+            lgt_result = self.lgt_v100.detect(
+                long_dist=liq.get('long_dist', 999),
+                wmi_ratio=wmi_ratio,
+                agg=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                rsi=rsi6
+            )
+            
+            # V100-TDI: Trend Integrity Filter
+            tdi_result = self.tdi_v100.check_trend_integrity(
+                macd_bearish=macd.get('bearish_cross', False),
+                obv=current_obv,
+                price_change_5m=change_5m,
+                flow=trades.get('ratio', 1.0),
+                oi_delta=oi_delta_5m
+            )
+            
+            # V100-FDF: Flush Probability Calculator
+            fdf_result = self.fdf_v100.calculate(
+                long_liq_pct=liq.get('long_dist', 999),
+                agg=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                rsi=rsi6,
+                price_change=change_5m,
+                wmi=wmi_ratio
+            )
+            
+            # V100-GOD: Gravity Override (akan dipanggil di resolver, tapi kita siapkan datanya)
+            god_result = self.god_v100.check_gravity_priority(
+                wmi_ratio=wmi_ratio,
+                payout_long=lpc_result.get('payout_long', 0) if 'lpc_result' in locals() else 0,
+                payout_short=lpc_result.get('payout_short', 0) if 'lpc_result' in locals() else 0,
+                nearest_liq=liquidity_data['nearest'] if 'liquidity_data' in locals() else '',
+                liq_dist=liq.get('long_dist', 999),
+                odf_bias=odf_result.get('bias', '') if 'odf_result' in locals() else '',
+                lep_bias=lep_result.get('bias', 'NEUTRAL') if 'lep_result' in locals() else 'NEUTRAL',
+                sat_bias=sat_result.get('bias', 'NEUTRAL') if 'sat_result' in locals() else 'NEUTRAL'
+            )
+            
+            # Safe dict untuk hasil anti-COSUSDT
+            lgt_result = safe_dict(lgt_result)
+            tdi_result = safe_dict(tdi_result)
+            fdf_result = safe_dict(fdf_result)
+            god_result = safe_dict(god_result)
+            
+            # ===== NEW ANTI-XANUSDT MODULES =====
+            # V100-VOD: Volume-OI Divergence
+            vod_result = self.vod_v100.detect(
+                rsi6=rsi6,
+                oi_delta_5m=oi_delta_5m,
+                trade_flow=trades.get('ratio', 0),
+                obv_value=current_obv,
+                price_change=change_5m
+            )
+            
+            # V100-IER-PRIORITY: Institutional Exit Override
+            ier_priority_result = self.ier_priority_v100.validate(
+                ier_data=ier_result if 'ier_result' in locals() else {},
+                wmi_data={'mass_ratio': wmi_ratio},
+                lfc_data=lfc_result if 'lfc_result' in locals() else {}
+            )
+            
+            # Safe dict untuk hasil anti-XANUSDT
+            vod_result = safe_dict(vod_result)
+            ier_priority_result = safe_dict(ier_priority_result)
             
             # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
             final_decision = self.resolver_v88_final.resolve_all_hft_signals({
