@@ -324,6 +324,22 @@ FVC_TWO_INITIAL_MIN = 0.3            # Minimal untuk setup detection
 FVC_TWO_EXECUTION_REQUIRED = 0.5     # Minimal untuk actual pump confirmation
 FVC_TWO_ANOMALOUS_HIGH = 5.0         # Suspiciously high flow indicator
 
+# ================= V100-RST: RSI SQUEEZE THRESHOLD CONFIG =================
+RST_SQUEEZE_MAX_RSI = 70.0           # Valid Squeeze Zone
+RST_CAUTION_RSI_MIN = 70.0           # Start Warning
+RST_CAUTION_RSI_MAX = 85.0           # Extreme Caution
+RST_NO_SQUEEZE_RSI_THRESHOLD = 85.0  # Nuclear Overbought! NO SQUEEZE!
+RST_OI_FUEL_MIN_FOR_HIGH_RSI = 2.0   # Butuh OI Build jika RSI ekstrem
+
+# ================= V100-DTF: DISTRIBUTION TIME FILTER CONFIG =================
+DTF_OI_FLAT_THRESHOLD = 0.1          # OI < 0.1% dianggap flat
+
+# ================= V100-DSZ: DOUBLE SWEEP ZONE GUARDIAN CONFIG =================
+DSZ_SHORT_DIST_THRESHOLD = 1.0       # Short Liq < 1% = Bait Zone
+DSZ_LONG_DIST_THRESHOLD = 4.0        # Long Liq < 4% = Dangerous Proximity
+DSZ_FLUSH_PROB_CRITICAL = 50.0       # Flush Prob > 50% = Critical Risk
+DSZ_MIN_TIME_BEFORE_MOVE = 1800      # 30 minutes min wait after double sweep
+
 # ================= V100-ZAO: ZERO AGGRESSION OVERRIDE MODULE =================
 class ZeroAggressionOverrideV100:
     """
@@ -6950,6 +6966,338 @@ class ConflictResolverV88_STABLE:
         current_result['stability_override'] = False
         current_result['priority_level'] = 3
         return current_result
+
+
+# ================= V100-RST: RSI SQUEEZE THRESHOLD =================
+class RSISqueezeThresholdV100:
+    """🔥 V100-RST: RSI SQUEEZE THRESHOLD - ANTI-TRIAUSDT TRAP
+    
+    Kaedah Baru:
+    • RSI < 70: Valid untuk Squeeze
+    • RSI 70-85: Caution Required (Monitor OI Build)
+    • RSI > 85: NO SQUEEZE ALLOWED WITHOUT CONFIRMATION! (Exit Liquidity Zone!)
+    
+    Kasus TriaUsDT:
+    - RSI 87.5 (Extrem!) → Tidak boleh squeeze kecuali ada NEW POSITIONS
+    - OI Delta 0.05% (Flat) → Tidak ada fuel → Mustahil squeeze sustainable
+    """
+    
+    RST_SQUEEZE_MAX_RSI = 70.0
+    RST_CAUTION_RSI_MIN = 70.0
+    RST_CAUTION_RSI_MAX = 85.0
+    RST_NO_SQUEEZE_RSI_THRESHOLD = 85.0
+    RST_OI_FUEL_MIN_FOR_HIGH_RSI = 2.0
+    
+    @staticmethod
+    def validate(rsi6: float, oi_delta_5m: float, wmi_ratio: float, 
+                 short_dist: float, flow: float) -> Dict:
+        """
+        TRIAUSDT Case Validation:
+        - RSI: 87.5 (>85 = EXCLUSIVE!)
+        - OI: 0.05% (<2% = NO FUEL)
+        - WMI: 99.8x (Extreme Above)
+        - Short Dist: 0.19% (Very Close)
+        - Flow: 4.0x (Moderate)
+        """
+        
+        if rsi6 >= RSISqueezeThresholdV100.RST_NO_SQUEEZE_RSI_THRESHOLD:
+            # RSI Nuklir! Perlu OI FUEL untuk Squeeze Valid
+            if abs(oi_delta_5m) < RSISqueezeThresholdV100.RST_OI_FUEL_MIN_FOR_HIGH_RSI:
+                return {
+                    "is_trap": True,
+                    "bias": "SHORT",  # Force counter-trade!
+                    "confidence": "ABSOLUTE",
+                    "reason": f"RST_NO_SQUEEZE_NUCLEAR: RSI {rsi6:.1f} (>85! Excess!). "
+                             f"OI only {oi_delta_5m:+.2f}% (NO FUEL!). "
+                             f"Squeeze tidak mungkin sustainable tanpa new positions. "
+                             f"Ini EXIT LIQUIDITY TRAP, bukan Squeeze!",
+                    "override_modules": ["LFC_PAYOUT_OVERRIDE", "WMI_SQUEEZE_LOGIC"],
+                    "priority_level": 0  # Highest Priority!
+                }
+            
+            elif rsi6 <= RSISqueezeThresholdV100.RST_CAUTION_RSI_MAX:
+                # Caution Zone - Still check other signals
+                return {
+                    "is_trap": False,
+                    "warning": True,
+                    "bias": "NEUTRAL",
+                    "reason": f"RST_CAUTION_WARNING: RSI {rsi6:.1f} approaching danger zone."
+                }
+        
+        elif rsi6 >= RSISqueezeThresholdV100.RST_CAUTION_RSI_MIN:
+            # Normal Caution - Allow squeeze if other signals confirm
+            return {
+                "is_trap": False,
+                "warning": True,
+                "bias": "LONG",
+                "reason": f"RST_NORMAL_CAUTION: RSI {rsi6:.1f} requires confirmation from OI/Flow."
+            }
+        
+        # Normal Squeeze Zone (RSI < 70)
+        return {
+            "is_trap": False,
+            "warning": False,
+            "bias": "NEUTRAL",
+            "reason": f"RST_VALID_ZONE: RSI {rsi6:.1f} within normal squeeze range."
+        }
+
+
+# ================= V100-DTF: DISTRIBUTION TIME FILTER =================
+class DistributionTimeFilterV100:
+    """🔥 V100-DTF: DISTRIBUTION TIME FILTER - ANTI-TRIAUSDT PASSIVE EXIT
+    
+    Jika PSV atau IER menunjukkan Distribution, maka Squeeze LOGIC invalid!
+    """
+    
+    DTF_OI_FLAT_THRESHOLD = 0.1
+    
+    @staticmethod
+    def check_distribution_active(psv_result: Dict, ier_result: Dict, oi_delta: float) -> Dict:
+        """
+        TRIAUSDT Case:
+        - PSV: REAL_DISTRIBUTION
+        - IER: INSTITUTIONAL_EXIT
+        - OI: 0.05% (Flat = Whales distributing via limits, not buying)
+        """
+        
+        distribution_signals = []
+        
+        # Cek PSV status
+        psv_status = psv_result.get('validation_type') if psv_result else None
+        if psv_status == "REAL_DISTRIBUTION":
+            distribution_signals.append("PSV_REAL_DIST")
+        
+        # Cek IER status
+        ier_exit_type = ier_result.get('exit_type') if ier_result else None
+        if ier_exit_type in ["INSTITUTIONAL_EXIT", "INSTITUTIONAL_EXIT_WARNING"]:
+            distribution_signals.append("IER_EXIT")
+        
+        if len(distribution_signals) > 0 and abs(oi_delta) < DistributionTimeFilterV100.DTF_OI_FLAT_THRESHOLD:
+            return {
+                "is_distribution_phase": True,
+                "distribution_type": "LIMIT_ORDER_EXIT",
+                "confidence": "SUPREME",
+                "bias": "SHORT",
+                "reason": f"DTF_PASSIVE_DISTRIBUTION DETECTED: {', '.join(distribution_signals)} + "
+                         f"OI flat at {oi_delta:+.2f}%. Whale selling via LIMIT ORDERS! "
+                         f"Squeeze setup INVALID during passive exit!",
+                "override_all_squeeze_logic": True
+            }
+        
+        return {"is_distribution_phase": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-DSZ: DOUBLE SWEEP ZONE GUARDIAN =================
+class DoubleSweepZoneGuardianV100:
+    """🔥 V100-DSZ: DOUBLE SWEEP ZONE GUARDIAN - ANTI-FLUSH TRAP
+    
+    Zona dimana Short Liq < 1% AND Long Liq < 4% adalah area 'Killzone'!
+    MM sering melakukan fake sweep ke satu arah, lalu reverse!
+    """
+    
+    DSZ_SHORT_DIST_THRESHOLD = 1.0
+    DSZ_LONG_DIST_THRESHOLD = 4.0
+    DSZ_FLUSH_PROB_CRITICAL = 50.0
+    DSZ_MIN_TIME_BEFORE_MOVE = 1800      # 30 minutes
+    
+    @staticmethod
+    def evaluate(short_liq_pct: float, long_liq_pct: float, 
+                 flush_probability: float, current_flow: float) -> Dict:
+        """
+        TRIAUSDT Case:
+        - Short Liq: 0.19% (<1% = BAIT!)
+        - Long Liq: 2.06% (<4% = DANGER!)
+        - Flush Prob: 50% (Critical!)
+        - Flow: 4.0x (Enough to trigger dump)
+        """
+        
+        if (short_liq_pct <= DoubleSweepZoneGuardianV100.DSZ_SHORT_DIST_THRESHOLD and 
+            long_liq_pct <= DoubleSweepZoneGuardianV100.DSZ_LONG_DIST_THRESHOLD):
+            
+            if flush_probability >= DoubleSweepZoneGuardianV100.DSZ_FLUSH_PROB_CRITICAL:
+                return {
+                    "is_killzone": True,
+                    "killzone_type": "DUAL_APPROACH",
+                    "confidence": "ABSOLUTE",
+                    "bias": "WAIT",  # DO NOT ENTER!
+                    "reason": f"DSZ_KILLZONE_DOUBLE_SWEEP: Short {short_liq_pct:.2f}% + Long "
+                             f"{long_liq_pct:.2f}% both dangerously close! Flush Prob "
+                             f"{flush_probability:.1f}% (CRITICAL!). MM akan sweep one side "
+                             f"first, then reverse! DO NOT SQUEEZE HERE!",
+                    "wait_minutes": 30,  # Wait 30 min minimum
+                    "entry_signal": "POST_SWEEP_CONFIRMATION"
+                }
+            
+            # Double sweep detected but flush prob not critical
+            return {
+                "is_killzone": True,
+                "killzone_type": "DUAL_ZONE",
+                "confidence": "HIGH",
+                "bias": "NEUTRAL",
+                "reason": f"DSZ_DUAL_ZONE_DETECTED: Short {short_liq_pct:.2f}% + Long {long_liq_pct:.2f}% "
+                         f"both in dangerous zone. Flush Prob {flush_probability:.1f}% (Monitor).",
+                "wait_minutes": 15,
+                "entry_signal": "WAIT"
+            }
+        
+        return {"is_killzone": False, "bias": "NEUTRAL"}
+
+
+# ================= V88_PLUS_FINAL_TRIA_FIXED: UPDATED CONFLICT RESOLVER =================
+class ConflictResolverV88_PLUS_FINAL_TRIA_FIXED:
+    """🔥 FINAL VERSION - ALL TRAPS COVERED (WITH ANTI-TRIA LOGIC)
+    
+    URUTAN PRIORITAS MUTLAK – ANTI-ALL-PATTERNS
+    
+    ┌─────────────────────────────────────────────────────┐
+    │  LEVEL 0: ABSOLUTE OVERRIDE (BEFORE ALL ELSE)        │
+    ├─────────────────────────────────────────────────────┤
+    │  0. V100-NOS (Nuclear Overbought Shield)            │
+    │  1. V100-RST (RSI Squeeze Threshold)                 │ ← NEW!
+    │  2. V100-DSZ (Double Sweep Zone Guardian)            │ ← NEW!
+    │  3. V100-DTF (Distribution Time Filter)              │ ← NEW!
+    │  4. V100-SSE (Signal Stability Engine)               │
+    │  5. V99-EVR (Extreme Vacuum Reversal)                │
+    │  6. V100-LFC (Liquidity Flush Coordinator)           │
+    │  7. V87-ZAS (Zero Aggression Squeeze)                │
+    │  8. V99-WMI_VETO                                     │
+    └─────────────────────────────────────────────────────┘
+    """
+    
+    @staticmethod
+    def resolve_all_hft_signals_v88_final(results):
+        """
+        Args:
+            results: Dictionary berisi hasil dari semua module
+        """
+        
+        # STEP 1: Check Nuclear Overbought FIRST!
+        nos_res = results.get('nos_v100', {})
+        if nos_res and isinstance(nos_res, dict) and nos_res.get('is_nuclear'):
+            return {
+                "final_bias": nos_res.get('bias', 'SHORT'),
+                "confidence": nos_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-NOS_OVERRIDE: {nos_res.get('reason', '')}",
+                "phase": "NUCLEAR_OVERBOUGHT_SHUTDOWN",
+                "priority_level": 0
+            }
+        
+        # STEP 2: Check RSI Squeeze Threshold
+        rst_res = RSISqueezeThresholdV100.validate(
+            rsi6=results.get('rsi6', 50),
+            oi_delta_5m=results.get('oi_delta_5m', 0),
+            wmi_ratio=results.get('wmi_ratio', 0),
+            short_dist=results.get('short_liq', 0),
+            flow=results.get('trade_flow', 0)
+        )
+        
+        if rst_res.get('is_trap'):
+            return {
+                "final_bias": rst_res.get('bias', 'SHORT'),
+                "confidence": rst_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-RST_OVERRIDE: {rst_res.get('reason', '')}",
+                "phase": "RSI_SQUEEZE_BLOCKED",
+                "priority_level": 0
+            }
+        
+        # STEP 3: Check Double Sweep Killzone
+        dsz_res = DoubleSweepZoneGuardianV100.evaluate(
+            short_liq_pct=results.get('short_liq', 0),
+            long_liq_pct=results.get('long_liq', 0),
+            flush_probability=results.get('flush_probability', 0),
+            current_flow=results.get('trade_flow', 0)
+        )
+        
+        if dsz_res.get('is_killzone'):
+            return {
+                "final_bias": dsz_res.get('bias', 'NEUTRAL'),
+                "confidence": dsz_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-DSZ_OVERRIDE: {dsz_res.get('reason', '')}",
+                "phase": "KILLZONE_WAIT_TRIGGER",
+                "priority_level": 0,
+                "wait_seconds": dsz_res.get('wait_minutes', 30) * 60
+            }
+        
+        # STEP 4: Check Distribution Phase
+        dtf_res = DistributionTimeFilterV100.check_distribution_active(
+            psv_result=results.get('psv_v78', {}),
+            ier_result=results.get('ier_v80', {}),
+            oi_delta=results.get('oi_delta_5m', 0)
+        )
+        
+        if dtf_res.get('is_distribution_phase'):
+            return {
+                "final_bias": dtf_res.get('bias', 'SHORT'),
+                "confidence": dtf_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-DTF_OVERRIDE: {dtf_res.get('reason', '')}",
+                "phase": "PASSIVE_DISTRIBUTION_SHUTDOWN",
+                "priority_level": 0
+            }
+        
+        # STEP 5: Zero Aggression Override (ZAO)
+        zao_res = results.get('zao_v100', {})
+        if zao_res and isinstance(zao_res, dict) and zao_res.get('is_zero_aggression_trap'):
+            return {
+                "final_bias": "LONG",
+                "confidence": zao_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-ZAO_OVERRIDE: {zao_res.get('reason', '')}",
+                "phase": "ZERO_AGGRESSION_CONFIRMED",
+                "priority_level": 1
+            }
+        
+        # STEP 6: Extreme Imbalance (SCT-AF)
+        sct_af_res = results.get('sct_af_v99', {})
+        if sct_af_res and isinstance(sct_af_res, dict) and sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
+            return {
+                "final_bias": sct_af_res.get('bias', 'LONG'),
+                "confidence": sct_af_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99-SCT-AF_OVERRIDE: {sct_af_res.get('reason', '')}",
+                "phase": "EXTREME_SHORT_CROWD_CONFIRMED",
+                "priority_level": 1
+            }
+        
+        # STEP 7: Flow Velocity Two-Phase (FVC-TWO)
+        fvc_two_res = results.get('fvc_two_v100', {})
+        if fvc_two_res and isinstance(fvc_two_res, dict) and fvc_two_res.get('is_valid_squeeze') and fvc_two_res.get('phase') == 'EXECUTION_READY':
+            return {
+                "final_bias": "LONG",
+                "confidence": fvc_two_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-FVC-TWO: {fvc_two_res.get('reason', '')}",
+                "phase": "FUEL_VERIFIED",
+                "priority_level": 2
+            }
+        
+        # STEP 8: Existing Critical Modules
+        evr_res = results.get('evr_v98', {})
+        if evr_res and isinstance(evr_res, dict) and evr_res.get('is_extreme_reversal'):
+            return {
+                "final_bias": "LONG",
+                "confidence": evr_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V98-EVR_OVERRIDE: {evr_res.get('reason', '')}",
+                "phase": "EXTREME_REVERSAL_CONFIRMED",
+                "priority_level": 3
+            }
+        
+        # STEP 9: Signal Stability Engine (SSE) - akan di-handle di analyzer
+        # STEP 10: Fallback to WMI Veto
+        wmi_res = results.get('wmi_veto', {})
+        if wmi_res and isinstance(wmi_res, dict) and wmi_res.get('is_veto'):
+            return {
+                "final_bias": wmi_res.get('bias', 'NEUTRAL'),
+                "confidence": "HIGH",
+                "reason": wmi_res.get('reason', ''),
+                "phase": "WHALE_SINGULARITY_CONFIRMED",
+                "priority_level": 4
+            }
+        
+        # DEFAULT
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "NONE",
+            "reason": "No override signals detected. Market in neutral phase.",
+            "phase": "NORMAL",
+            "priority_level": 10
+        }
 
 
 # ================= V88_FINAL_REVOLUTION: UPDATED CONFLICT RESOLVER =================
@@ -15856,6 +16204,12 @@ class BinanceAnalyzerV87:
         
         self.resolver_v88_final = ConflictResolverV88_FINAL_REVOLUTION()  # V88 FINAL REVOLUTION Resolver ⭐ NEW!
         
+        # ===== ANTI-TRIAUSDT MODULES =====
+        self.rst_v100 = RSISqueezeThresholdV100()                 # V100-RST (RSI Squeeze Threshold)
+        self.dtf_v100 = DistributionTimeFilterV100()              # V100-DTF (Distribution Time Filter)
+        self.dsz_v100 = DoubleSweepZoneGuardianV100()             # V100-DSZ (Double Sweep Zone Guardian)
+        self.tria_resolver = ConflictResolverV88_PLUS_FINAL_TRIA_FIXED()  # New resolver with anti-TRIA logic
+        
         # ===== V100-STABLE: STABILITY ENGINE MODULES =====
         self.sse_engine = SignalStabilityEngineV100()           # V100-SSE (Singleton)
         self.vtf_validator = VolumeTimeFrameValidatorV100()     # V100-VTF
@@ -17036,6 +17390,36 @@ class BinanceAnalyzerV87:
             sct_af_result = safe_dict(sct_af_result)
             fvc_two_result = safe_dict(fvc_two_result)
             
+            # ===== PANGGIL ANTI-TRIAUSDT MODULES =====
+            # V100-RST: RSI Squeeze Threshold
+            rst_result = self.rst_v100.validate(
+                rsi6=rsi6,
+                oi_delta_5m=oi_delta_5m,
+                wmi_ratio=wmi_ratio,
+                short_dist=liq.get('short_dist', 0),
+                flow=trades.get('ratio', 0)
+            )
+            
+            # V100-DSZ: Double Sweep Zone Guardian
+            dsz_result = self.dsz_v100.evaluate(
+                short_liq_pct=liq.get('short_dist', 0),
+                long_liq_pct=liq.get('long_dist', 0),
+                flush_probability=flush_probability if 'flush_probability' in locals() else 0,
+                current_flow=trades.get('ratio', 0)
+            )
+            
+            # V100-DTF: Distribution Time Filter
+            dtf_result = self.dtf_v100.check_distribution_active(
+                psv_result=psv_result if 'psv_result' in locals() else {},
+                ier_result=ier_result if 'ier_result' in locals() else {},
+                oi_delta=oi_delta_5m
+            )
+            
+            # Safe dict untuk hasil anti-TRIA
+            rst_result = safe_dict(rst_result)
+            dsz_result = safe_dict(dsz_result)
+            dtf_result = safe_dict(dtf_result)
+            
             # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
             final_decision = self.resolver_v88_final.resolve_all_hft_signals({
                 # NEW MODULES - PRIORITAS TERTINGGI (ZAO, SCT-AF, FVC-TWO) ⭐
@@ -18001,6 +18385,32 @@ class BinanceAnalyzerV87:
                 "priority_level": stable_result.get('priority_level', 99),
                 "allow_flip": stable_result.get('allow_flip', True),
                 "reason": stable_result.get('reason', '')
+            }
+            
+            # ===== HASIL ANTI-TRIAUSDT MODULES =====
+            result["rst_v100"] = {
+                "is_trap": rst_result.get('is_trap', False),
+                "warning": rst_result.get('warning', False),
+                "bias": rst_result.get('bias', 'NEUTRAL'),
+                "reason": rst_result.get('reason', ''),
+                "confidence": rst_result.get('confidence', 'LOW')
+            }
+            
+            result["dsz_v100"] = {
+                "is_killzone": dsz_result.get('is_killzone', False),
+                "killzone_type": dsz_result.get('killzone_type', 'NONE'),
+                "bias": dsz_result.get('bias', 'NEUTRAL'),
+                "reason": dsz_result.get('reason', ''),
+                "confidence": dsz_result.get('confidence', 'LOW'),
+                "wait_minutes": dsz_result.get('wait_minutes', 0)
+            }
+            
+            result["dtf_v100"] = {
+                "is_distribution_phase": dtf_result.get('is_distribution_phase', False),
+                "distribution_type": dtf_result.get('distribution_type', 'NONE'),
+                "bias": dtf_result.get('bias', 'NEUTRAL'),
+                "reason": dtf_result.get('reason', ''),
+                "confidence": dtf_result.get('confidence', 'LOW')
             }
 
             return result
