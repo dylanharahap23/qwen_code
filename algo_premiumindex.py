@@ -340,6 +340,287 @@ DSZ_LONG_DIST_THRESHOLD = 4.0        # Long Liq < 4% = Dangerous Proximity
 DSZ_FLUSH_PROB_CRITICAL = 50.0       # Flush Prob > 50% = Critical Risk
 DSZ_MIN_TIME_BEFORE_MOVE = 1800      # 30 minutes min wait after double sweep
 
+# ================= V100-LGT: LIQUIDATION GRAVITY TRAP CONFIG =================
+LGT_LONG_LIQ_THRESHOLD = 0.5        # Long Liq < 0.5% = Danger Zone!
+LGT_WMI_NEGATIVE_MIN = -90          # WMI < -90 = Downside Target Active
+LGT_AGG_MAX_FOR_DROP = 1.0          # Agg < 1.0 = No real buying pressure
+LGT_FLOW_MAX_FOR_FUEL = 1.5         # Flow < 1.5 = No reversal fuel
+
+# ================= V100-TDI: TREND INTEGRITY FILTER CONFIG =================
+TDI_MACD_BEARISH_CONFIRM = True
+TDI_OBV_NEGATIVE_CHECK = True
+TDI_PRICE_CHANGE_MIN_THRESHOLD = -1.0
+TDI_CONFIRMATION_REQUIRED_FLOW = 2.0
+TDI_BEARISH_SIGNAL_THRESHOLD = 3     # Minimal 3 indikator bearish
+
+# ================= V100-FDF: FLUSH PROBABILITY CALCULATOR CONFIG =================
+FDF_LONG_LIQ_DANGER = 0.5
+FDF_AGGRESSION_DEATH = 0.1
+FDF_FLOW_SUSPICIOUS_LOW = 1.0
+FDF_RSI_NOT_EXTREME = 35.0
+FDF_RISK_SCORE_CRITICAL = 80
+
+# ================= V100-GOD: GRAVITY OVERDRIVE CONFIG =================
+GOD_WMI_PRIORITY_THRESHOLD = 95
+GOD_PAYOUT_RATIO_PRIORITY = 50
+GOD_NEARBY_LIQ_THRESHOLD = 1.0
+
+# ================= V100-LGT: LIQUIDATION GRAVITY TRAP DETECTOR =================
+class LiquidationGravityTrapDetectorV100:
+    """🔥 V100-LGT: LIQUIDATION GRAVITY TRAP - ANTI-COSUSDT TRAP
+    
+    Prinsip HFT Binance:
+    "Jika Long Liq < 0.5% DAN WMI < -95 AND Agg Low, 
+    itu bukan squeeze opportunity – itu LIQUIDATION TARGET!"
+    
+    Kaedah:
+    • Jangan pernah masuk LONG jika Long Liq < 0.5% dengan WMI < -90
+    • MM akan menghajar Long Liq dulu sebelum mau squeeze
+    """
+    
+    LGT_LONG_LIQ_THRESHOLD = 0.5
+    LGT_WMI_NEGATIVE_MIN = -90
+    LGT_AGG_MAX_FOR_DROP = 1.0
+    LGT_FLOW_MAX_FOR_FUEL = 1.5
+    
+    @staticmethod
+    def detect(long_dist: float, wmi_ratio: float, agg: float, flow: float, rsi: float) -> Dict:
+        """
+        COSUSDT Case Validation:
+        - Long Dist: 0.1% (< 0.5%) ✅ Danger Triggered!
+        - WMI: -99.9x (< -90) ✅ Downside Target Confirmed!
+        - Agg: 0.05x (< 1.0) ✅ No buyer aggression!
+        - Flow: 0.56x (< 1.5) ✅ No reversal fuel!
+        - RSI: 25.4 (NOT extreme oversold) ✅ Still room to dump!
+        """
+        
+        if long_dist <= LiquidationGravityTrapDetectorV100.LGT_LONG_LIQ_THRESHOLD:
+            if wmi_ratio <= LiquidationGravityTrapDetectorV100.LGT_WMI_NEGATIVE_MIN:
+                if agg <= LiquidationGravityTrapDetectorV100.LGT_AGG_MAX_FOR_DROP:
+                    if flow <= LiquidationGravityTrapDetectorV100.LGT_FLOW_MAX_FOR_FUEL:
+                        return {
+                            "is_liquidity_gravity_trap": True,
+                            "bias": "SHORT",
+                            "confidence": "ABSOLUTE",
+                            "reason": f"LGT_LIQUIDATION_GRAVITY_TRAP: Long Liq only {long_dist:.1f}% away! "
+                                     f"WMI {wmi_ratio:.1f}x confirms DOWNSIDE TARGET active! "
+                                     f"Agg {agg:.1f}x (NO BUYERS!) + Flow {flow:.2f}x (NO FUEL!). "
+                                     f"TIDAK ADA ALASAN untuk SQUEEZE UP! MM akan hajar Long Liq dulu!",
+                            "override_modules": ["ZAO_ZERO_AGGRESSION", "SCT_CROWDED_SHORT", "LCD_COMPRESSION"],
+                            "priority_level": 0,
+                            "estimated_dump_distance": f"-{long_dist * 1.5:.1f}%",
+                            "wait_condition": "LONG_LIQ_HIT_AND_RECOVERY"
+                        }
+        
+        return {"is_liquidity_gravity_trap": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-TDI: TREND INTEGRITY FILTER =================
+class TrendIntegrityFilterV100:
+    """🔥 V100-TDI: TREND INTEGRITY FILTER - ANTI-FAKE REVERSAL
+    
+    Prinsip China Algo Trading:
+    "Jangan melawan tren besar (MACD/Bearish/Downside OBV) 
+    kecuali ada CONFIRMED BREAKOUT + Volume Konfirmasi"
+    """
+    
+    TDI_CONFIRMATION_REQUIRED_FLOW = 2.0
+    TDI_BEARISH_SIGNAL_THRESHOLD = 3
+    
+    @staticmethod
+    def check_trend_integrity(
+        macd_bearish: bool,
+        obv: float,
+        price_change_5m: float,
+        flow: float,
+        oi_delta: float
+    ) -> Dict:
+        """
+        COSUSDT Case:
+        - MACD Bearish: True ✅
+        - OBV: -1237858978 (NEGATIVE!) ✅
+        - Price Change: -1.91% (Already down!) ✅
+        - Flow: 0.56x (No breakout fuel!) ✅
+        - OI Delta: -0.35% (Positions closing!) ✅
+        """
+        
+        bearish_signals = 0
+        
+        if macd_bearish:
+            bearish_signals += 1
+            
+        if obv < -10000000:  # OBV sangat negatif
+            bearish_signals += 1
+            
+        if price_change_5m < -1.0:
+            bearish_signals += 1
+            
+        if oi_delta < -0.5:
+            bearish_signals += 1
+        
+        if bearish_signals >= TrendIntegrityFilterV100.TDI_BEARISH_SIGNAL_THRESHOLD:
+            if flow < TrendIntegrityFilterV100.TDI_CONFIRMATION_REQUIRED_FLOW:
+                return {
+                    "trend_integrity_violated": True,
+                    "bearish_signals": bearish_signals,
+                    "confidence": "HIGH",
+                    "bias": "SHORT",
+                    "reason": f"TDI_TREND_INTEGRITY: {bearish_signals}/4 bearish indicators active! "
+                             f"MACD Bearish + OBV Negative + Price Already Down {price_change_5m:.1f}% + "
+                             f"OI Closing {oi_delta:.1f}%. "
+                             f"Flow only {flow:.2f}x (NO BREAKOUT CONFIRMATION). "
+                             f"DONT COUNTER THE BIG TREND!",
+                    "override_reversal_modules": ["ZAS_SQUEEZE", "LGD_GAP_SQUEEZE", "OVS_REVERSAL"]
+                }
+        
+        return {"trend_integrity_violated": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-FDF: FLUSH PROBABILITY CALCULATOR =================
+class FlushProbabilityCalculatorV100:
+    """🔥 V100-FDF: FLUSH PROBABILITY CALCULATOR - PRE-DUMP WARNING
+    
+    Hitung probabilitas flush berdasarkan kombinasi indikator
+    """
+    
+    FDF_LONG_LIQ_DANGER = 0.5
+    FDF_AGGRESSION_DEATH = 0.1
+    FDF_FLOW_SUSPICIOUS_LOW = 1.0
+    FDF_RSI_NOT_EXTREME = 35.0
+    FDF_RISK_SCORE_CRITICAL = 80
+    
+    @staticmethod
+    def calculate(
+        long_liq_pct: float,
+        agg: float,
+        flow: float,
+        rsi: float,
+        price_change: float,
+        wmi: float
+    ) -> Dict:
+        """
+        COSUSDT Case:
+        - Long Liq: 0.1% (< 0.5%) ✅ High Risk
+        - Agg: 0.05x (< 0.1) ✅ Market Death
+        - Flow: 0.56x (< 1.0) ✅ Suspicious
+        - RSI: 25.4 (> 35 = NOT extreme) ✅ Room to dump
+        - Price Change: -1.91% ✅ Already starting
+        - WMI: -99.9x ✅ Downside Confirmed
+        """
+        
+        risk_score = 0
+        
+        if long_liq_pct <= FlushProbabilityCalculatorV100.FDF_LONG_LIQ_DANGER:
+            risk_score += 30
+            
+        if agg <= FlushProbabilityCalculatorV100.FDF_AGGRESSION_DEATH:
+            risk_score += 25
+            
+        if flow <= FlushProbabilityCalculatorV100.FDF_FLOW_SUSPICIOUS_LOW:
+            risk_score += 20
+            
+        if rsi > FlushProbabilityCalculatorV100.FDF_RSI_NOT_EXTREME:
+            risk_score += 10
+            
+        if abs(wmi) > 90:
+            risk_score += 15
+            
+        if price_change < -1.0:
+            risk_score += 10
+        
+        if risk_score >= FlushProbabilityCalculatorV100.FDF_RISK_SCORE_CRITICAL:
+            return {
+                "flush_probability": min(risk_score, 100),
+                "is_critical_flush_zone": True,
+                "bias": "SHORT",
+                "confidence": "SUPREME",
+                "reason": f"FDF_FLUSH_PROBABILITY: Risk Score {risk_score}% detected! "
+                         f"Long Liq too close + Market Death + No Buy Pressure. "
+                         f"High probability of -{risk_score//4:.0f}% dump incoming!",
+                "action": "AVOID_LONG_ENTRY_UNLESS_FLUSH_COMPLETE"
+            }
+        
+        return {
+            "flush_probability": min(risk_score, 100),
+            "is_critical_flush_zone": False,
+            "bias": "NEUTRAL"
+        }
+
+
+# ================= V100-GOD: GRAVITY OVERDRIVE MODULE =================
+class GravityOverdriveModuleV100:
+    """🔥 V100-GOD: GRAVITY OVERDRIVE - FINAL PRIORITY OVERRIDE
+    
+    Gravitasi Likuiditas > Semua Indikator Lain!
+    """
+    
+    GOD_WMI_PRIORITY_THRESHOLD = 95
+    GOD_PAYOUT_RATIO_PRIORITY = 50
+    GOD_NEARBY_LIQ_THRESHOLD = 1.0
+    
+    @staticmethod
+    def check_gravity_priority(
+        wmi_ratio: float,
+        payout_long: float,
+        payout_short: float,
+        nearest_liq: str,
+        liq_dist: float,
+        odf_bias: str = "",
+        lep_bias: str = "",
+        sat_bias: str = ""
+    ) -> Dict:
+        """
+        COSUSDT Case:
+        - WMI: -99.9x → SHORT Gravity
+        - LPC: Long payout 907x >> Short payout → LONG Liq target (SHORT bias)
+        - Nearest Liq: LONG (0.1%) → MUST hit this first
+        """
+        
+        if abs(wmi_ratio) >= GravityOverdriveModuleV100.GOD_WMI_PRIORITY_THRESHOLD:
+            bias = "SHORT" if wmi_ratio < 0 else "LONG"
+            return {
+                "gravity_override_active": True,
+                "override_confidence": "ABSOLUTE",
+                "bias": bias,
+                "reason": f"GOD_GRAVITY_OVERRIDE: WMI {wmi_ratio:.1f}x absolute priority! "
+                         f"Market maker cannot ignore massive liquidation cluster.",
+                "priority_level": -1  # HIGHEST POSSIBLE!
+            }
+        
+        # Payout ratio
+        if payout_long > 0 and payout_short > 0:
+            payout_ratio = max(payout_long, payout_short) / min(payout_long, payout_short)
+            if payout_ratio >= GravityOverdriveModuleV100.GOD_PAYOUT_RATIO_PRIORITY:
+                dominant_side = "LONG" if payout_long > payout_short else "SHORT"
+                opposing_direction = "SHORT" if dominant_side == "LONG" else "LONG"
+                
+                return {
+                    "gravity_override_active": True,
+                    "override_confidence": "SUPREME",
+                    "bias": opposing_direction,
+                    "reason": f"GOD_PAYOUT_OVERRIDE: {dominant_side} Liq payout {payout_ratio:.1f}x "
+                             f"> {opposing_direction}. MM will hit the bigger pool first!",
+                    "priority_level": -1
+                }
+        
+        if liq_dist <= GravityOverdriveModuleV100.GOD_NEARBY_LIQ_THRESHOLD:
+            bias = "SHORT" if nearest_liq == "LONG" else "LONG"
+            return {
+                "gravity_override_active": True,
+                "override_confidence": "HIGH",
+                "bias": bias,
+                "reason": f"GOD_NEARBY_LIQ: {nearest_liq} Liquidity only {liq_dist:.1f}% away! "
+                         f"This is guaranteed target. DO NOT STAND IN FRONT OF GRAVITY!",
+                "priority_level": -1
+            }
+        
+        return {
+            "gravity_override_active": False,
+            "override_confidence": "LOW",
+            "bias": "NEUTRAL"
+        }
+
+
 # ================= V100-ZAO: ZERO AGGRESSION OVERRIDE MODULE =================
 class ZeroAggressionOverrideV100:
     """
@@ -7144,6 +7425,141 @@ class DoubleSweepZoneGuardianV100:
 
 
 # ================= V88_PLUS_FINAL_TRIA_FIXED: UPDATED CONFLICT RESOLVER =================
+class ConflictResolverV88_PLUS_FINAL_COSUSDT_FIXED:
+    """🔥 FINAL VERSION - ALL TRAPS COVERED (WITH ANTI-COSUSDT LOGIC)
+    
+    URUTAN PRIORITAS MUTLAK – ANTI-ALL-PATTERNS
+    
+    ┌─────────────────────────────────────────────────────┐
+    │  LEVEL -1: GRAVITY OVERDRIVE (BEFORE ALL ELSE)       │ ← NEW!
+    ├─────────────────────────────────────────────────────┤
+    │  -1. V100-GOD (Gravity Overdrive Module)             │ ← HIGHEST!
+    │  0. V100-LGT (Liquidation Gravity Trap)              │ ← CRITICAL!
+    │  1. V100-FDF (Flush Probability Calculator)          │
+    │  2. V100-TDI (Trend Integrity Filter)                │
+    │  3. V100-ZAO (Zero Aggression Override)              │
+    │  4. V99-SCT-AF (Extreme Imbalance Validator)         │
+    │  5. V100-LFC Enhanced (Liquidity Flush Coordinator)  │
+    │  6. V87-ZAS (Zero Aggression Squeeze)                │
+    │  7. V87-LCD (Liquidity Compression Detector)         │
+    │  8. V100-RST (RSI Threshold)                         │
+    │  9. V99-WMI_VETO                                      │
+    └─────────────────────────────────────────────────────┘
+    """
+    
+    @staticmethod
+    def resolve_all_hft_signals_final(results):
+        """
+        Args:
+            results: Dictionary berisi hasil dari semua module
+        """
+        
+        # STEP 1: Check Gravity Priority FIRST (Level -1 Priority!)
+        god_res = GravityOverdriveModuleV100.check_gravity_priority(
+            wmi_ratio=results.get('wmi_ratio', 0),
+            payout_long=results.get('lpc_payout_long', 0),
+            payout_short=results.get('lpc_payout_short', 0),
+            nearest_liq=results.get('nearest_liquidity', ''),
+            liq_dist=results.get('long_liq', 999),
+            odf_bias=results.get('odf_bias', ''),
+            lep_bias=results.get('lep_bias', 'NEUTRAL'),
+            sat_bias=results.get('sat_bias', 'NEUTRAL')
+        )
+        
+        if god_res.get('gravity_override_active'):
+            return {
+                "final_bias": god_res['bias'],
+                "confidence": god_res['override_confidence'],
+                "reason": f"V100-GOD_OVERRIDE: {god_res['reason']}",
+                "phase": "GRAVITY_OVERDRIVE_ACTIVE",
+                "priority_level": -1,
+                "override_all_others": True
+            }
+        
+        # STEP 2: Check Liquidation Gravity Trap
+        lgt_res = LiquidationGravityTrapDetectorV100.detect(
+            long_dist=results.get('long_liq', 999),
+            wmi_ratio=results.get('wmi_ratio', 0),
+            agg=results.get('aggressive_ratio', 1.0),
+            flow=results.get('trade_flow', 1.0),
+            rsi=results.get('rsi6', 50)
+        )
+        
+        if lgt_res.get('is_liquidity_gravity_trap'):
+            return {
+                "final_bias": lgt_res['bias'],
+                "confidence": lgt_res['confidence'],
+                "reason": f"V100-LGT_OVERRIDE: {lgt_res['reason']}",
+                "phase": "LIQUIDATION_GRAVITY_TRAP_DETECTED",
+                "priority_level": 0
+            }
+        
+        # STEP 3: Flush Probability Calculation
+        fdf_res = FlushProbabilityCalculatorV100.calculate(
+            long_liq_pct=results.get('long_liq', 999),
+            agg=results.get('aggressive_ratio', 1.0),
+            flow=results.get('trade_flow', 1.0),
+            rsi=results.get('rsi6', 50),
+            price_change=results.get('change_5m', 0),
+            wmi=results.get('wmi_ratio', 0)
+        )
+        
+        if fdf_res.get('is_critical_flush_zone'):
+            return {
+                "final_bias": fdf_res['bias'],
+                "confidence": fdf_res['confidence'],
+                "reason": f"V100-FDF_WARNING: {fdf_res['reason']}",
+                "phase": "FLUSH_ZONE_HIGH_RISK",
+                "priority_level": 1
+            }
+        
+        # STEP 4: Trend Integrity Check
+        tdi_res = TrendIntegrityFilterV100.check_trend_integrity(
+            macd_bearish=results.get('macd_bearish', False),
+            obv=results.get('obv', 0),
+            price_change_5m=results.get('change_5m', 0),
+            flow=results.get('trade_flow', 1.0),
+            oi_delta=results.get('oi_delta_5m', 0)
+        )
+        
+        if tdi_res.get('trend_integrity_violated'):
+            return {
+                "final_bias": tdi_res['bias'],
+                "confidence": tdi_res['confidence'],
+                "reason": f"V100-TDI_OVERRIDE: {tdi_res['reason']}",
+                "phase": "TREND_INTEGRITY_BEARISH",
+                "priority_level": 1
+            }
+        
+        # STEP 5: Zero Aggression (Now Lower Priority!)
+        zao_res = results.get('zao_v100', {})
+        if zao_res and isinstance(zao_res, dict) and zao_res.get('is_zero_aggression_trap'):
+            return {
+                "final_bias": zao_res['bias'],
+                "confidence": zao_res['confidence'],
+                "reason": f"V100-ZAO_OVERRIDE: {zao_res['reason']}",
+                "priority_level": 3
+            }
+        
+        # STEP 6: Extreme Imbalance (SCT-AF)
+        sct_af_res = results.get('sct_af_v99', {})
+        if sct_af_res and isinstance(sct_af_res, dict) and sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
+            return {
+                "final_bias": sct_af_res['bias'],
+                "confidence": sct_af_res['confidence'],
+                "reason": f"V99-SCT-AF_OVERRIDE: {sct_af_res['reason']}",
+                "priority_level": 4
+            }
+        
+        # DEFAULT
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "NONE",
+            "reason": "No override signals detected",
+            "priority_level": 10
+        }
+
+
 class ConflictResolverV88_PLUS_FINAL_TRIA_FIXED:
     """🔥 FINAL VERSION - ALL TRAPS COVERED (WITH ANTI-TRIA LOGIC)
     
@@ -16209,6 +16625,13 @@ class BinanceAnalyzerV87:
         self.dtf_v100 = DistributionTimeFilterV100()              # V100-DTF (Distribution Time Filter)
         self.dsz_v100 = DoubleSweepZoneGuardianV100()             # V100-DSZ (Double Sweep Zone Guardian)
         self.tria_resolver = ConflictResolverV88_PLUS_FINAL_TRIA_FIXED()  # New resolver with anti-TRIA logic
+        
+        # ===== ANTI-COSUSDT MODULES =====
+        self.lgt_v100 = LiquidationGravityTrapDetectorV100()        # V100-LGT
+        self.tdi_v100 = TrendIntegrityFilterV100()                 # V100-TDI
+        self.fdf_v100 = FlushProbabilityCalculatorV100()           # V100-FDF
+        self.god_v100 = GravityOverdriveModuleV100()               # V100-GOD
+        self.cosu_resolver = ConflictResolverV88_PLUS_FINAL_COSUSDT_FIXED()  # New resolver
         
         # ===== V100-STABLE: STABILITY ENGINE MODULES =====
         self.sse_engine = SignalStabilityEngineV100()           # V100-SSE (Singleton)
