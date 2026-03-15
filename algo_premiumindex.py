@@ -393,6 +393,31 @@ AEF_NO_DIRECTION_PRIORITY = True         # Ketika market mati, tidak ada sinyal 
 # ================= V100-LPF-ENHANCED: LIQUIDATION PRE-FLUSH ENHANCED CONFIG =================
 LPF_ENHANCED_WAIT_SECONDS = 300          # 5 menit default wait
 
+# ================= V100-LPC-PRIORITY: LIQUIDATION PAYOUT OVERRIDE =================
+LPC_PRIORITY_THRESHOLD = 100.0           # Payout Ratio > 100x = Critical Priority
+LPC_LONG_TARGET_MIN_DISTANCE = 2.0       # Long Liq must be within 2% to be dangerous
+LPC_CONFIDENCE_MIN = 0.6                 # (tidak digunakan langsung)
+
+# ================= V100-LPF-ENHANCED-V2: LIQUIDATION PRE-FLUSH ENHANCED V2 =================
+LPF_CRITICAL_FLUSH_PROBABILITY_MIN = 60.0   # Flush Prob > 60% = Critical Alert
+LPF_EXPECTED_RANGE_MIN = 2.0                # Expected range > 2% = Significant Move
+LPF_CONFIDENCE_HIGH_THRESHOLD = 0.6         # (tidak digunakan langsung)
+
+# ================= V100-OCV: OI COLLAPSE VALIDATOR =================
+OCV_OI_COLLAPSE_THRESHOLD = -1.0       # OI delta < -1.0% = Collapse
+OCV_PRICE_DUMP_THRESHOLD = -1.5        # Price change < -1.5% = Dump
+OCV_OBV_NEGATIVE_CHECK = True           # Must have negative OBV confirmation
+
+# ================= V100-TIF: TREND INTEGRITY FILTER =================
+TIF_BEARISH_SIGNALS_REQUIRED = 3        # Min 3 bearish indicators
+TIF_MACD_DEAD_ZONE_THRESHOLD = True
+TIF_RSI_OVERBOUGHT_MAX = 30
+
+# ================= V100-WGV: WHALE GRAVITY VELOCITY CHECKER =================
+WGV_LONG_LIQ_DANGER_THRESHOLD = 1.0      # Long Liq < 1% = Death Zone!
+WGV_WMI_NEGATIVE_THRESHOLD = -95          # WMI < -95 = Strong Downward Gravity
+WGV_FLOW_INSUFFICIENT_THRESHOLD = 1.5     # Flow < 1.5 = Cannot overcome gravity
+
 # ================= V100-LGT: LIQUIDATION GRAVITY TRAP DETECTOR =================
 class LiquidationGravityTrapDetectorV100:
     """🔥 V100-LGT: LIQUIDATION GRAVITY TRAP - ANTI-COSUSDT TRAP
@@ -976,6 +1001,9 @@ class LiquidationPreFlushEnhancedV100:
     """
     
     LPF_ENHANCED_WAIT_SECONDS = 300
+    LPF_CRITICAL_FLUSH_PROBABILITY_MIN = 60.0
+    LPF_EXPECTED_RANGE_MIN = 2.0
+    LPF_CONFIDENCE_HIGH_THRESHOLD = 0.6
     
     @staticmethod
     def check_flush_conflict(lp_res: Dict, other_signals: Dict) -> Dict:
@@ -1002,6 +1030,254 @@ class LiquidationPreFlushEnhancedV100:
                 }
         
         return {"lpf_override_active": False, "bias": "NEUTRAL"}
+    
+    @staticmethod
+    def check_critical_flush(lp_data: Dict) -> Dict:
+        """
+        LYNUSDT Case:
+        - flush_detected: TRUE
+        - expected_range: -3.0% to -7.0%
+        - confidence: HIGH
+        """
+        
+        flush_probability = lp_data.get('flush_probability', 0)
+        expected_range = lp_data.get('expected_flush_range', '')
+        confidence = lp_data.get('confidence', 'NONE')
+        
+        # Parse expected range
+        try:
+            min_dump, max_dump = map(float, expected_range.replace('%', '').split(' to '))
+            expected_move = abs(min_dump)
+        except:
+            expected_move = 0
+        
+        if lp_data.get('flush_detected', False):
+            if confidence == 'HIGH':
+                if expected_move >= LiquidationPreFlushEnhancedV100.LPF_EXPECTED_RANGE_MIN:
+                    return {
+                        "lpf_critical_alert": True,
+                        "flush_detected": True,
+                        "confidence": confidence,
+                        "expected_range": expected_range,
+                        "bias": "SHORT",
+                        "reason": f"LPF_CRITICAL_FLUSH_ALERT: Flush {expected_range} detected with HIGH confidence! "
+                                 f"This is not a suggestion, this is a WARNING! "
+                                 f"Do NOT enter LONG until post-flush recovery confirmed!",
+                        "wait_condition": "POST_FLUSH_RECOVERY",
+                        "recommended_wait_minutes": 30,
+                        "priority_level": 0
+                    }
+        
+        return {"lpf_critical_alert": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-LPC-PRIORITY: LIQUIDATION PAYOUT CALCULATOR OVERRIDE =================
+class LiquidationPayoutCalculatorPriorityV100:
+    """🔥 V100-LPC-PRIORITY: LIQUIDATION PAYOUT CALCULATOR OVERRIDE
+    
+    Prinsip Utama:
+    "Jika Long Payout jauh lebih besar dari Short Payout 
+    -> Market Maker TIDAK akan squeeze karena target terlalu kecil!
+    -> Mereka akan menghajar Long Liq terlebih dahulu!"
+    
+    Rule: LPC Bias > All Squeeze Signals when ratio > 100x
+    """
+    
+    LPC_PRIORITY_THRESHOLD = 100.0
+    LPC_LONG_TARGET_MIN_DISTANCE = 2.0
+    LPC_CONFIDENCE_MIN = 0.6
+    
+    @staticmethod
+    def check_priority(payout_long: float, payout_short: float, 
+                       long_dist: float, wc_confidence: float) -> Dict:
+        """
+        LYNUSDT Case:
+        - Payout Long: 40,198,217 (> Payout Short by 283x!)
+        - Payout Short: 141,634
+        - Long Dist: 0.28% (< 1% = EXTREME DANGER!)
+        - WC Confidence: HIGH
+        """
+        
+        payout_ratio = payout_long / max(payout_short, 1.0)
+        
+        if payout_ratio >= LiquidationPayoutCalculatorPriorityV100.LPC_PRIORITY_THRESHOLD:
+            if abs(long_dist) <= LiquidationPayoutCalculatorPriorityV100.LPC_LONG_TARGET_MIN_DISTANCE:
+                
+                return {
+                    "is_payout_override_active": True,
+                    "override_type": "LPC_GRAVITY_DOMINANCE",
+                    "confidence": "SUPREME",
+                    "bias": "SHORT",
+                    "reason": f"LPC_PAYOUT_OVERRIDE: Long Payout ${payout_long:,.0f} vs "
+                             f"Short Payout ${payout_short:,.0f} (Ratio {payout_ratio:.1f}x). "
+                             f"Long Liq only {long_dist:.2f}% away! "
+                             f"MM TIDAK AKAN SQUEEZE UP! Target LONG_Liq harus diselesaikan dulu! "
+                             f"DILARANG LONG!",
+                    "priority_level": -1,  # HIGHEST PRIORITY!
+                    "override_all_squeezes": True
+                }
+        
+        return {"is_payout_override_active": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-OCV: OI COLLAPSE VALIDATOR =================
+class OICollapseValidatorV100:
+    """🔥 V100-OCV: OI COLLAPSE VALIDATOR - LIQUIDATION CASCADE DETECTION
+    
+    Prinsip Penting:
+    • OI ↑ + Price ↓ = Short Build (Bearish BUT could reverse later)
+    • OI ↓ + Price ↓ = Long Liquidation (CATASTROPHE for longs!)
+    
+    Jika kedua kondisi terjadi bersamaan = LIQUIDATION CASCADE!
+    """
+    
+    OCV_OI_COLLAPSE_THRESHOLD = -1.0
+    OCV_PRICE_DUMP_THRESHOLD = -1.5
+    OCV_OBV_NEGATIVE_CHECK = True
+    
+    @staticmethod
+    def detect(
+        oi_delta_5m: float,
+        price_change_5m: float,
+        obv_value: float
+    ) -> Dict:
+        """
+        LYNUSDT Case:
+        - OI Delta: -1.66% (< -1.0% = COLLAPSE!)
+        - Price Change: -2.83% (< -1.5% = DUMP!)
+        - OBV: -151M (NEGATIVE = Money Outflow!)
+        """
+        
+        if oi_delta_5m <= OICollapseValidatorV100.OCV_OI_COLLAPSE_THRESHOLD:
+            if price_change_5m <= OICollapseValidatorV100.OCV_PRICE_DUMP_THRESHOLD:
+                if obv_value < 0:
+                    
+                    return {
+                        "is_liquidation_cascade": True,
+                        "cascade_type": "LONG_LIQUIDATION_CRASH",
+                        "confidence": "SUPREME",
+                        "bias": "SHORT",
+                        "reason": f"OCV_LIQUIDATION_CASCADE: OI ↓{abs(oi_delta_5m):.2f}% + "
+                                 f"Price ↓{price_change_5m:+.2f}% = POSITIONS BEING LIQUIDATED! "
+                                 f"OBV {obv_value:,.0f} (NEGATIVE MONEY OUTFLOW!). "
+                                 f"Ini BUKAN ACCUMULATION SETUP, ini CATASTROPHE PHASE! "
+                                 f"AIROK LONG UNTIL LIQUIDATION STOPS!",
+                        "override_modules": ["SCT_CROWDED_SHORT", "LFC_SQUEEZE_LOGIC", "LMG_DEATH_MAGNET"],
+                        "priority_level": 0,
+                        "estimated_continuation_days": 2
+                    }
+        
+        return {"is_liquidation_cascade": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-TIF: TREND INTEGRITY FILTER =================
+class TrendIntegrityFilterV100:
+    """🔥 V100-TIF: TREND INTEGRITY FILTER - MARKET DIRECTION VALIDATOR
+    
+    Prinsip China Algo Trading:
+    "Jangan pernah melawan tren besar tanpa konfirmasi BREAKOUT"
+    """
+    
+    TIF_BEARISH_SIGNALS_REQUIRED = 3
+    TIF_MACD_DEAD_ZONE_THRESHOLD = True
+    TIF_RSI_OVERBOUGHT_MAX = 30
+    
+    @staticmethod
+    def check_trend_integrity(
+        macd_bearish: bool,
+        obv_negative: bool,
+        price_trend_down: bool,
+        rsi_low: bool,
+        mpe_bias_short: bool
+    ) -> Dict:
+        """
+        LYNUSDT Case:
+        - MACD Bearish: True ✅
+        - OBV Negative: True ✅
+        - Price Down (-2.83%): True ✅
+        - RSI Low (29.8): True ✅
+        - MPE Bias Short: True ✅
+        """
+        
+        bearish_count = 0
+        bearish_signals = []
+        
+        if macd_bearish:
+            bearish_count += 1
+            bearish_signals.append("MACD_DEAD_ZONE")
+            
+        if obv_negative:
+            bearish_count += 1
+            bearish_signals.append("OBV_MONEY_OUTFLOW")
+            
+        if price_trend_down:
+            bearish_count += 1
+            bearish_signals.append("PRICE_CONTINUATION_DOWN")
+            
+        if rsi_low:
+            bearish_count += 1
+            bearish_signals.append("RSI_OVERSOLD_NOT_BOTTOM")
+            
+        if mpe_bias_short:
+            bearish_count += 1
+            bearish_signals.append("MPE_SHORT_PRESSURE")
+        
+        if bearish_count >= TrendIntegrityFilterV100.TIF_BEARISH_SIGNALS_REQUIRED:
+            
+            return {
+                "trend_integrity_violated": True,
+                "bearish_signal_count": bearish_count,
+                "confidence": "HIGH",
+                "bias": "SHORT",
+                "reason": f"TIF_TREND_INTEGRITY_VIOLATED: {bearish_count}/5 bearish indicators! "
+                         f"{', '.join(bearish_signals)}. "
+                         f"Don't counter-trend against massive momentum! This is continuation phase!",
+                "override_counter_trend_signals": True,
+                "priority_level": 1
+            }
+        
+        return {"trend_integrity_violated": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-WGV: WHALE GRAVITY VELOCITY CHECKER =================
+class WhaleGravityVelocityCheckerV100:
+    """🔥 V100-WGV: WHALE GRAVITY VELOCITY CHECKER
+    
+    Jika Long Liq sangat dekat (<1%) DAN WMI < -95 DAN OI collapse = 
+    Itu bukan opportunity, itu GRAVITY KILL ZONE!
+    """
+    
+    WGV_LONG_LIQ_DANGER_THRESHOLD = 1.0
+    WGV_WMI_NEGATIVE_THRESHOLD = -95
+    WGV_FLOW_INSUFFICIENT_THRESHOLD = 1.5
+    
+    @staticmethod
+    def check_gravity_velocity(long_dist: float, wmi_ratio: float, trade_flow: float) -> Dict:
+        """
+        LYNUSDT Case:
+        - Long Dist: 0.28% (< 1.0% = DEATH ZONE!)
+        - WMI: -99.96 (< -95 = STRONG GRAVITY!)
+        - Flow: 2.57x (Moderate)
+        """
+        
+        if long_dist <= WhaleGravityVelocityCheckerV100.WGV_LONG_LIQ_DANGER_THRESHOLD:
+            if wmi_ratio <= WhaleGravityVelocityCheckerV100.WGV_WMI_NEGATIVE_THRESHOLD:
+                if trade_flow < WhaleGravityVelocityCheckerV100.WGV_FLOW_INSUFFICIENT_THRESHOLD:
+                    return {
+                        "is_gravity_kill_zone": True,
+                        "gravity_type": "LONG_LIQUIDATION_EVENT_HORIZON",
+                        "confidence": "ABSOLUTE",
+                        "bias": "SHORT",
+                        "reason": f"WGV_GRAVITY_KILL_ZONE: Long Liq {long_dist:.2f}% ("
+                                 f"DEATH ZONE!) + WMI {wmi_ratio:.2f}x (STRONG DOWNWARD GRAVITY). "
+                                 f"One whale move = Full liquidation cascade! "
+                                 f"DILARANG LONG SETAAP SAM SEKALI!",
+                        "override_modules": ["ALL_SQUEEZE_LOGICS"],
+                        "priority_level": 0,
+                        "recommended_exit_distance": f"-{long_dist * 1.5:.2f}%"
+                    }
+        
+        return {"is_gravity_kill_zone": False, "bias": "NEUTRAL"}
 
 
 # ================= V100-ZAO: ZERO AGGRESSION OVERRIDE MODULE =================
@@ -8097,6 +8373,109 @@ class ConflictResolverV88_PLUS_FINAL_XAN_FIXED:
 
 
 # ================= V88_PLUS_FINAL_LYNUS_FIXED: UPDATED CONFLICT RESOLVER =================
+class ConflictResolverV88_PLUS_FINAL_GRAVITY_FIXED:
+    """🔥 FINAL PRIORITAS – ANTI-GRAVITY TRAPS"""
+    
+    @staticmethod
+    def resolve_all_hft_signals_final(results):
+        """
+        URUTAN PRIORITAS MUTLAK:
+        ┌─────────────────────────────────────────────────────┐
+        │  LEVEL -1: GRAVITY + EXIT OVERRIDE (BEFORE ALL ELSE)  │
+        ├─────────────────────────────────────────────────────┤
+        │  -1. V100-LPC-PRIORITY (Liquidation Payout Overide)   │ ← NEW!
+        │  -1. V100-WGV (Whale Gravity Velocity)                 │
+        ├─────────────────────────────────────────────────────┤
+        │  0. V100-LPF-ENHANCED (Pre-Flush Critical Alert)     │ ← UPGRADED!
+        │  1. V100-OCV (OI Collapse Validator)                  │ ← NEW!
+        │  2. V100-TIF (Trend Integrity Filter)                 │
+        │  3. V100-SSE (Signal Stability Engine)                │
+        │  4. V99-NOS (Nuclear Overbought Shield)               │
+        │  5. V99-DKT (Deadstick Falling Knight)                │
+        │  6. V100-ZAO (Zero Aggression Override)               │
+        │  7. V99-SCT-AF (Extreme Imbalance)                    │
+        │  8. V99-WMI_VETO                                     │
+        └─────────────────────────────────────────────────────┘
+        """
+        
+        # STEP 1: Check LPC Priority FIRST (Level -1!)
+        lpc_res = results.get('lpc_priority_v100', {})
+        if lpc_res.get('is_payout_override_active'):
+            return {
+                "final_bias": lpc_res.get('bias', 'SHORT'),
+                "confidence": lpc_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-LPC-PRIORITY_OVERRIDE: {lpc_res.get('reason', '')}",
+                "phase": "LIQUIDATION_PAYOUT_DOMINANT",
+                "priority_level": -1,
+                "override_all_others": True
+            }
+        
+        # STEP 2: Check Whale Gravity Velocity (Level -1!)
+        wgv_res = results.get('wgv_v100', {})
+        if wgv_res.get('is_gravity_kill_zone'):
+            return {
+                "final_bias": wgv_res.get('bias', 'SHORT'),
+                "confidence": wgv_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-WGV_OVERRIDE: {wgv_res.get('reason', '')}",
+                "phase": "GRAVITY_KILL_ZONE_DETECTED",
+                "priority_level": -1
+            }
+        
+        # STEP 3: Check LPF Critical Alert (Level 0!)
+        lpf_res = results.get('lpf_enhanced_v100', {})
+        if lpf_res.get('lpf_critical_alert'):
+            return {
+                "final_bias": lpf_res.get('bias', 'SHORT'),
+                "confidence": lpf_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-LPF-OVERRIDE: {lpf_res.get('reason', '')}",
+                "phase": "PRE_FLUSH_WAIT_TRIGGER",
+                "priority_level": 0,
+                "entry_forbidden": True,
+                "wait_seconds": lpf_res.get('recommended_wait_minutes', 30) * 60
+            }
+        
+        # STEP 4: Check OI Collapse Validator (Level 0!)
+        ocv_res = results.get('ocv_v100', {})
+        if ocv_res.get('is_liquidation_cascade'):
+            return {
+                "final_bias": ocv_res.get('bias', 'SHORT'),
+                "confidence": ocv_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-OCV_OVERRIDE: {ocv_res.get('reason', '')}",
+                "phase": "LIQUIDATION_CASCADE_DETECTED",
+                "priority_level": 0
+            }
+        
+        # STEP 5: Check Trend Integrity Violation (Level 1!)
+        tif_res = results.get('tif_v100', {})
+        if tif_res.get('trend_integrity_violated'):
+            return {
+                "final_bias": tif_res.get('bias', 'SHORT'),
+                "confidence": tif_res.get('confidence', 'HIGH'),
+                "reason": f"V100-TIF_OVERRIDE: {tif_res.get('reason', '')}",
+                "phase": "TREND_INTEGRITY_VIOLATED",
+                "priority_level": 1
+            }
+        
+        # STEP 6: Existing modules (contoh)
+        sct_af_res = results.get('sct_af_v99', {})
+        if sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
+            return {
+                "final_bias": sct_af_res.get('bias', 'LONG'),
+                "confidence": sct_af_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99-SCT-AF_OVERRIDE: {sct_af_res.get('reason', '')}",
+                "priority_level": 7
+            }
+        
+        # ... (tambahkan modul lain sesuai hierarki yang ada) ...
+        
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "NONE",
+            "reason": "No override signals detected",
+            "priority_level": 10
+        }
+
+
 class ConflictResolverV88_PLUS_FINAL_LYNUS_FIXED:
     """🔥 FINAL PRIORITAS – ANTI-FALLING KNIFE TRAPS (LYNUSDT PATCH)"""
     
@@ -17345,6 +17724,13 @@ class BinanceAnalyzerV87:
         self.lpf_enhanced_v100 = LiquidationPreFlushEnhancedV100()   # V100-LPF-ENHANCED
         self.lyn_resolver = ConflictResolverV88_PLUS_FINAL_LYNUS_FIXED()  # New resolver for LYN
         
+        # ===== NEW GRAVITY TRAP MODULES =====
+        self.lpc_priority_v100 = LiquidationPayoutCalculatorPriorityV100()  # V100-LPC-PRIORITY
+        self.ocv_v100 = OICollapseValidatorV100()                           # V100-OCV
+        self.tif_v100 = TrendIntegrityFilterV100()                          # V100-TIF
+        self.wgv_v100 = WhaleGravityVelocityCheckerV100()                   # V100-WGV
+        self.gravity_resolver = ConflictResolverV88_PLUS_FINAL_GRAVITY_FIXED()  # New resolver for GRAVITY
+        
         # ===== V100-STABLE: STABILITY ENGINE MODULES =====
         self.sse_engine = SignalStabilityEngineV100()           # V100-SSE (Singleton)
         self.vtf_validator = VolumeTimeFrameValidatorV100()     # V100-VTF
@@ -18656,14 +19042,76 @@ class BinanceAnalyzerV87:
                 agg_ratio=trades.get('aggressive_ratio', 0)
             )
             
+            # ===== NEW GRAVITY TRAP MODULES =====
+            # V100-LPC-PRIORITY (menggunakan hasil dari lpc_result yang sudah dihitung)
+            lpc_priority_result = self.lpc_priority_v100.check_priority(
+                payout_long=lpc_result.get('payout_long', 0) if 'lpc_result' in locals() else 0,
+                payout_short=lpc_result.get('payout_short', 0) if 'lpc_result' in locals() else 0,
+                long_dist=liq.get('long_dist', 999),
+                wc_confidence=0.7  # placeholder jika ada confidence dari LPC
+            )
+            
+            # V100-LPF-ENHANCED-V2: Critical Flush Alert
+            lpf_enhanced_v2_result = self.lpf_enhanced_v100.check_critical_flush(
+                lp_data=lpf_original if 'lpf_original' in locals() else (lpf_result if 'lpf_result' in locals() else {})
+            )
+            
+            # V100-OCV: OI Collapse Validator
+            ocv_result = self.ocv_v100.detect(
+                oi_delta_5m=oi_delta_5m,
+                price_change_5m=change_5m,
+                obv_value=current_obv
+            )
+            
+            # V100-TIF: Trend Integrity Filter
+            tif_result = self.tif_v100.check_trend_integrity(
+                macd_bearish=macd.get('bearish_cross', False),
+                obv_negative=current_obv < 0,
+                price_trend_down=change_5m < -1.0,
+                rsi_low=rsi6 < 30,
+                mpe_bias_short=mpe_result.get('bias', '') == 'SHORT' if 'mpe_result' in locals() else False
+            )
+            
+            # V100-WGV: Whale Gravity Velocity Checker
+            wgv_result = self.wgv_v100.check_gravity_velocity(
+                long_dist=liq.get('long_dist', 999),
+                wmi_ratio=wmi_ratio,
+                trade_flow=trades.get('ratio', 0)
+            )
+            
             # Safe dict untuk hasil anti-LYNUSDT
             market_death_result = safe_dict(market_death_result)
             lpf_enhanced_result = safe_dict(lpf_enhanced_result)
             dkt_result = safe_dict(dkt_result)
             obd_result = safe_dict(obd_result)
             
-            # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
-            final_decision = self.resolver_v88_final.resolve_all_hft_signals({
+            # Safe dict untuk hasil GRAVITY TRAP
+            lpc_priority_result = safe_dict(lpc_priority_result)
+            lpf_enhanced_v2_result = safe_dict(lpf_enhanced_v2_result)
+            ocv_result = safe_dict(ocv_result)
+            tif_result = safe_dict(tif_result)
+            wgv_result = safe_dict(wgv_result)
+            
+            # KUMPULKAN SEMUA HASIL MODULE untuk resolver GRAVITY
+            gravity_results = {
+                'lpc_priority_v100': lpc_priority_result,
+                'wgv_v100': wgv_result,
+                'lpf_enhanced_v100': lpf_enhanced_v2_result,
+                'ocv_v100': ocv_result,
+                'tif_v100': tif_result,
+                'sct_af_v99': sct_af_result if 'sct_af_result' in locals() else {},
+            }
+            
+            # Gunakan resolver GRAVITY terlebih dahulu
+            gravity_decision = self.gravity_resolver.resolve_all_hft_signals_final(gravity_results)
+            
+            # Jika GRAVITY resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
+            if gravity_decision.get('final_bias') != 'NEUTRAL':
+                final_decision = gravity_decision
+            else:
+                # Lanjutkan ke rantai resolver yang sudah ada
+                # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
+                final_decision = self.resolver_v88_final.resolve_all_hft_signals({
                 # NEW MODULES - PRIORITAS TERTINGGI (ZAO, SCT-AF, FVC-TWO) ⭐
                 'zao_v100': zao_result,
                 'sct_af_v99': sct_af_result,
@@ -19653,6 +20101,50 @@ class BinanceAnalyzerV87:
                 "bias": dtf_result.get('bias', 'NEUTRAL'),
                 "reason": dtf_result.get('reason', ''),
                 "confidence": dtf_result.get('confidence', 'LOW')
+            }
+            
+            # ===== HASIL GRAVITY TRAP MODULES =====
+            result["lpc_priority_v100"] = {
+                "is_payout_override_active": lpc_priority_result.get('is_payout_override_active', False),
+                "override_type": lpc_priority_result.get('override_type', 'NONE'),
+                "bias": lpc_priority_result.get('bias', 'NEUTRAL'),
+                "reason": lpc_priority_result.get('reason', ''),
+                "confidence": lpc_priority_result.get('confidence', 'LOW')
+            }
+            
+            result["lpf_enhanced_v100"] = {
+                "lpf_critical_alert": lpf_enhanced_v2_result.get('lpf_critical_alert', False),
+                "flush_detected": lpf_enhanced_v2_result.get('flush_detected', False),
+                "expected_range": lpf_enhanced_v2_result.get('expected_range', ''),
+                "bias": lpf_enhanced_v2_result.get('bias', 'NEUTRAL'),
+                "reason": lpf_enhanced_v2_result.get('reason', ''),
+                "confidence": lpf_enhanced_v2_result.get('confidence', 'LOW'),
+                "recommended_wait_minutes": lpf_enhanced_v2_result.get('recommended_wait_minutes', 0)
+            }
+            
+            result["ocv_v100"] = {
+                "is_liquidation_cascade": ocv_result.get('is_liquidation_cascade', False),
+                "cascade_type": ocv_result.get('cascade_type', 'NONE'),
+                "bias": ocv_result.get('bias', 'NEUTRAL'),
+                "reason": ocv_result.get('reason', ''),
+                "confidence": ocv_result.get('confidence', 'LOW')
+            }
+            
+            result["tif_v100"] = {
+                "trend_integrity_violated": tif_result.get('trend_integrity_violated', False),
+                "bearish_signal_count": tif_result.get('bearish_signal_count', 0),
+                "bias": tif_result.get('bias', 'NEUTRAL'),
+                "reason": tif_result.get('reason', ''),
+                "confidence": tif_result.get('confidence', 'LOW')
+            }
+            
+            result["wgv_v100"] = {
+                "is_gravity_kill_zone": wgv_result.get('is_gravity_kill_zone', False),
+                "gravity_type": wgv_result.get('gravity_type', 'NONE'),
+                "bias": wgv_result.get('bias', 'NEUTRAL'),
+                "reason": wgv_result.get('reason', ''),
+                "confidence": wgv_result.get('confidence', 'LOW'),
+                "recommended_exit_distance": wgv_result.get('recommended_exit_distance', '')
             }
 
             return result
