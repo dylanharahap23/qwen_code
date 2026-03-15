@@ -468,66 +468,6 @@ class LiquidationGravityTrapDetectorV100:
         return {"is_liquidity_gravity_trap": False, "bias": "NEUTRAL"}
 
 
-# ================= V100-TDI: TREND INTEGRITY FILTER =================
-class TrendIntegrityFilterV100:
-    """🔥 V100-TDI: TREND INTEGRITY FILTER - ANTI-FAKE REVERSAL
-    
-    Prinsip China Algo Trading:
-    "Jangan melawan tren besar (MACD/Bearish/Downside OBV) 
-    kecuali ada CONFIRMED BREAKOUT + Volume Konfirmasi"
-    """
-    
-    TDI_CONFIRMATION_REQUIRED_FLOW = 2.0
-    TDI_BEARISH_SIGNAL_THRESHOLD = 3
-    
-    @staticmethod
-    def check_trend_integrity(
-        macd_bearish: bool,
-        obv: float,
-        price_change_5m: float,
-        flow: float,
-        oi_delta: float
-    ) -> Dict:
-        """
-        COSUSDT Case:
-        - MACD Bearish: True ✅
-        - OBV: -1237858978 (NEGATIVE!) ✅
-        - Price Change: -1.91% (Already down!) ✅
-        - Flow: 0.56x (No breakout fuel!) ✅
-        - OI Delta: -0.35% (Positions closing!) ✅
-        """
-        
-        bearish_signals = 0
-        
-        if macd_bearish:
-            bearish_signals += 1
-            
-        if obv < -10000000:  # OBV sangat negatif
-            bearish_signals += 1
-            
-        if price_change_5m < -1.0:
-            bearish_signals += 1
-            
-        if oi_delta < -0.5:
-            bearish_signals += 1
-        
-        if bearish_signals >= TrendIntegrityFilterV100.TDI_BEARISH_SIGNAL_THRESHOLD:
-            if flow < TrendIntegrityFilterV100.TDI_CONFIRMATION_REQUIRED_FLOW:
-                return {
-                    "trend_integrity_violated": True,
-                    "bearish_signals": bearish_signals,
-                    "confidence": "HIGH",
-                    "bias": "SHORT",
-                    "reason": f"TDI_TREND_INTEGRITY: {bearish_signals}/4 bearish indicators active! "
-                             f"MACD Bearish + OBV Negative + Price Already Down {price_change_5m:.1f}% + "
-                             f"OI Closing {oi_delta:.1f}%. "
-                             f"Flow only {flow:.2f}x (NO BREAKOUT CONFIRMATION). "
-                             f"DONT COUNTER THE BIG TREND!",
-                    "override_reversal_modules": ["ZAS_SQUEEZE", "LGD_GAP_SQUEEZE", "OVS_REVERSAL"]
-                }
-        
-        return {"trend_integrity_violated": False, "bias": "NEUTRAL"}
-
 
 # ================= V100-FDF: FLUSH PROBABILITY CALCULATOR =================
 class FlushProbabilityCalculatorV100:
