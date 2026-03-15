@@ -18894,10 +18894,10 @@ class BinanceAnalyzerV87:
             # V100-TDI: Trend Integrity Filter
             tdi_result = self.tdi_v100.check_trend_integrity(
                 macd_bearish=macd.get('bearish_cross', False),
-                obv=current_obv,
-                price_change_5m=change_5m,
-                flow=trades.get('ratio', 1.0),
-                oi_delta=oi_delta_5m
+                obv_negative=current_obv < 0,
+                price_trend_down=change_5m < -1.0,
+                rsi_low=rsi6 < 30,
+                mpe_bias_short=mpe_result.get('bias', '') == 'SHORT' if 'mpe_result' in locals() else False
             )
             
             # V100-FDF: Flush Probability Calculator
