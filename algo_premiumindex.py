@@ -569,6 +569,27 @@ CHINA_ALGO_CONFLUENCE_SCORE_MIN = 8.0       # Minimal score untuk confluence ove
 CHINA_ALGO_NEARBY_TARGET_DIST_MAX = 2.0     # Jarak target < 2% untuk nearby target
 CHINA_ALGO_NEARBY_IMBALANCE_MIN = 20.0      # Imbalance > 20x untuk validasi nearby target
 
+# ================= V102-ORO: OVERSOLD REVERSAL OVERRIDE CONFIG =================
+ORO_RSI_OVERSOLD_MAX = 30.0              # RSI < 30 = Oversold
+ORO_OI_DELTA_MIN = 1.0                    # OI > 1% = Position building
+ORO_FLOW_MIN = 1.5                         # Flow > 1.5 = Volume masuk
+ORO_LONG_DIST_MAX = 2.0                     # Long liq < 2% untuk WMI trap
+
+# ================= V102-WNTF: WMI NEGATIVE TRAP FILTER CONFIG =================
+WNTF_WMI_NEGATIVE_MIN = -70                 # WMI < -70 = Ekstrim negatif
+WNTF_LONG_DIST_MAX = 2.0                     # Long liq < 2%
+WNTF_RSI_OVERSOLD_MAX = 30.0                  # RSI < 30
+WNTF_OI_DELTA_MIN = 0                          # OI > 0 (naik)
+
+# ================= V102-PFR: PBV FUEL PRIORITY RULE CONFIG =================
+PFR_RSI_MAX = 40.0                             # RSI < 40
+PFR_OI_DELTA_MIN = 1.0                           # OI > 1%
+PFR_FLOW_MIN = 1.0                                # Flow > 1.0
+
+# ================= V102-CCR: CASCADE CONFLICT RESOLVER CONFIG =================
+CCR_RSI_OVERSOLD_MAX = 30.0                      # RSI < 30 = Prefer LONG
+CCR_RSI_OVERBOUGHT_MIN = 70.0                     # RSI > 70 = Prefer SHORT
+
 
 # ================= V100-CHINA-ALGO: CHINA ALGO TRADING LOGIC =================
 class ChinaAlgoTradingLogicV100:
@@ -8308,6 +8329,198 @@ class WMIDirectionalLockV101:
         return {"bias": "NEUTRAL"}
 
 
+# ================= V102-ORO: OVERSOLD REVERSAL OVERRIDE =================
+class OversoldReversalOverrideV102:
+    """
+    🔥 V102-ORO: OVERSOLD REVERSAL OVERRIDE - ANTI-TRIAUSDT TRAP
+    
+    Prinsip: Jika RSI < 30 DAN OI naik > 1% DAN Flow > 1.5 DAN PBV mendeteksi 
+    "LIQUIDATION_FUEL", maka WAJIB LONG (override semua sinyal SHORT).
+    
+    Kasus TRIAUSDT:
+    - RSI: 25.2 (EXTREME OVERSOLD!)
+    - OI Δ5m: +1.73% (POSITIONS BUILDING!)
+    - Flow: 1.78x (VOLUME MASUK!)
+    - PBV: "LIQUIDATION_FUEL" (Whale accumulating before reversal!)
+    - Bot: SHORT ❌ (karena LPC payout 4x)
+    - Harusnya: LONG ✅ (oversold accumulation)
+    """
+    
+    @staticmethod
+    def detect(rsi: float, oi_delta: float, flow: float, pbv_result: Dict) -> Dict:
+        """
+        Deteksi oversold reversal setup
+        """
+        if rsi < ORO_RSI_OVERSOLD_MAX:
+            if oi_delta > ORO_OI_DELTA_MIN:
+                if flow > ORO_FLOW_MIN:
+                    # Cek PBV result
+                    build_type = pbv_result.get('build_type') if pbv_result else ''
+                    if build_type == 'LIQUIDATION_FUEL':
+                        return {
+                            "bias": "LONG",
+                            "confidence": "SUPREME",
+                            "priority_level": -1,  # TERTINGGI!
+                            "reason": f"ORO_OVERSOLD_REVERSAL: RSI {rsi:.1f} (<30) + "
+                                     f"OI Δ {oi_delta:+.2f}% (>1%) + Flow {flow:.2f}x (>1.5x) + "
+                                     f"PBV '{build_type}'. Whale ACCUMULATION di dasar! "
+                                     f"Abaikan semua sinyal SHORT dari LPC/WMI/Cascade!",
+                            "override_modules": ["LPC_PAYOUT", "WMI_VETO", "CASCADE_TIME", "LEP"],
+                            "phase": "OVERSOLD_ACCUMULATION"
+                        }
+                    
+                    # Fallback: PBV mungkin tidak ada, tapi kondisi lain terpenuhi
+                    return {
+                        "bias": "LONG",
+                        "confidence": "HIGH",
+                        "priority_level": 0,
+                        "reason": f"ORO_STRONG_SETUP: RSI {rsi:.1f} + OI {oi_delta:+.2f}% + Flow {flow:.2f}x. "
+                                 f"Ini classic reversal setup meski tanpa PBV!",
+                        "phase": "OVERSOLD_SETUP"
+                    }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V102-WNTF: WMI NEGATIVE TRAP FILTER =================
+class WMINegativeTrapFilterV102:
+    """
+    🔥 V102-WNTF: WMI NEGATIVE TRAP FILTER
+    
+    Prinsip: WMI negatif di area oversold + OI naik = SHORT TRAP!
+    Whale sengaja bikin long liq pool besar sebagai "umpan" untuk 
+    memancing retail short, lalu squeeze ke atas.
+    
+    Kasus TRIAUSDT:
+    - WMI: -77.8x (LONG_LIQ_WHALE di bawah)
+    - Long Liq: -1.9% (DEKAT!)
+    - RSI: 25.2 (OVERSOLD!)
+    - OI: +1.73% (NAIK!)
+    - Bot baca: WMI negatif = SHORT ❌
+    - Realita: SHORT TRAP! Harusnya LONG ✅
+    """
+    
+    @staticmethod
+    def detect(wmi: float, long_dist: float, rsi: float, oi_delta: float) -> Dict:
+        """
+        Deteksi apakah WMI negatif adalah trap
+        """
+        if wmi < WNTF_WMI_NEGATIVE_MIN:  # WMI < -70
+            if abs(long_dist) < WNTF_LONG_DIST_MAX:  # Long liq < 2%
+                if rsi < WNTF_RSI_OVERSOLD_MAX:  # RSI < 30
+                    if oi_delta > WNTF_OI_DELTA_MIN:  # OI naik
+                        return {
+                            "bias": "LONG",
+                            "confidence": "ABSOLUTE",
+                            "priority_level": -1,
+                            "reason": f"WNTF_WMI_TRAP: WMI {wmi:.1f}x (NEGATIF!) + "
+                                     f"Long Liq {abs(long_dist):.2f}% (DEKAT!) + "
+                                     f"RSI {rsi:.1f} (OVERSOLD!) + OI Δ {oi_delta:+.2f}% (NAIK!). "
+                                     f"Ini SHORT TRAP! Long pool di bawah adalah UMPAN. "
+                                     f"Whale accumulating untuk SQUEEZE ke ATAS!",
+                            "phase": "WMI_TRAP_DETECTED"
+                        }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V102-PFR: PBV FUEL PRIORITY RULE =================
+class PBVFuelPriorityRuleV102:
+    """
+    🔥 V102-PFR: PBV FUEL PRIORITY RULE
+    
+    Prinsip: PBV "LIQUIDATION_FUEL" di RSI < 40 adalah sinyal reversal terkuat.
+    Prioritaskan di atas payout calculation dan WMI.
+    
+    Kasus TRIAUSDT:
+    - PBV: "LIQUIDATION_FUEL: OI ↑+1.73% + Price ↓-2.20% + Flow 1.78x (HIGH). 
+            Whale accumulating before reversal!"
+    - RSI: 25.2 (< 40)
+    - LPC bilang SHORT (payout 4x)
+    - Tapi PBV lebih penting di oversold!
+    """
+    
+    @staticmethod
+    def detect(pbv_result: Dict, rsi: float, oi_delta: float, flow: float) -> Dict:
+        """
+        Prioritaskan PBV fuel signal
+        """
+        if not pbv_result:
+            return {"bias": "NEUTRAL"}
+        
+        build_type = pbv_result.get('build_type', '')
+        
+        if build_type == 'LIQUIDATION_FUEL':
+            if rsi < PFR_RSI_MAX:  # RSI < 40
+                if oi_delta > PFR_OI_DELTA_MIN:  # OI > 1%
+                    if flow > PFR_FLOW_MIN:  # Flow > 1.0
+                        return {
+                            "bias": "LONG",
+                            "confidence": "SUPREME",
+                            "priority_level": -1,
+                            "reason": f"PFR_FUEL_PRIORITY: PBV '{build_type}' + "
+                                     f"RSI {rsi:.1f} (<40) + OI {oi_delta:+.2f}% + Flow {flow:.2f}x. "
+                                     f"Ini sinyal REVERSAL TERKUAT! "
+                                     f"Override LPC/WMI yang bilang SHORT!",
+                            "phase": "FUEL_PRIORITY_ACTIVE"
+                        }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V102-CCR: CASCADE CONFLICT RESOLVER =================
+class CascadeConflictResolverV102:
+    """
+    🔥 V102-CCR: CASCADE CONFLICT RESOLVER dengan RSI CONTEXT
+    
+    Prinsip: Jika cascade_bias != energy_bias, resolve dengan konteks RSI:
+    - RSI < 30 → Prefer LONG (reversal direction)
+    - RSI > 70 → Prefer SHORT (distribution direction)
+    
+    Kasus TRIAUSDT:
+    - ⏱️ CASCADE: LONG (Up faster 0.54 vs Down 3.32)
+    - ⚡ LEP: SHORT (Downside energy 3.8 < Upside 4.1)
+    - 🤔 Conflict! RSI 25.2 (<30) → resolve ke LONG
+    """
+    
+    @staticmethod
+    def resolve(cascade_bias: str, energy_bias: str, rsi: float) -> Dict:
+        """
+        Resolve conflict antara cascade dan energy dengan konteks RSI
+        """
+        # Jika tidak ada conflict, return NEUTRAL
+        if cascade_bias == energy_bias or cascade_bias == 'NEUTRAL' or energy_bias == 'NEUTRAL':
+            return {"bias": "NEUTRAL"}
+        
+        # Ada conflict: cascade_bias != energy_bias
+        if rsi < CCR_RSI_OVERSOLD_MAX:  # RSI < 30 - Oversold
+            # Di oversold, prefer reversal direction (LONG)
+            return {
+                "bias": "LONG",
+                "confidence": "SUPREME",
+                "priority_level": 0,
+                "reason": f"CCR_OVERSOLD_RESOLVE: RSI {rsi:.1f} (<30). "
+                         f"Cascade bilang {cascade_bias}, Energy bilang {energy_bias}. "
+                         f"Di oversold, prefer REVERSAL (LONG)!",
+                "phase": "RSI_OVERSOLD_RESOLVE"
+            }
+        
+        elif rsi > CCR_RSI_OVERBOUGHT_MIN:  # RSI > 70 - Overbought
+            # Di overbought, prefer distribution direction (SHORT)
+            return {
+                "bias": "SHORT",
+                "confidence": "SUPREME",
+                "priority_level": 0,
+                "reason": f"CCR_OVERBOUGHT_RESOLVE: RSI {rsi:.1f} (>70). "
+                         f"Cascade bilang {cascade_bias}, Energy bilang {energy_bias}. "
+                         f"Di overbought, prefer DISTRIBUTION (SHORT)!",
+                "phase": "RSI_OVERBOUGHT_RESOLVE"
+            }
+        
+        # RSI netral, tidak bisa resolve
+        return {"bias": "NEUTRAL"}
+
+
 # ================= V101-FINAL: CONFLICT RESOLVER FINAL VERSION (UPDATED) =================
 class ConflictResolverV101_FINAL:
     """
@@ -8578,6 +8791,304 @@ class ConflictResolverV101_FINAL:
                 "confidence": "MEDIUM",
                 "reason": f"V99_WMI: WMI {results.get('wmi_ratio', 0):.1f}x",
                 "phase": "WHALE_SINGULARITY",
+                "priority_level": 3
+            }
+        
+        # Default
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected",
+            "phase": "NEUTRAL",
+            "priority_level": 3
+        }
+
+
+# ================= V102-FINAL: CONFLICT RESOLVER FINAL VERSION (DENGAN TRIAUSDT PATCH) =================
+class ConflictResolverV102_FINAL:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V102 - ANTI-OVERSOLD TRAP
+    
+    PRIORITY -2 (TERTINGGI - TRIAUSDT PATCH):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -2a. V102-ORO: Oversold Reversal Override              │ ← NEW!
+    │ -2b. V102-WNTF: WMI Negative Trap Filter               │ ← NEW!
+    │ -2c. V102-PFR: PBV Fuel Priority Rule                  │ ← NEW!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -1 (ABSOLUTE VETO - EXISTING):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -1a. V101-OI_FUEL_VS_LIQ_GRAVITY (Bensin vs Jurang)    │
+    │ -1b. V101-FLUSH_SEQUENCE_VETO (Prioritas Flush)        │
+    │ -1c. V101-DEAD_AGG_MAGNET (Agg 0 + WMI Extrem)         │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 0 (ABSOLUTE VETO):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 0a. V102-CCR: Cascade Conflict Resolver (RSI Context)  │ ← NEW!
+    │ 0b. V101-WMI_DIRECTIONAL_LOCK (Kunci Arah WMI)         │
+    │ 0c. V101-LMP: Liquidity Magnet Proximity               │
+    │ 0d. V101-ECS: Energy Cost Supremacy                    │
+    │ 0e. V101-AFD: Aggression-Flow Divergence               │
+    │ 0f. V101-DSS: Double Sweep Sequence                    │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 1 (STRONG OVERRIDE):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 1a. V101-PSB: Pre-Sweep Build Phase                    │
+    │ 1b. V94-EGR: Energy Gravity Rule                       │
+    │ 1c. V100-LFC: Payout Override                          │
+    │ 1d. V94-BPF: Bait Detection                            │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 2 (MODERATE):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 2a. V100-LPC: Payout Ratio                             │
+    │ 2b. V87-LIM: Imbalance                                  │
+    │ 2c. V93-CASCADE: Cascade Time                          │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 3 (WEAK):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 3a. V99-WMI: Whale Migration Index (non-extreme)        │
+    │ 3b. V100-RSI: RSI Levels                               │
+    │ 3c. V100-FLOW: Flow Volume                             │
+    └─────────────────────────────────────────────────────────┘
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ========== PRIORITY -2: TRIAUSDT PATCH (TERTINGGI!) ==========
+        
+        # -2a. Oversold Reversal Override (ORO)
+        oro_res = results.get('oro_v102', {})
+        if oro_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": oro_res['bias'],
+                "confidence": oro_res.get('confidence', 'SUPREME'),
+                "reason": oro_res.get('reason', ''),
+                "phase": oro_res.get('phase', 'OVERSOLD_REVERSAL'),
+                "priority_level": -2,
+                "override_modules": oro_res.get('override_modules', [])
+            }
+        
+        # -2b. WMI Negative Trap Filter (WNTF)
+        wntf_res = results.get('wntf_v102', {})
+        if wntf_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": wntf_res['bias'],
+                "confidence": wntf_res.get('confidence', 'ABSOLUTE'),
+                "reason": wntf_res.get('reason', ''),
+                "phase": wntf_res.get('phase', 'WMI_TRAP'),
+                "priority_level": -2
+            }
+        
+        # -2c. PBV Fuel Priority Rule (PFR)
+        pfr_res = results.get('pfr_v102', {})
+        if pfr_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": pfr_res['bias'],
+                "confidence": pfr_res.get('confidence', 'SUPREME'),
+                "reason": pfr_res.get('reason', ''),
+                "phase": pfr_res.get('phase', 'FUEL_PRIORITY'),
+                "priority_level": -2
+            }
+        
+        # ========== PRIORITY -1: ABSOLUTE VETO (EXISTING) ==========
+        
+        # -1a. OI Fuel vs Liquidity Gravity
+        fuel_gravity = results.get('oi_fuel_v101', {})
+        if fuel_gravity.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": fuel_gravity['bias'],
+                "confidence": fuel_gravity.get('confidence', 'ABSOLUTE'),
+                "reason": fuel_gravity.get('reason', ''),
+                "phase": fuel_gravity.get('phase', 'FUEL_STARVATION'),
+                "priority_level": -1
+            }
+        
+        # -1b. Flush Sequence Veto
+        flush_veto = results.get('flush_veto_v101', {})
+        if flush_veto.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": flush_veto['bias'],
+                "confidence": flush_veto.get('confidence', 'ABSOLUTE'),
+                "reason": flush_veto.get('reason', ''),
+                "phase": "FLUSH_VETO",
+                "priority_level": -1,
+                "wait_for_flush": flush_veto.get('wait_for_flush', False)
+            }
+        
+        # -1c. Dead Aggression Magnet
+        dead_magnet = results.get('dead_magnet_v101', {})
+        if dead_magnet.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": dead_magnet['bias'],
+                "confidence": dead_magnet.get('confidence', 'SUPREME'),
+                "reason": dead_magnet.get('reason', ''),
+                "phase": dead_magnet.get('phase', 'FREE_FALL'),
+                "priority_level": -1
+            }
+        
+        # ========== PRIORITY 0: ABSOLUTE VETO ==========
+        
+        # 0a. Cascade Conflict Resolver (CCR) - NEW!
+        ccr_res = results.get('ccr_v102', {})
+        if ccr_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": ccr_res['bias'],
+                "confidence": ccr_res.get('confidence', 'SUPREME'),
+                "reason": ccr_res.get('reason', ''),
+                "phase": ccr_res.get('phase', 'RSI_RESOLVE'),
+                "priority_level": 0
+            }
+        
+        # 0b. WMI Directional Lock
+        wmi_lock = results.get('wmi_lock_v101', {})
+        if wmi_lock.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": wmi_lock['bias'],
+                "confidence": wmi_lock.get('confidence', 'HIGH'),
+                "reason": wmi_lock.get('reason', ''),
+                "phase": wmi_lock.get('phase', 'WMI_LOCK'),
+                "priority_level": 0
+            }
+        
+        # 0c. Liquidity Magnet Proximity
+        lmp_res = results.get('lmp_v101', {})
+        if lmp_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": lmp_res['bias'],
+                "confidence": lmp_res.get('confidence', 'ABSOLUTE'),
+                "reason": lmp_res.get('reason', ''),
+                "phase": "LIQUIDITY_MAGNET_PROXIMITY",
+                "priority_level": 0
+            }
+        
+        # 0d. Energy Cost Supremacy
+        ecs_res = results.get('ecs_v101', {})
+        if ecs_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": ecs_res['bias'],
+                "confidence": ecs_res.get('confidence', 'ABSOLUTE'),
+                "reason": ecs_res.get('reason', ''),
+                "phase": "ENERGY_COST_SUPREMACY",
+                "priority_level": 0
+            }
+        
+        # 0e. Aggression-Flow Divergence
+        afd_res = results.get('afd_v101', {})
+        if afd_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": afd_res['bias'],
+                "confidence": afd_res.get('confidence', 'SUPREME'),
+                "reason": afd_res.get('reason', ''),
+                "phase": afd_res.get('phase', 'STEALTH_PHASE'),
+                "priority_level": 0
+            }
+        
+        # 0f. Double Sweep Sequence
+        dss_res = results.get('dss_v101', {})
+        if dss_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": dss_res['bias'],
+                "confidence": dss_res.get('confidence', 'ABSOLUTE'),
+                "reason": dss_res.get('reason', ''),
+                "phase": "DOUBLE_SWEEP_SEQUENCE",
+                "priority_level": 0
+            }
+        
+        # ========== PRIORITY 1: STRONG OVERRIDE ==========
+        
+        # 1a. Pre-Sweep Build Phase
+        psb_res = results.get('psb_v101', {})
+        if psb_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": psb_res['bias'],
+                "confidence": psb_res.get('confidence', 'HIGH'),
+                "reason": psb_res.get('reason', ''),
+                "phase": psb_res.get('phase', 'BUILD_PHASE'),
+                "priority_level": 1
+            }
+        
+        # 1b. Energy Gravity Rule
+        egr_res = results.get('egr', {})
+        if egr_res.get('is_veto'):
+            return {
+                "final_bias": egr_res['bias'],
+                "confidence": egr_res.get('confidence', 'SUPREME'),
+                "reason": f"V94_EGR: {egr_res.get('reason', '')}",
+                "phase": "ENERGY_GRAVITY_VETO",
+                "priority_level": 1
+            }
+        
+        # 1c. LFC Payout Override
+        lfc_res = results.get('lfc_v100', {})
+        if lfc_res.get('lfc_override'):
+            return {
+                "final_bias": lfc_res['bias'],
+                "confidence": lfc_res.get('confidence', 'SUPREME'),
+                "reason": f"V100_LFC: {lfc_res.get('reason', '')}",
+                "phase": "PAYOUT_OVERRIDE",
+                "priority_level": 1
+            }
+        
+        # 1d. Bait Detection
+        bpf_res = results.get('bpf', {})
+        if bpf_res.get('is_bait'):
+            return {
+                "final_bias": bpf_res['bias'],
+                "confidence": bpf_res.get('confidence', 'SUPREME'),
+                "reason": f"V94_BPF: {bpf_res.get('reason', '')}",
+                "phase": "BAIT_DETECTED",
+                "priority_level": 1
+            }
+        
+        # ========== PRIORITY 2: MODERATE ==========
+        
+        # 2a. LPC Payout (jika ratio > 5x)
+        lpc_res = results.get('lpc', {})
+        if lpc_res.get('payout_ratio', 1.0) > 5.0:
+            return {
+                "final_bias": lpc_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V100_LPC: {lpc_res.get('reason', '')}",
+                "phase": "PAYOUT_DOMINANT",
+                "priority_level": 2
+            }
+        
+        # 2b. LIM Imbalance (jika > 50x)
+        lim_res = results.get('lim', {})
+        if lim_res.get('imbalance_ratio', 1.0) > 50:
+            return {
+                "final_bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V87_LIM: {lim_res.get('reason', '')}",
+                "phase": "IMBALANCE_EXTREME",
+                "priority_level": 2
+            }
+        
+        # 2c. Cascade Time
+        cascade_res = results.get('cascade', {})
+        if cascade_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": cascade_res['bias'],
+                "confidence": "MEDIUM",
+                "reason": f"V93_CASCADE: {cascade_res.get('reason', '')}",
+                "phase": "CASCADE_PATH",
+                "priority_level": 2
+            }
+        
+        # ========== PRIORITY 3: WEAK ==========
+        
+        # 3a. WMI (jika > 80 tapi tidak ekstrim)
+        if abs(results.get('wmi_ratio', 0)) > 80:
+            return {
+                "final_bias": "LONG" if results.get('wmi_ratio', 0) > 0 else "SHORT",
+                "confidence": "MEDIUM",
+                "reason": f"V99_WMI: WMI {results.get('wmi_ratio', 0):.1f}x",
+                "phase": "WHALE_SIGNAL",
                 "priority_level": 3
             }
         
@@ -19504,6 +20015,13 @@ class BinanceAnalyzerV87:
         
         self.final_resolver_v101 = ConflictResolverV101_FINAL()  # V101 Final Resolver
         
+        # ===== V102 NEW MODULES - ANTI-TRIAUSDT OVERSOLD TRAP =====
+        self.oro_v102 = OversoldReversalOverrideV102()           # V102-ORO
+        self.wntf_v102 = WMINegativeTrapFilterV102()             # V102-WNTF
+        self.pfr_v102 = PBVFuelPriorityRuleV102()                # V102-PFR
+        self.ccr_v102 = CascadeConflictResolverV102()            # V102-CCR
+        self.final_resolver_v102 = ConflictResolverV102_FINAL()  # V102 Final Resolver
+        
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
         self.sce_v99 = ShortCrowdExhaustionValidatorV99()            # V99-SCE (Short Crowd Exhaustion) ⭐ NEW!
@@ -21240,14 +21758,63 @@ class BinanceAnalyzerV87:
             scoring_data['wmi_lock_v101'] = wmi_lock_result
             scoring_data['energy_bias'] = energy_bias
             
+            # ===== V102 NEW MODULES - ANTI-TRIAUSDT OVERSOLD TRAP =====
+            # V102-ORO: Oversold Reversal Override
+            oro_result = self.oro_v102.detect(
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 1.0),
+                pbv_result=pbv_result if 'pbv_result' in locals() else {}
+            )
+            
+            # V102-WNTF: WMI Negative Trap Filter
+            wntf_result = self.wntf_v102.detect(
+                wmi=wmi_ratio,
+                long_dist=liq.get('long_dist', 999),
+                rsi=rsi6,
+                oi_delta=oi_delta_5m
+            )
+            
+            # V102-PFR: PBV Fuel Priority Rule
+            pfr_result = self.pfr_v102.detect(
+                pbv_result=pbv_result if 'pbv_result' in locals() else {},
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 1.0)
+            )
+            
+            # V102-CCR: Cascade Conflict Resolver
+            cascade_bias = cascade_result.get('bias', 'NEUTRAL') if 'cascade_result' in locals() else 'NEUTRAL'
+            ccr_result = self.ccr_v102.resolve(
+                cascade_bias=cascade_bias,
+                energy_bias=energy_bias,
+                rsi=rsi6
+            )
+            
+            # Add V102 results to scoring_data for resolver
+            scoring_data['oro_v102'] = oro_result
+            scoring_data['wntf_v102'] = wntf_result
+            scoring_data['pfr_v102'] = pfr_result
+            scoring_data['ccr_v102'] = ccr_result
+            
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
-            # Hitung score dengan sistem scoring sederhana
-            hft_decision = self.calculate_hft_score(scoring_data)
+            # ===== V102: FINAL RESOLVER (dengan prioritas lebih tinggi!) =====
+            v102_final = self.final_resolver_v102.resolve_all_signals(scoring_data)
             
-            # Update final_decision dengan hasil V101 resolver (prioritas lebih tinggi)
-            if v101_final.get('priority_level', 99) <= 1:
+            # Gunakan V102 resolver jika ada signal dengan priority_level <= -2
+            if v102_final.get('priority_level', 99) <= -2:
+                final_decision = {
+                    'bias': v102_final['final_bias'],
+                    'final_bias': v102_final['final_bias'],
+                    'confidence': v102_final['confidence'],
+                    'reason': v102_final['reason'],
+                    'phase': v102_final['phase'],
+                    'priority_level': v102_final['priority_level'],
+                    'override_modules': v102_final.get('override_modules', [])
+                }
+            elif v101_final.get('priority_level', 99) <= 1:
                 # V101 override jika priority 0 atau 1
                 final_decision = {
                     'bias': v101_final['final_bias'],
@@ -22213,6 +22780,42 @@ class BinanceAnalyzerV87:
                 "confidence": wgv_result.get('confidence', 'LOW'),
                 "recommended_exit_distance": wgv_result.get('recommended_exit_distance', '')
             }
+            
+            # ===== HASIL V102 ANTI-TRIAUSDT OVERSOLD TRAP MODULES =====
+            result["oro_v102"] = {
+                "bias": oro_result.get('bias', 'NEUTRAL'),
+                "confidence": oro_result.get('confidence', 'LOW'),
+                "reason": oro_result.get('reason', ''),
+                "phase": oro_result.get('phase', 'NONE'),
+                "priority_level": oro_result.get('priority_level', 99)
+            }
+            
+            result["wntf_v102"] = {
+                "bias": wntf_result.get('bias', 'NEUTRAL'),
+                "confidence": wntf_result.get('confidence', 'LOW'),
+                "reason": wntf_result.get('reason', ''),
+                "phase": wntf_result.get('phase', 'NONE'),
+                "priority_level": wntf_result.get('priority_level', 99)
+            }
+            
+            result["pfr_v102"] = {
+                "bias": pfr_result.get('bias', 'NEUTRAL'),
+                "confidence": pfr_result.get('confidence', 'LOW'),
+                "reason": pfr_result.get('reason', ''),
+                "phase": pfr_result.get('phase', 'NONE'),
+                "priority_level": pfr_result.get('priority_level', 99)
+            }
+            
+            result["ccr_v102"] = {
+                "bias": ccr_result.get('bias', 'NEUTRAL'),
+                "confidence": ccr_result.get('confidence', 'LOW'),
+                "reason": ccr_result.get('reason', ''),
+                "phase": ccr_result.get('phase', 'NONE'),
+                "priority_level": ccr_result.get('priority_level', 99)
+            }
+            
+            result["v102_phase"] = v102_final.get('phase', 'NORMAL')
+            result["v102_priority_level"] = v102_final.get('priority_level', 99)
 
             return result
         except Exception as e:
