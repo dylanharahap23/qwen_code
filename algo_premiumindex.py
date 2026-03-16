@@ -433,6 +433,22 @@ FLG_AGG_HIGH_THRESHOLD = 2.0            # Agg > 2.0
 FLG_FLOW_LOW_THRESHOLD = 1.0            # Flow < 1.0
 FLG_RATIO_DISCREPANCY = 2.0             # Agg/Flow gap > 2x
 
+# ================= V100-GVS: GRAVITY VS SUCTION VALIDATOR CONFIG =================
+GVS_WMI_THRESHOLD_MIN = -95          # WMI < -95 = Strong Below Gravity
+GVS_FLOW_SUCSTION_MIN = 15.0         # Flow > 15x = Suspicious High (Vacuum)
+GVS_RSI_OVERSOLD_MAX = 20            # RSI < 20 = Reversal Zone
+GVS_OI_BUILD_AT_BOTTOM_MIN = 1.0     # OI Build at bottom = Fuel Confirmed
+GVS_PAYOUT_LONG_RATIO_MIN = 2.0      # Long Payout > 2x Short = Squeeze Likely
+
+# ================= V87-SCX: SHORT CROWD EXTREMIZATION VALIDATOR CONFIG =================
+SCX_IMBALANCE_EXTREME_THRESHOLD = 500.0    # Imbalance > 500x = Extreme Danger
+SCX_IMBALANCE_CATASTROPHE_THRESHOLD = 1000.0  # Imbalance > 1000x = Catastrophic Crowded
+
+# ================= V100-FVC-ENHANCED: FLOW-VOLUME CORRELATION ENHANCED CONFIG =================
+FVC_ENHANCED_HIGH_FLOW_MIN = 20.0           # Flow > 20x = Whale Action
+FVC_ENHANCED_RSI_REVERSAL_ZONE_MAX = 25     # RSI < 25 = Squeeze Possible
+FVC_ENHANCED_LOW_FLOW_DIST_THRESHOLD = 1.0  # Flow < 1.0 + Oversold = Fake Squeeze
+
 # ================= V100-LGT: LIQUIDATION GRAVITY TRAP DETECTOR =================
 class LiquidationGravityTrapDetectorV100:
     """🔥 V100-LGT: LIQUIDATION GRAVITY TRAP - ANTI-COSUSDT TRAP
@@ -601,6 +617,305 @@ class FluxLiquidityGapValidatorV88:
                     }
                     
         return {"momentum_fake": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-GVS: GRAVITY VS SUCTION VALIDATOR =================
+class GravityVsSuctionValidatorV100:
+    """🔥 V100-GVS: GRAVITY VS SUCTION VALIDATOR - ANTI-BUSUSDT TRAP
+    
+    Prinsip Penting:
+    "Jika WMI < -95 (Massive Below) TAPI Flow > 20x dan RSI < 20,
+    maka itu BUKAN target dumping, tapi LIQUIDATION VACUUM REVERSAL!"
+    
+    Case Analysis:
+    • WMI -100x + Flow 24x + RSI 17.4 = Suction DOWNSIDE (Rebound)
+    • WMI -100x + Flow < 1x + RSI > 50 = Real Gravitation Dump
+    """
+    
+    GVS_WMI_THRESHOLD_MIN = -95
+    GVS_FLOW_SUCSTION_MIN = 15.0
+    GVS_RSI_OVERSOLD_MAX = 20
+    GVS_OI_BUILD_AT_BOTTOM_MIN = 1.0
+    GVS_PAYOUT_LONG_RATIO_MIN = 2.0
+    
+    @staticmethod
+    def check_suction_trap(wmi_ratio: float, flow: float, rsi6: float, 
+                           oi_delta: float, long_payout: float, short_payout: float) -> Dict:
+        """
+        BUSUSDT Case Validation:
+        - WMI: -100.0x (< -95) ✅ Strong Below Gravity Signal
+        - Flow: 24.0x (> 15x) ✅ SUSPICIOUSLY HIGH!
+        - RSI: 17.4 (< 20) ✅ Extreme Oversold Confirmation
+        - OI: +1.54% (> 1%) ✅ Building Positions at Bottom
+        - LPC: Long Payout Much Higher ✅ Favors Squeeze Up
+        """
+        
+        suction_signals = 0
+        confidence_score = 0
+        
+        # CHECK 1: Suspicious WMI+Flow Combination
+        if wmi_ratio <= GravityVsSuctionValidatorV100.GVS_WMI_THRESHOLD_MIN:
+            if flow >= GravityVsSuctionValidatorV100.GVS_FLOW_SUCSTION_MIN:
+                suction_signals += 2
+                confidence_score += 30
+                
+        # CHECK 2: RSI Extreme Oversold
+        if rsi6 <= GravityVsSuctionValidatorV100.GVS_RSI_OVERSOLD_MAX:
+            suction_signals += 2
+            confidence_score += 30
+            
+        # CHECK 3: OI Building During Drop
+        if oi_delta >= GravityVsSuctionValidatorV100.GVS_OI_BUILD_AT_BOTTOM_MIN:
+            suction_signals += 2
+            confidence_score += 25
+            
+        # CHECK 4: Payout Direction Confirmation
+        if long_payout > 0 and short_payout > 0:
+            payout_ratio = long_payout / max(short_payout, 1.0)
+            if payout_ratio >= GravityVsSuctionValidatorV100.GVS_PAYOUT_LONG_RATIO_MIN:
+                suction_signals += 1
+                confidence_score += 15
+        
+        # DECISION LOGIC
+        if suction_signals >= 4 and confidence_score >= 80:
+            return {
+                "is_gravity_suction_trap": True,
+                "trap_type": "DOWNSIDE_GRAVITY_BAIT",
+                "confidence": "ABSOLUTE",
+                "bias": "LONG",
+                "reason": f"GVS_GRAVITY_SUCTION_TRAP DETECTED: WMI {wmi_ratio:.1f}x ({'< -95'}) + "
+                         f"Flow {flow:.1f}x (EXTREME!) + RSI {rsi6:.1f} (<20!). "
+                         f"Ini BUKAN dump target, ini LIQUIDATION VACUUM REVERSAL! "
+                         f"Walaupun WMI menunjukkan target bawah, Flow Absurdly tinggi "
+                         f"menandakan Whale sedang MENARIK orderbook ke atas! SIAP SQUEEZE!",
+                "override_modules": ["V99_WMI_VETO", "LGD_GAP_DUMP", "ENERGY_PATH_DOWN"],
+                "priority_level": -1,
+                "predicted_move": "SHORT_SQUEEZE",
+                "wait_condition": "CONFIRM_BREAKOUT"
+            }
+        
+        elif wmi_ratio <= GravityVsSuctionValidatorV100.GVS_WMI_THRESHOLD_MIN and flow < 2.0:
+            # Normal gravity confirmation (no suction trap)
+            return {
+                "is_gravity_trap": False,
+                "gravity_valid": True,
+                "confidence": "HIGH",
+                "bias": "SHORT",
+                "reason": f"GVS_NORMAL_GRAVITY: WMI {wmi_ratio:.1f}x confirmed as real target.",
+                "priority_level": 2
+            }
+            
+        return {"is_gravity_suction_trap": False, "bias": "NEUTRAL"}
+
+
+# ================= V87-SCX: SHORT CROWD EXTREMIZATION VALIDATOR =================
+class ShortCrowdExtremizationValidatorV87:
+    """🔥 V87-SCX: SHORT CROWD EXTREMIZATION VALIDATOR - ANTI-LONG ENTRY TRAP
+    
+    Jika Imbalance > 1000x + Aggression Low = SQUEEZE GUARANTEED regardless WMI!
+    """
+    
+    SCX_IMBALANCE_EXTREME_THRESHOLD = 500.0
+    SCX_IMBALANCE_CATASTROPHE_THRESHOLD = 1000.0
+    
+    @staticmethod
+    def validate(imbalance_ratio: float, wmi_ratio: float) -> Dict:
+        """
+        BUSUSDT Case:
+        - Imbalance: 1961.01x (> 1000x!)
+        - WMI: -100.0x (Below Gravity)
+        """
+        
+        if imbalance_ratio >= ShortCrowdExtremizationValidatorV87.SCX_IMBALANCE_CATASTROPHE_THRESHOLD:
+            
+            return {
+                "is_catastrophic_crowded": True,
+                "crowd_density": "CATASTROPHIC",
+                "confidence": "SUPREME",
+                "bias": "LONG",
+                "reason": f"SCX_CATASTROPHIC_SHORT_CROWD: Imbalance {imbalance_ratio:.1f}x "
+                         f"(EXTREME!) >>>>> WMI Signal Invalidated! "
+                         f"When {imbalance_ratio:.0f}x SHORTS are crowded above, "
+                         f"ONE small upward move triggers cascade SQUEEZE. "
+                         f"WMI below irrelevant against THIS IMBALANCE!",
+                "override_wmi_below_logic": True,
+                "priority_level": -1
+            }
+        
+        elif imbalance_ratio >= ShortCrowdExtremizationValidatorV87.SCX_IMBALANCE_EXTREME_THRESHOLD:
+            return {
+                "is_extreme_crowded": True,
+                "confidence": "HIGH",
+                "bias": "LONG",
+                "reason": f"SCX_EXTREME_SHORT_CROWD: Imbalance {imbalance_ratio:.1f}x crowd "
+                         f"SHORT! Priority SHORT SQUEEZE!",
+                "priority_level": 1
+            }
+        
+        return {"is_catastrophic_crowded": False, "bias": "NEUTRAL"}
+
+
+# ================= V100-FVC-ENHANCED: FLOW-VOLUME CORRELATION ENHANCED =================
+class FlowVolumeCorrelationEnhancedV100:
+    """🔥 V100-FVC-ENHANCED: FLOW-VOLUME CORRELATION ENHANCED - ANTI-LOW_FLAKE_BLOCK
+    
+    Rule Baru:
+    • Flow 0.1-2.0x + RSI Oversold = NO ACCUMULATION (Real Distribution)
+    • Flow > 20x + RSI < 20 = VALID SQUEEZE FUEL (Whale Accumulation)
+    """
+    
+    FVC_ENHANCED_HIGH_FLOW_MIN = 20.0
+    FVC_ENHANCED_RSI_REVERSAL_ZONE_MAX = 25
+    FVC_ENHANCED_LOW_FLOW_DIST_THRESHOLD = 1.0
+    
+    @staticmethod
+    def validate_oversold_flow(rsi6: float, flow: float, oi_delta: float) -> Dict:
+        """
+        BUSUSDT Case:
+        - RSI: 17.4 (< 25) ✅ Valid Oversold
+        - Flow: 24.0x (> 20x) ✅ Whale Confirmation
+        - OI: +1.54% ✅ Fuel Build
+        """
+        
+        if rsi6 <= FlowVolumeCorrelationEnhancedV100.FVC_ENHANCED_RSI_REVERSAL_ZONE_MAX:
+            if flow >= FlowVolumeCorrelationEnhancedV100.FVC_ENHANCED_HIGH_FLOW_MIN:
+                
+                return {
+                    "is_reversible": True,
+                    "reversal_type": "WHALE_ACCUMULATION_SQUEEZE",
+                    "confidence": "SUPREME",
+                    "bias": "LONG",
+                    "reason": f"FVC_ENHANCED_REVERSAL: RSI {rsi6:.1f} (Oversold!) + Flow {flow:.1f}x "
+                             f"(EXTREME WHALE ACTION!) = VALID SQUEEZE FUEL! "
+                             f"This is NOT fake setup, this is INSTITUTIONAL BULLISH ENTRY!",
+                    "priority_level": 0
+                }
+        
+        # Old Logic Check (for comparison)
+        if rsi6 < 30 and flow < FlowVolumeCorrelationEnhancedV100.FVC_ENHANCED_LOW_FLOW_DIST_THRESHOLD:
+            
+            return {
+                "is_fake_squeeze": True,
+                "confidence": "HIGH",
+                "bias": "SHORT",
+                "reason": f"FVC_ENHANCED_NO_FUEL: RSI {rsi6:.1f} but Flow {flow:.2f}x LOW. "
+                         f"No whale accumulation detected. FAKE SQUEEZE SET UP.",
+                "priority_level": 2
+            }
+            
+        return {"is_reversible": False, "bias": "NEUTRAL"}
+
+
+# ================= V88_PLUS_FINAL_ANTI_GRAVITY: UPDATED CONFLICT RESOLVER =================
+class ConflictResolverV88_PLUS_FINAL_ANTI_GRAVITY:
+    """🔥 FINAL PRIORITAS – ANTI-GRAVITY_BAIT TRAPS"""
+    
+    @staticmethod
+    def resolve_all_hft_signals_final(results):
+        """
+        URUTAN PRIORITAS MUTLAK:
+        ┌─────────────────────────────────────────────────────┐
+        │  LEVEL -1: GRAVITY BAIT OVERRIDE (BEFORE ALL ELSE)    │
+        ├─────────────────────────────────────────────────────┤
+        │  -1. V100-GVS (Gravity vs Suction Validator)          │ ← NEW!
+        │  -1. V87-SCX (Short Crowd Extremization)              │ ← UPGRADED!
+        ├─────────────────────────────────────────────────────┤
+        │  0. V100-FVC-ENHANCED (Flow Reversal Confirmation)    │ ← UPGRADED!
+        │  1. V100-PFE (Payout Feasibility Engine)              │
+        │  2. V100-LFC-PRIORITY (Liquidity Payout Override)     │
+        │  3. V99-WMI_VETO                                     │
+        │  4. V99-SCT-AF (Standard Short Crowd)                 │
+        └─────────────────────────────────────────────────────┘
+        """
+        
+        # STEP 1: Check Gravity Bait FIRST (Level -1!)
+        gvs_res = results.get('gvs_v100', {})
+        if gvs_res.get('is_gravity_suction_trap'):
+            return {
+                "final_bias": gvs_res.get('bias', 'LONG'),
+                "confidence": gvs_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-GVS_OVERRIDE: {gvs_res.get('reason', '')}",
+                "phase": "GRAVITY_SUCTION_TRAP_DETECTED",
+                "priority_level": -1,
+                "override_all_others": True
+            }
+        
+        # STEP 2: Check Short Crowd Extremization (Level -1!)
+        scx_res = results.get('scx_v87', {})
+        if scx_res.get('is_catastrophic_crowded'):
+            return {
+                "final_bias": scx_res.get('bias', 'LONG'),
+                "confidence": scx_res.get('confidence', 'SUPREME'),
+                "reason": f"V87-SCX_OVERRIDE: {scx_res.get('reason', '')}",
+                "phase": "CATASTROPHIC_SHORT_CROWD_DETECTED",
+                "priority_level": -1,
+                "override_wmi_below_logic": True
+            }
+        
+        # STEP 3: Check Enhanced Flow Validation (Level 0!)
+        fvc_res = results.get('fvc_enhanced_v100', {})
+        if fvc_res.get('is_reversible'):
+            return {
+                "final_bias": fvc_res.get('bias', 'LONG'),
+                "confidence": fvc_res.get('confidence', 'SUPREME'),
+                "reason": f"V100-FVC-ENHANCED: {fvc_res.get('reason', '')}",
+                "phase": "WHALE_ACCUMULATION_SQUEEZE_CONFIRMED",
+                "priority_level": 0
+            }
+        
+        # STEP 4: Check Payout Feasibility (Level 1)
+        pfe_res = results.get('pfe_v100', {})
+        if pfe_res.get('is_infeasible'):
+            return {
+                "final_bias": "WAIT",
+                "confidence": pfe_res.get('confidence', 'HIGH'),
+                "reason": f"V100-PFE_BLOCK: {pfe_res.get('reason', '')}",
+                "phase": "ENTRY_PROHIBITED_NO_FUEL",
+                "priority_level": 1,
+                "entry_forbidden": True
+            }
+        
+        # STEP 5: LFC Override
+        lfc_res = results.get('lfc_override', {})
+        if lfc_res.get('lfc_override_active'):
+            return {
+                "final_bias": lfc_res.get('bias', 'NEUTRAL'),
+                "confidence": lfc_res.get('confidence', 'HIGH'),
+                "reason": lfc_res.get('reason', ''),
+                "phase": "LIQUIDATION_TARGET_VALIDATED",
+                "priority_level": 2
+            }
+        
+        # STEP 6: WMI Veto
+        wmi_res = results.get('wmi_veto', {})
+        if wmi_res.get('is_veto'):
+            return {
+                "final_bias": wmi_res.get('bias', 'NEUTRAL'),
+                "confidence": "HIGH",
+                "reason": wmi_res.get('reason', ''),
+                "phase": "WHALE_SINGULARITY_CONFIRMED",
+                "priority_level": 3
+            }
+        
+        # STEP 7: SCT-AF (Extreme Imbalance)
+        sct_af_res = results.get('sct_af_v99', {})
+        if sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
+            return {
+                "final_bias": sct_af_res.get('bias', 'LONG'),
+                "confidence": sct_af_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99-SCT-AF_OVERRIDE: {sct_af_res.get('reason', '')}",
+                "phase": "EXTREME_SHORT_CROWD_CONFIRMED",
+                "priority_level": 4
+            }
+        
+        # DEFAULT
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "NONE",
+            "reason": "No override signals detected.",
+            "phase": "NORMAL",
+            "priority_level": 5
+        }
 
 
 # ================= V88_PLUS_FINAL: UPDATED CONFLICT RESOLVER (FOR TRAPS) =================
@@ -17694,6 +18009,12 @@ class BinanceAnalyzerV87:
         self.flg_v88 = FluxLiquidityGapValidatorV88()      # V88-FLG (Flux Liquidity Gap Validator)
         self.trap_resolver = ConflictResolverV88_PLUS_FINAL()  # Updated resolver with trap detection
         
+        # ===== NEW ANTI-GRAVITY TRAP MODULES =====
+        self.gvs_v100 = GravityVsSuctionValidatorV100()         # V100-GVS (Gravity vs Suction)
+        self.scx_v87 = ShortCrowdExtremizationValidatorV87()    # V87-SCX (Short Crowd Extremization)
+        self.fvc_enhanced_v100 = FlowVolumeCorrelationEnhancedV100()  # V100-FVC-ENHANCED
+        self.gravity_resolver = ConflictResolverV88_PLUS_FINAL_ANTI_GRAVITY()  # Anti-gravity resolver
+        
         # ===== ANTI-TRIAUSDT MODULES =====
         self.rst_v100 = RSISqueezeThresholdV100()                 # V100-RST (RSI Squeeze Threshold)
         self.dtf_v100 = DistributionTimeFilterV100()              # V100-DTF (Distribution Time Filter)
@@ -18974,6 +19295,35 @@ class BinanceAnalyzerV87:
             odc_result = safe_dict(odc_result)
             flg_result = safe_dict(flg_result)
             
+            # ===== NEW ANTI-GRAVITY TRAP MODULES =====
+            # V100-GVS: Gravity vs Suction Validator
+            gvs_result = self.gvs_v100.check_suction_trap(
+                wmi_ratio=wmi_ratio,
+                flow=trades.get('ratio', 0),
+                rsi6=rsi6,
+                oi_delta=oi_delta_5m,
+                long_payout=lpc_result.get('payout_long', 0) if 'lpc_result' in locals() else 0,
+                short_payout=lpc_result.get('payout_short', 0) if 'lpc_result' in locals() else 0
+            )
+            
+            # V87-SCX: Short Crowd Extremization
+            scx_result = self.scx_v87.validate(
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                wmi_ratio=wmi_ratio
+            )
+            
+            # V100-FVC-ENHANCED: Flow-Volume Correlation Enhanced
+            fvc_enhanced_result = self.fvc_enhanced_v100.validate_oversold_flow(
+                rsi6=rsi6,
+                flow=trades.get('ratio', 0),
+                oi_delta=oi_delta_5m
+            )
+            
+            # Safe dict untuk hasil anti-gravity
+            gvs_result = safe_dict(gvs_result)
+            scx_result = safe_dict(scx_result)
+            fvc_enhanced_result = safe_dict(fvc_enhanced_result)
+            
             # V100-TDI: Trend Integrity Filter
             tdi_result = self.tdi_v100.check_trend_integrity(
                 macd_bearish=macd.get('bearish_cross', False),
@@ -19135,27 +19485,46 @@ class BinanceAnalyzerV87:
             if trap_decision.get('final_bias') not in ['NEUTRAL', None]:
                 final_decision = trap_decision
             else:
-                # Lanjutkan ke rantai resolver yang sudah ada
-                # KUMPULKAN SEMUA HASIL MODULE untuk resolver GRAVITY
+                # ===== NEW ANTI-GRAVITY TRAP RESOLVER CHECK =====
+                # KUMPULKAN SEMUA HASIL MODULE untuk resolver ANTI-GRAVITY
                 gravity_results = {
-                    'lpc_priority_v100': lpc_priority_result,
-                    'wgv_v100': wgv_result,
-                    'lpf_enhanced_v100': lpf_enhanced_v2_result,
-                    'ocv_v100': ocv_result,
-                    'tif_v100': tif_result,
+                    'gvs_v100': gvs_result,
+                    'scx_v87': scx_result,
+                    'fvc_enhanced_v100': fvc_enhanced_result,
+                    'pfe_v100': pfe_result,
+                    'lfc_override': lfc_result if 'lfc_result' in locals() else {},
+                    'wmi_veto': wmi_veto_result if 'wmi_veto_result' in locals() else {},
                     'sct_af_v99': sct_af_result if 'sct_af_result' in locals() else {},
                 }
                 
-                # Gunakan resolver GRAVITY terlebih dahulu
+                # Gunakan resolver ANTI-GRAVITY terlebih dahulu (LEVEL -1 GRAVITY BAIT)
                 gravity_decision = self.gravity_resolver.resolve_all_hft_signals_final(gravity_results)
                 
-                # Jika GRAVITY resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
+                # Jika ANTI-GRAVITY resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
                 if gravity_decision.get('final_bias') != 'NEUTRAL':
                     final_decision = gravity_decision
                 else:
                     # Lanjutkan ke rantai resolver yang sudah ada
-                    # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
-                    final_decision = self.resolver_v88_final.resolve_all_hft_signals({
+                    # KUMPULKAN SEMUA HASIL MODULE untuk resolver GRAVITY (EXISTING)
+                    gravity_old_results = {
+                        'lpc_priority_v100': lpc_priority_result,
+                        'wgv_v100': wgv_result,
+                        'lpf_enhanced_v100': lpf_enhanced_v2_result,
+                        'ocv_v100': ocv_result,
+                        'tif_v100': tif_result,
+                        'sct_af_v99': sct_af_result if 'sct_af_result' in locals() else {},
+                    }
+                    
+                    # Gunakan resolver GRAVITY (EXISTING) terlebih dahulu
+                    gravity_old_decision = self.gravity_resolver.resolve_all_hft_signals_final(gravity_old_results)
+                    
+                    # Jika GRAVITY (EXISTING) resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
+                    if gravity_old_decision.get('final_bias') != 'NEUTRAL':
+                        final_decision = gravity_old_decision
+                    else:
+                        # Lanjutkan ke rantai resolver yang sudah ada
+                        # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
+                        final_decision = self.resolver_v88_final.resolve_all_hft_signals({
                     # NEW MODULES - PRIORITAS TERTINGGI (ZAO, SCT-AF, FVC-TWO) ⭐
                     'zao_v100': zao_result,
                     'sct_af_v99': sct_af_result,
