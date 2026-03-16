@@ -499,6 +499,169 @@ class LiquidationGravityTrapDetectorV100:
         return {"is_liquidity_gravity_trap": False, "bias": "NEUTRAL"}
 
 
+# ================= V100-CHINA-ALGO: CHINA ALGO TRADING LOGIC CONFIG =================
+CHINA_ALGO_VACUUM_IMBALANCE_MIN = 20.0      # Imbalance > 20x untuk vacuum override
+CHINA_ALGO_LIQ_FUEL_RSI_MAX = 20.0          # RSI < 20 untuk liquidation fuel
+CHINA_ALGO_LIQ_FUEL_OI_MIN = -2.0           # OI < -2.0% untuk liquidation fuel
+CHINA_ALGO_CONFLUENCE_WMI_MIN = 90.0        # |WMI| > 90 untuk confluence score
+CHINA_ALGO_CONFLUENCE_IMBALANCE_MIN = 20.0  # Imbalance > 20x untuk confluence score
+CHINA_ALGO_CONFLUENCE_SCORE_MIN = 8.0       # Minimal score untuk confluence override
+CHINA_ALGO_NEARBY_TARGET_DIST_MAX = 2.0     # Jarak target < 2% untuk nearby target
+CHINA_ALGO_NEARBY_IMBALANCE_MIN = 20.0      # Imbalance > 20x untuk validasi nearby target
+
+
+# ================= V100-CHINA-ALGO: CHINA ALGO TRADING LOGIC =================
+class ChinaAlgoTradingLogicV100:
+    """🔥 V100-CHINA-ALGO: Integrasi 4 Logic China Algo Trading"""
+    
+    @staticmethod
+    def check_vacuum_override(zas_result: Dict, lcd_result: Dict, 
+                              lim_result: Dict, zas_v87_result: Dict = None) -> Optional[Dict]:
+        """
+        Logic 1: Opportunity-Driven Vacuum (Kasus ARIA & HANA)
+        Jika terdeteksi Vacuum atau Compression, ABAIKAN syarat Flow PFE
+        """
+        # Gunakan ZAS dari V87 atau V100
+        zas_active = False
+        if zas_result and isinstance(zas_result, dict):
+            zas_active = zas_result.get('is_squeeze', False)
+        if not zas_active and zas_v87_result:
+            zas_active = zas_v87_result.get('is_squeeze', False)
+        
+        lcd_active = lcd_result.get('is_compression', False) if lcd_result else False
+        
+        if zas_active or lcd_active:
+            if lim_result and lim_result.get('imbalance_ratio', 0) > CHINA_ALGO_VACUUM_IMBALANCE_MIN:
+                bias = lim_result.get('bias', 'NEUTRAL')
+                if bias == 'NEUTRAL':
+                    # Fallback ke WMI logic
+                    wmi = lim_result.get('wmi_ratio', 0)
+                    bias = 'LONG' if wmi < 0 else 'SHORT'
+                
+                return {
+                    "bias": bias,
+                    "confidence": "SUPREME",
+                    "reason": f"CHINA_ALGO_VACUUM: Flow rendah justru tanda Resistance Habis. "
+                             f"ZAS={'ACTIVE' if zas_active else 'INACTIVE'}, LCD={'ACTIVE' if lcd_active else 'INACTIVE'}. "
+                             f"MM butuh energi minim untuk pump/dump.",
+                    "override_pfe": True,
+                    "priority_level": 0
+                }
+        return None
+    
+    @staticmethod
+    def check_liquidation_fuel(oi_delta: float, rsi: float, wmi: float) -> Optional[Dict]:
+        """
+        Logic 2: Liquidation Fuel Context (Kasus DEGEN)
+        Jika RSI Oversold Ekstrim (< 20) dan OI Turun, itu BUKAN weak fuel, itu Liquidation Done
+        """
+        if rsi < CHINA_ALGO_LIQ_FUEL_RSI_MAX and oi_delta < CHINA_ALGO_LIQ_FUEL_OI_MIN:
+            # Tentukan bias berdasarkan WMI atau default ke LONG
+            bias = "LONG"
+            if wmi > 0:
+                bias = "SHORT"
+            
+            return {
+                "bias": bias,
+                "confidence": "ABSOLUTE",
+                "reason": f"CHINA_ALGO_LIQ_FUEL: OI Drop {oi_delta:.2f}% di RSI {rsi:.1f} < 20 "
+                         f"artinya Long Liq sudah habis dibantai. Siap Rebound!",
+                "override_pfe": True,
+                "priority_level": 0
+            }
+        return None
+    
+    @staticmethod
+    def check_confluence_entry(wmi: float, lim: Dict, rsi: float, exhaustion: Dict) -> Optional[Dict]:
+        """
+        Logic 3: Implementation Shortfall & Timing Risk (Mengurangi WAIT)
+        Jika skor konfluensi tinggi, abaikan blocker minor
+        """
+        score = 0
+        
+        # WMI ekstrim
+        if abs(wmi) > CHINA_ALGO_CONFLUENCE_WMI_MIN:
+            score += 3
+        
+        # Imbalance tinggi
+        if lim and lim.get('imbalance_ratio', 0) > CHINA_ALGO_CONFLUENCE_IMBALANCE_MIN:
+            score += 3
+        
+        # RSI ekstrim
+        if rsi < 20 or rsi > 80:
+            score += 2
+        
+        # Exhaustion score tinggi
+        if exhaustion and exhaustion.get('score', 0) > 100:
+            score += 2
+        
+        # Jika skor konfluensi >= 8 (Sangat Kuat), abaikan blocker minor
+        if score >= CHINA_ALGO_CONFLUENCE_SCORE_MIN:
+            # Tentukan bias berdasarkan WMI dan LIM
+            if wmi < 0 or (lim and lim.get('bias') == 'LONG'):
+                bias = "LONG"
+            else:
+                bias = "SHORT"
+            
+            return {
+                "bias": bias,
+                "confidence": "HIGH",
+                "reason": f"CHINA_ALGO_CONFLUENCE: Timing Risk terlalu tinggi untuk WAIT. "
+                         f"Score {score}/8. Signal terlalu kuat.",
+                "override_minor_blocks": True,
+                "priority_level": 1
+            }
+        return None
+    
+    @staticmethod
+    def check_nearby_target(short_dist: float, long_dist: float, imbalance: float,
+                           long_payout: float = None, short_payout: float = None) -> Optional[Dict]:
+        """
+        Logic 4: Path of Least Resistance (Menentukan Siapa 6-8% Duluan)
+        Jika ada target likuidasi < 2% dan Imbalance > 20x, itu prioritas
+        """
+        # Target Short di atas (price akan naik)
+        if short_dist < CHINA_ALGO_NEARBY_TARGET_DIST_MAX and imbalance > CHINA_ALGO_NEARBY_IMBALANCE_MIN:
+            return {
+                "bias": "LONG",
+                "confidence": "HIGH",
+                "reason": f"CHINA_ALGO_NEARBY_TARGET: Short Liq {short_dist:.2f}% terlalu dekat & padat "
+                         f"(Imbalance {imbalance:.1f}x). MM akan sweep dulu sebelum move besar.",
+                "priority_level": 1
+            }
+        
+        # Target Long di bawah (price akan turun) - Imbalance Long berarti Short Score >> Long Score
+        if long_dist < CHINA_ALGO_NEARBY_TARGET_DIST_MAX and imbalance > CHINA_ALGO_NEARBY_IMBALANCE_MIN:
+            return {
+                "bias": "SHORT",
+                "confidence": "HIGH",
+                "reason": f"CHINA_ALGO_NEARBY_TARGET: Long Liq {long_dist:.2f}% terlalu dekat & padat "
+                         f"(Imbalance {imbalance:.1f}x). MM akan sweep dulu sebelum move besar.",
+                "priority_level": 1
+            }
+        
+        # Bonus: Cek payout jika tersedia (target dengan reward terbesar)
+        if long_payout and short_payout:
+            if short_payout > long_payout * 2 and short_dist < 3.0:
+                return {
+                    "bias": "LONG",
+                    "confidence": "HIGH",
+                    "reason": f"CHINA_ALGO_PAYOUT_TARGET: Short payout {short_payout:.0f} >> Long {long_payout:.0f}. "
+                             f"MM pilih target paling menguntungkan.",
+                    "priority_level": 1
+                }
+            if long_payout > short_payout * 2 and long_dist < 3.0:
+                return {
+                    "bias": "SHORT",
+                    "confidence": "HIGH",
+                    "reason": f"CHINA_ALGO_PAYOUT_TARGET: Long payout {long_payout:.0f} >> Short {short_payout:.0f}. "
+                             f"MM pilih target paling menguntungkan.",
+                    "priority_level": 1
+                }
+        
+        return None
+
+
 # ================= V100-PFE: PAYOUT FEASIBILITY ENGINE =================
 class PayoutFeasibilityEngineV100:
     """🔥 V100-PFE: PAYOUT FEASIBILITY ENGINE - CAN WE REACH THE TARGET?
@@ -512,12 +675,26 @@ class PayoutFeasibilityEngineV100:
     PFE_DISTANCE_CHECK_THRESHOLD = 2.0
     
     @staticmethod
-    def check_feasibility(flow: float, oi_delta: float, wmi: float, target_dist: float) -> Dict:
+    def check_feasibility(flow: float, oi_delta: float, wmi: float, target_dist: float,
+                          rsi: float = None) -> Dict:
         """
         MYXUSDT Case: Flow 1.22x (< 1.5). Target Short Liq nearby.
         APRUSDT Case: Flow 0.82x (< 1.5). OI tiny (+0.57%).
+        
+        UPDATE: Tambahkan logic liquidation fuel untuk RSI oversold
         """
         
+        # 🔥 NEW: Cek Liquidation Fuel (Kasus DEGEN)
+        if rsi is not None and rsi < 20 and oi_delta < -2.0:
+            return {
+                "is_infeasible": False,  # Paksa Feasible
+                "bias": "LONG" if wmi < 0 else "SHORT",
+                "reason": f"CHINA_ALGO_LIQ_FUEL: OI Drop {oi_delta:.2f}% di RSI {rsi:.1f} < 20 "
+                         f"artinya Long Liq sudah habis dibantai. Siap Rebound!",
+                "entry_status": "ALLOWED"
+            }
+        
+        # Logic lama untuk flow rendah
         if flow < PayoutFeasibilityEngineV100.PFE_FLOW_MIN_FOR_SQUEEZE:
             # Cek apakah WMI masih ekstrim (menyebabkan fatal error jika diabaikan)
             if abs(wmi) > 80:
@@ -540,7 +717,7 @@ class PayoutFeasibilityEngineV100:
                 "entry_status": "BLOCKED_ENTRY"
             }
             
-        return {"is_infeasible": False, "bias": "NEUTRAL"}
+        return {"is_infeasible": False, "bias": "NEUTRAL", "entry_status": "ALLOWED"}
 
 
 # ================= V85-ODC: OVERBOUGHT DISTRIBUTION CHECK =================
@@ -813,20 +990,104 @@ class ConflictResolverV88_PLUS_FINAL_ANTI_GRAVITY:
     @staticmethod
     def resolve_all_hft_signals_final(results):
         """
-        URUTAN PRIORITAS MUTLAK:
+        URUTAN PRIORITAS MUTLAK (UPDATED WITH CHINA ALGO LOGIC):
         ┌─────────────────────────────────────────────────────┐
+        │  PRIORITY 0: VACUUM & LIQUIDATION FUEL OVERRIDE      │
+        ├─────────────────────────────────────────────────────┤
+        │  0a. V100-CHINA-VACUUM (Vacuum/Compression)         │ ← TERTINGGI!
+        │  0b. V100-CHINA-LIQ-FUEL (Liquidation Fuel)         │
+        ├─────────────────────────────────────────────────────┤
+        │  PRIORITY 1: CHINA ALGO CONFLUENCE                   │
+        ├─────────────────────────────────────────────────────┤
+        │  1a. V100-CHINA-CONFLUENCE (Strong Signal Override) │
+        │  1b. V100-CHINA-NEARBY-TARGET (Path of Least Res.)   │
+        ├─────────────────────────────────────────────────────┤
         │  LEVEL -1: GRAVITY BAIT OVERRIDE (BEFORE ALL ELSE)    │
         ├─────────────────────────────────────────────────────┤
-        │  -1. V100-GVS (Gravity vs Suction Validator)          │ ← NEW!
-        │  -1. V87-SCX (Short Crowd Extremization)              │ ← UPGRADED!
+        │  -1. V100-GVS (Gravity vs Suction Validator)          │
+        │  -1. V87-SCX (Short Crowd Extremization)              │
         ├─────────────────────────────────────────────────────┤
-        │  0. V100-FVC-ENHANCED (Flow Reversal Confirmation)    │ ← UPGRADED!
+        │  0. V100-FVC-ENHANCED (Flow Reversal Confirmation)    │
         │  1. V100-PFE (Payout Feasibility Engine)              │
         │  2. V100-LFC-PRIORITY (Liquidity Payout Override)     │
         │  3. V99-WMI_VETO                                     │
         │  4. V99-SCT-AF (Standard Short Crowd)                 │
         └─────────────────────────────────────────────────────┘
         """
+        
+        # ========== PRIORITY 0a: VACUUM/COMPRESSION OVERRIDE ==========
+        # Logic 1: Opportunity-Driven Vacuum (Kasus ARIA & HANA)
+        vacuum_override = ChinaAlgoTradingLogicV100.check_vacuum_override(
+            zas_result=results.get('zas_v100', {}),
+            lcd_result=results.get('lcd', {}),
+            lim_result=results.get('lim', {}),
+            zas_v87_result=results.get('zas_v87', {})
+        )
+        
+        if vacuum_override:
+            return {
+                "final_bias": vacuum_override['bias'],
+                "confidence": vacuum_override['confidence'],
+                "reason": vacuum_override['reason'],
+                "phase": "VACUUM_SQUEEZE_CONFIRMED",
+                "priority_level": 0,
+                "override_pfe": True
+            }
+        
+        # ========== PRIORITY 0b: LIQUIDATION FUEL OVERRIDE ==========
+        # Logic 2: Liquidation Fuel Context (Kasus DEGEN)
+        liq_fuel_override = ChinaAlgoTradingLogicV100.check_liquidation_fuel(
+            oi_delta=results.get('oi_delta_5m', 0),
+            rsi=results.get('rsi6', 50),
+            wmi=results.get('wmi_ratio', 0)
+        )
+        
+        if liq_fuel_override:
+            return {
+                "final_bias": liq_fuel_override['bias'],
+                "confidence": liq_fuel_override['confidence'],
+                "reason": liq_fuel_override['reason'],
+                "phase": "LIQUIDATION_FUEL_CONFIRMED",
+                "priority_level": 0,
+                "override_pfe": True
+            }
+        
+        # ========== PRIORITY 1a: CONFLUENCE ENTRY OVERRIDE ==========
+        # Logic 3: Implementation Shortfall (Mengurangi WAIT)
+        confluence_override = ChinaAlgoTradingLogicV100.check_confluence_entry(
+            wmi=results.get('wmi_ratio', 0),
+            lim=results.get('lim', {}),
+            rsi=results.get('rsi6', 50),
+            exhaustion=results.get('exhaustion', {})
+        )
+        
+        if confluence_override:
+            return {
+                "final_bias": confluence_override['bias'],
+                "confidence": confluence_override['confidence'],
+                "reason": confluence_override['reason'],
+                "phase": "CONFLUENCE_ENTRY_TRIGGERED",
+                "priority_level": 1
+            }
+        
+        # ========== PRIORITY 1b: NEARBY TARGET OVERRIDE ==========
+        # Logic 4: Path of Least Resistance
+        nearby_override = ChinaAlgoTradingLogicV100.check_nearby_target(
+            short_dist=results.get('short_liq', 999),
+            long_dist=results.get('long_liq', 999),
+            imbalance=results.get('lim', {}).get('imbalance_ratio', 0),
+            long_payout=results.get('lpc', {}).get('payout_long', 0),
+            short_payout=results.get('lpc', {}).get('payout_short', 0)
+        )
+        
+        if nearby_override:
+            return {
+                "final_bias": nearby_override['bias'],
+                "confidence": nearby_override['confidence'],
+                "reason": nearby_override['reason'],
+                "phase": "NEARBY_TARGET_PRIORITY",
+                "priority_level": 1
+            }
         
         # STEP 1: Check Gravity Bait FIRST (Level -1!)
         gvs_res = results.get('gvs_v100', {})
@@ -17566,6 +17827,19 @@ class OutputFormatterV87:
             elif result['otf'].get('scenario') == 'UAI_TRAP':
                 print(f"   📊 RSI {result['rsi6']} oversold TAPI OI turun + Flow lemah = LIQUIDATION CASCADE!")
 
+        # ===== CHINA ALGO TRADING LOGIC =====
+        if "VACUUM_SQUEEZE_CONFIRMED" in result.get('phase', ''):
+            print(f"\n🌪️🌪️🌪️ CHINA ALGO VACUUM MODE: {result['reason']}")
+
+        if "LIQUIDATION_FUEL_CONFIRMED" in result.get('phase', ''):
+            print(f"\n🔥🔥🔥 CHINA ALGO LIQUIDATION FUEL: {result['reason']}")
+
+        if "CONFLUENCE_ENTRY_TRIGGERED" in result.get('phase', ''):
+            print(f"\n⚡⚡⚡ CHINA ALGO CONFLUENCE ENTRY: {result['reason']}")
+
+        if "NEARBY_TARGET_PRIORITY" in result.get('phase', ''):
+            print(f"\n🎯🎯🎯 CHINA ALGO NEARBY TARGET: {result['reason']}")
+
         # DECISION
         print(f"\n{'='*40}")
         bias_color = "🟢" if result['bias'] == "LONG" else "🔴" if result['bias'] == "SHORT" else "⚪"
@@ -19274,7 +19548,8 @@ class BinanceAnalyzerV87:
                 flow=trades.get('ratio', 0),
                 oi_delta=oi_delta_5m,
                 wmi=wmi_ratio,
-                target_dist=target_dist
+                target_dist=target_dist,
+                rsi=rsi6  # 🔥 NEW: Tambahkan RSI untuk Liquidation Fuel logic
             )
             
             # V85-ODC: Overbought Distribution Check
@@ -19465,7 +19740,7 @@ class BinanceAnalyzerV87:
             tif_result = safe_dict(tif_result)
             wgv_result = safe_dict(wgv_result)
             
-            # KUMPULKAN SEMUA HASIL MODULE untuk resolver TRAP
+            # KUMPULKAN SEMUA HASIL MODULE untuk resolver TRAP (UPDATED WITH CHINA ALGO)
             trap_results = {
                 'pfe_v100': pfe_result,
                 'odc_v85': odc_result,
@@ -19476,6 +19751,18 @@ class BinanceAnalyzerV87:
                 'sct_af_v99': sct_af_result if 'sct_af_result' in locals() else {},
                 'vod_v100': vod_result if 'vod_result' in locals() else {},
                 'evr_v98': evr_result if 'evr_result' in locals() else {},
+                # 🔥 CHINA ALGO DATA
+                'zas_v100': zas_result if 'zas_result' in locals() else {},
+                'lcd': lcd_result if 'lcd_result' in locals() else {},
+                'lim': lim_result if 'lim_result' in locals() else {},
+                'zas_v87': zas_result if 'zas_result' in locals() else {},
+                'exhaustion': exhaustion if 'exhaustion' in locals() else {},
+                'lpc': lpc_result if 'lpc_result' in locals() else {},
+                'oi_delta_5m': oi_delta_5m,
+                'rsi6': rsi6,
+                'wmi_ratio': wmi_ratio,
+                'short_liq': liq.get('short_dist', 999),
+                'long_liq': liq.get('long_dist', 999),
             }
             
             # Gunakan resolver TRAP terlebih dahulu (LEVEL -1 BLOCKERS)
