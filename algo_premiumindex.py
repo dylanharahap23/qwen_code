@@ -418,6 +418,21 @@ WGV_LONG_LIQ_DANGER_THRESHOLD = 1.0      # Long Liq < 1% = Death Zone!
 WGV_WMI_NEGATIVE_THRESHOLD = -95          # WMI < -95 = Strong Downward Gravity
 WGV_FLOW_INSUFFICIENT_THRESHOLD = 1.5     # Flow < 1.5 = Cannot overcome gravity
 
+# ================= V100-PFE: PAYOUT FEASIBILITY ENGINE CONFIG =================
+PFE_FLOW_MIN_FOR_SQUEEZE = 1.5          # Minimal Flow untuk valid squeeze big
+PFE_OI_BUILD_MIN = 1.0                  # Minimal OI Build (%)
+PFE_DISTANCE_CHECK_THRESHOLD = 2.0      # Max jarak target (% agar feasible)
+
+# ================= V85-ODC: OVERBOUGHT DISTRIBUTION CHECK CONFIG =================
+ODC_RSI_HIGH_MAX = 65.0                 # RSI > 65 mulai riskan
+ODC_WMI_POSITIVE_THRESHOLD = 80.0       # WMI > 80 confirms magnet above
+ODC_OI_STAGNATION_MAX = 1.0             # OI build kecil/stagnant
+
+# ================= V88-FLG: FLUX LIQUIDITY GAP VALIDATOR CONFIG =================
+FLG_AGG_HIGH_THRESHOLD = 2.0            # Agg > 2.0
+FLG_FLOW_LOW_THRESHOLD = 1.0            # Flow < 1.0
+FLG_RATIO_DISCREPANCY = 2.0             # Agg/Flow gap > 2x
+
 # ================= V100-LGT: LIQUIDATION GRAVITY TRAP DETECTOR =================
 class LiquidationGravityTrapDetectorV100:
     """🔥 V100-LGT: LIQUIDATION GRAVITY TRAP - ANTI-COSUSDT TRAP
@@ -467,6 +482,260 @@ class LiquidationGravityTrapDetectorV100:
         
         return {"is_liquidity_gravity_trap": False, "bias": "NEUTRAL"}
 
+
+# ================= V100-PFE: PAYOUT FEASIBILITY ENGINE =================
+class PayoutFeasibilityEngineV100:
+    """🔥 V100-PFE: PAYOUT FEASIBILITY ENGINE - CAN WE REACH THE TARGET?
+    
+    Prinsip: Jika WMI > 80 tetapi Flow Rendah (< 1.5x), 
+    MM akan pilih target yang lebih dekat (justru sebaliknya).
+    """
+    
+    PFE_FLOW_MIN_FOR_SQUEEZE = 1.5
+    PFE_OI_BUILD_MIN = 1.0
+    PFE_DISTANCE_CHECK_THRESHOLD = 2.0
+    
+    @staticmethod
+    def check_feasibility(flow: float, oi_delta: float, wmi: float, target_dist: float) -> Dict:
+        """
+        MYXUSDT Case: Flow 1.22x (< 1.5). Target Short Liq nearby.
+        APRUSDT Case: Flow 0.82x (< 1.5). OI tiny (+0.57%).
+        """
+        
+        if flow < PayoutFeasibilityEngineV100.PFE_FLOW_MIN_FOR_SQUEEZE:
+            # Cek apakah WMI masih ekstrim (menyebabkan fatal error jika diabaikan)
+            if abs(wmi) > 80:
+                # Jika WMI Ekstrim TAPI Flow Rendah = LIQUIDITY VOID (Magnet tapi no train)
+                return {
+                    "is_infeasible": True,
+                    "bias": "NEUTRAL",  # JANGAN LONG! Jangan juga SHORT (Tunggu)
+                    "reason": f"PFE_FEASIBILITY_FAIL: Flow {flow:.2f}x < Threshold {PayoutFeasibilityEngineV100.PFE_FLOW_MIN_FOR_SQUEEZE}. "
+                             f"Target WMI {wmi:.1f}x TIDAK AKAN DIJANGKAU TANPA DAYA DORONG! "
+                             f"MM kemungkinan besar Akan Pilih Dump ke bawah dulu.",
+                    "priority_level": 0,
+                    "entry_status": "BLOCKED_ENTRY"
+                }
+        
+        elif oi_delta < PayoutFeasibilityEngineV100.PFE_OI_BUILD_MIN:
+            return {
+                "is_infeasible": True,
+                "bias": "NEUTRAL",
+                "reason": f"PFE_WEAK_FUEL: OI Delta {oi_delta:.2f}% terlalu kecil. Tidak ada 'bensin' baru.",
+                "entry_status": "BLOCKED_ENTRY"
+            }
+            
+        return {"is_infeasible": False, "bias": "NEUTRAL"}
+
+
+# ================= V85-ODC: OVERBOUGHT DISTRIBUTION CHECK =================
+class OverboughtDistributionCheckV85:
+    """🔥 V85-ODC: OVERBOUGHT DISTRIBUTION CHECK - ANTI-SQUEEZE TRAP
+    
+    Jika RSI > 65 DAN WMI > 80, itu adalah Area Perangkap Longs.
+    MM pakai Short Liquidation sebagai umpan untuk menjual ke retail.
+    """
+    
+    ODC_RSI_HIGH_MAX = 65.0
+    ODC_WMI_POSITIVE_THRESHOLD = 80.0
+    ODC_OI_STAGNATION_MAX = 1.0
+    
+    @staticmethod
+    def detect(rsi6: float, wmi_ratio: float, oi_delta: float) -> Dict:
+        """
+        MYXUSDT Case: RSI 71.4 (High!), WMI 85 (High!)
+        APRUSDT Case: RSI 65.5 (Borderline High!)
+        """
+        
+        if rsi6 >= OverboughtDistributionCheckV85.ODC_RSI_HIGH_MAX:
+            if wmi_ratio >= OverboughtDistributionCheckV85.ODC_WMI_POSITIVE_THRESHOLD:
+                if abs(oi_delta) <= OverboughtDistributionCheckV85.ODC_OI_STAGNATION_MAX:
+                    
+                    return {
+                        "is_top_trap": True,
+                        "trap_type": "LONG_FOMO_TRAP",
+                        "confidence": "HIGH",
+                        "bias": "NEUTRAL",  # WARNING NOT SELL YET, JUST WAIT
+                        "reason": f"ODC_TOP_TRAP DETECTED: RSI {rsi6:.1f} + WMI {wmi_ratio:.1f}. "
+                                 f"This is NOT a Squeeze Setup, it's a RETAIL TRAP. "
+                                 f"Walls below will break before walls above break!",
+                        "override_squeeze_logic": True,
+                        "recommendation": "AVOID_LONG_ENTRY_UNLESS_BREAKOUT"
+                    }
+        
+        return {"is_top_trap": False, "bias": "NEUTRAL"}
+
+
+# ================= V88-FLG: FLUX LIQUIDITY GAP VALIDATOR =================
+class FluxLiquidityGapValidatorV88:
+    """🔥 V88-FLG: FLUX LIQUIDITY GAP VALIDATOR - MOMENTUM CONSISTENCY
+    
+    Jika Agg > 2.0 tapi Flow < 1.0, berarti ada Order Besar yang tereksekusi 
+    tanpa volume follow-up (Limit selling absorption).
+    """
+    
+    FLG_AGG_HIGH_THRESHOLD = 2.0
+    FLG_FLOW_LOW_THRESHOLD = 1.0
+    FLG_RATIO_DISCREPANCY = 2.0
+    
+    @staticmethod
+    def validate(aggressive_ratio: float, trade_flow: float) -> Dict:
+        """
+        APRUSDT Case: Agg 2.33x / Flow 0.82x = Gap 2.8x
+        """
+        
+        if aggressive_ratio > FluxLiquidityGapValidatorV88.FLG_AGG_HIGH_THRESHOLD:
+            if trade_flow < FluxLiquidityGapValidatorV88.FLG_FLOW_LOW_THRESHOLD:
+                
+                ratio_discrepancy = aggressive_ratio / max(trade_flow, 0.01)
+                
+                if ratio_discrepancy > FluxLiquidityGapValidatorV88.FLG_RATIO_DISCREPANCY:
+                    return {
+                        "momentum_fake": True,
+                        "gap_severity": "HIGH",
+                        "confidence": "HIGH",
+                        "bias": "SHORT",
+                        "reason": f"FLG_MOMENTUM_FAKE: Agg {aggressive_ratio:.2f}x (High!) "
+                                 f"but Flow {trade_flow:.2f}x (Low!). "
+                                 f"Whale absorbing sells silently. Real selling pressure incoming!",
+                        "override_entry_signals": True
+                    }
+                    
+        return {"momentum_fake": False, "bias": "NEUTRAL"}
+
+
+# ================= V88_PLUS_FINAL: UPDATED CONFLICT RESOLVER (FOR TRAPS) =================
+class ConflictResolverV88_PLUS_FINAL:
+    """🔥 HIERARKI PRIORITAS MUTLAK (UPDATED FOR TRAPS)"""
+    
+    @staticmethod
+    def resolve_all_hft_signals_v88_final(results):
+        """
+        URUTAN PRIORITAS MUTLAK:
+        ┌─────────────────────────────────────────────────────┐
+        │  LEVEL -1: BLOCKERS (FORCE STOP IF ACTIVE)           │
+        ├─────────────────────────────────────────────────────┤
+        │  -1. V100-PFE (Payout Feasibility)                 │ ← NEW!
+        │  -1. V85-ODC (Overbought Distribution Trap)         │ ← NEW!
+        │  -1. V88-FLG (Flux Liquidity Gap - Fake Momentum)   │ ← NEW!
+        ├─────────────────────────────────────────────────────┤
+        │  0. GRAVITY OVERRIDES (WHEN FUEL CONFIRMED)          │
+        ├─────────────────────────────────────────────────────┤
+        │  0. V100-LFC-OVERRIDE (LPC Payout Validated)        │
+        │  0. V99-WMI_VETO (Event Horizon)                     │
+        │  0. V100-ZAO (Zero Aggression Squeeze - Validated)   │
+        ├─────────────────────────────────────────────────────┤
+        │  1. CORE STRATEGIC SIGNALS                          │
+        ├─────────────────────────────────────────────────────┤
+        │  1. V99-SCT-AF (Short Crowd Extreme)                │
+        │  1. V100-VOD (Volume-OI Divergence)                 │
+        │  1. V99-EVR (Extreme Vacuum Reversal)               │
+        └─────────────────────────────────────────────────────┘
+        """
+        
+        # STEP 1: Check Blockers FIRST (Before ANYTHING else!)
+        pfe_res = results.get('pfe_v100', {})
+        if pfe_res.get('is_infeasible'):
+            return {
+                "final_bias": "WAIT",
+                "confidence": pfe_res.get('confidence', 'HIGH'),
+                "reason": f"V100-PFE_BLOCK: {pfe_res.get('reason', '')}",
+                "phase": "ENTRY_PROHIBITED_NO_FUEL",
+                "priority_level": -1,
+                "entry_forbidden": True
+            }
+        
+        odc_res = results.get('odc_v85', {})
+        if odc_res.get('is_top_trap'):
+            return {
+                "final_bias": "NEUTRAL",  # Don't enter Long
+                "confidence": odc_res.get('confidence', 'HIGH'),
+                "reason": f"V85-ODC_WARNING: {odc_res.get('reason', '')}",
+                "phase": "TOP_FORMATION_DETECTED",
+                "priority_level": -1,
+                "override_modules": ["LFC_PAYOUT_OVERRIDE"],
+                "recommendation": odc_res.get('recommendation', 'AVOID_LONG')
+            }
+        
+        flg_res = results.get('flg_v88', {})
+        if flg_res.get('momentum_fake'):
+            return {
+                "final_bias": flg_res.get('bias', 'SHORT'),
+                "confidence": flg_res.get('confidence', 'HIGH'),
+                "reason": f"V88-FLG_VALIDATE: {flg_res.get('reason', '')}",
+                "phase": "MOMENTUM_FRAUD_CONFIRMED",
+                "priority_level": -1
+            }
+        
+        # STEP 2: Proceed with Standard Modules (Gravity Overrides)
+        lfc_res = results.get('lfc_override', {})
+        if lfc_res.get('lfc_override_active'):
+            return {
+                "final_bias": lfc_res.get('bias', 'NEUTRAL'),
+                "confidence": lfc_res.get('confidence', 'HIGH'),
+                "reason": lfc_res.get('reason', ''),
+                "phase": "LIQUIDATION_TARGET_VALIDATED",
+                "priority_level": 0
+            }
+        
+        wmi_res = results.get('wmi_veto', {})
+        if wmi_res.get('is_veto'):
+            return {
+                "final_bias": wmi_res.get('bias', 'NEUTRAL'),
+                "confidence": "HIGH",
+                "reason": wmi_res.get('reason', ''),
+                "phase": "WHALE_SINGULARITY_CONFIRMED",
+                "priority_level": 0
+            }
+        
+        zao_res = results.get('zao_v100', {})
+        if zao_res.get('is_zero_aggression_trap'):
+            return {
+                "final_bias": zao_res.get('bias', 'LONG'),
+                "confidence": zao_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-ZAO_OVERRIDE: {zao_res.get('reason', '')}",
+                "phase": "ZERO_AGGRESSION_CONFIRMED",
+                "priority_level": 0
+            }
+        
+        # STEP 3: Core Strategic Signals
+        sct_af_res = results.get('sct_af_v99', {})
+        if sct_af_res.get('is_extreme_crowd') and sct_af_res.get('confidence') == 'ABSOLUTE':
+            return {
+                "final_bias": sct_af_res.get('bias', 'LONG'),
+                "confidence": sct_af_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V99-SCT-AF_OVERRIDE: {sct_af_res.get('reason', '')}",
+                "phase": "EXTREME_SHORT_CROWD_CONFIRMED",
+                "priority_level": 1
+            }
+        
+        vod_res = results.get('vod_v100', {})
+        if vod_res.get('is_distribution_trap'):
+            return {
+                "final_bias": vod_res.get('bias', 'SHORT'),
+                "confidence": vod_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V100-VOD_OVERRIDE: {vod_res.get('reason', '')}",
+                "phase": "LIQUIDITY_TRAP_DETECTED",
+                "priority_level": 1
+            }
+        
+        evr_res = results.get('evr_v98', {})
+        if evr_res.get('is_extreme_reversal'):
+            return {
+                "final_bias": evr_res.get('bias', 'LONG'),
+                "confidence": evr_res.get('confidence', 'ABSOLUTE'),
+                "reason": f"V98-EVR_OVERRIDE: {evr_res.get('reason', '')}",
+                "phase": "EXTREME_REVERSAL_CONFIRMED",
+                "priority_level": 1
+            }
+        
+        # DEFAULT
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "NONE",
+            "reason": "No override signals detected.",
+            "phase": "NORMAL",
+            "priority_level": 2
+        }
 
 
 # ================= V100-FDF: FLUSH PROBABILITY CALCULATOR =================
@@ -17639,6 +17908,12 @@ class BinanceAnalyzerV87:
         
         self.resolver_v88_final = ConflictResolverV88_FINAL_REVOLUTION()  # V88 FINAL REVOLUTION Resolver ⭐ NEW!
         
+        # ===== NEW TRAP DETECTION MODULES (PFE, ODC, FLG) =====
+        self.pfe_v100 = PayoutFeasibilityEngineV100()      # V100-PFE (Payout Feasibility)
+        self.odc_v85 = OverboughtDistributionCheckV85()    # V85-ODC (Overbought Distribution Trap)
+        self.flg_v88 = FluxLiquidityGapValidatorV88()      # V88-FLG (Flux Liquidity Gap Validator)
+        self.trap_resolver = ConflictResolverV88_PLUS_FINAL()  # Updated resolver with trap detection
+        
         # ===== ANTI-TRIAUSDT MODULES =====
         self.rst_v100 = RSISqueezeThresholdV100()                 # V100-RST (RSI Squeeze Threshold)
         self.dtf_v100 = DistributionTimeFilterV100()              # V100-DTF (Distribution Time Filter)
@@ -18891,6 +19166,34 @@ class BinanceAnalyzerV87:
                 rsi=rsi6
             )
             
+            # ===== NEW TRAP DETECTION MODULES (PFE, ODC, FLG) =====
+            # V100-PFE: Payout Feasibility Engine
+            target_dist = liq.get('short_dist', 999) if wmi_ratio > 0 else liq.get('long_dist', 999)
+            pfe_result = self.pfe_v100.check_feasibility(
+                flow=trades.get('ratio', 0),
+                oi_delta=oi_delta_5m,
+                wmi=wmi_ratio,
+                target_dist=target_dist
+            )
+            
+            # V85-ODC: Overbought Distribution Check
+            odc_result = self.odc_v85.detect(
+                rsi6=rsi6,
+                wmi_ratio=wmi_ratio,
+                oi_delta=oi_delta_5m
+            )
+            
+            # V88-FLG: Flux Liquidity Gap Validator
+            flg_result = self.flg_v88.validate(
+                aggressive_ratio=trades.get('aggressive_ratio', 1.0),
+                trade_flow=trades.get('ratio', 1.0)
+            )
+            
+            # Safe dict untuk hasil trap detection
+            pfe_result = safe_dict(pfe_result)
+            odc_result = safe_dict(odc_result)
+            flg_result = safe_dict(flg_result)
+            
             # V100-TDI: Trend Integrity Filter
             tdi_result = self.tdi_v100.check_trend_integrity(
                 macd_bearish=macd.get('bearish_cross', False),
@@ -19032,46 +19335,67 @@ class BinanceAnalyzerV87:
             tif_result = safe_dict(tif_result)
             wgv_result = safe_dict(wgv_result)
             
-            # KUMPULKAN SEMUA HASIL MODULE untuk resolver GRAVITY
-            gravity_results = {
-                'lpc_priority_v100': lpc_priority_result,
-                'wgv_v100': wgv_result,
-                'lpf_enhanced_v100': lpf_enhanced_v2_result,
-                'ocv_v100': ocv_result,
-                'tif_v100': tif_result,
+            # KUMPULKAN SEMUA HASIL MODULE untuk resolver TRAP
+            trap_results = {
+                'pfe_v100': pfe_result,
+                'odc_v85': odc_result,
+                'flg_v88': flg_result,
+                'lfc_override': lfc_result if 'lfc_result' in locals() else {},
+                'wmi_veto': wmi_veto_result if 'wmi_veto_result' in locals() else {},
+                'zao_v100': zao_result if 'zao_result' in locals() else {},
                 'sct_af_v99': sct_af_result if 'sct_af_result' in locals() else {},
+                'vod_v100': vod_result if 'vod_result' in locals() else {},
+                'evr_v98': evr_result if 'evr_result' in locals() else {},
             }
             
-            # Gunakan resolver GRAVITY terlebih dahulu
-            gravity_decision = self.gravity_resolver.resolve_all_hft_signals_final(gravity_results)
+            # Gunakan resolver TRAP terlebih dahulu (LEVEL -1 BLOCKERS)
+            trap_decision = self.trap_resolver.resolve_all_hft_signals_v88_final(trap_results)
             
-            # Jika GRAVITY resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
-            if gravity_decision.get('final_bias') != 'NEUTRAL':
-                final_decision = gravity_decision
+            # Jika TRAP resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
+            if trap_decision.get('final_bias') not in ['NEUTRAL', None]:
+                final_decision = trap_decision
             else:
                 # Lanjutkan ke rantai resolver yang sudah ada
-                # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
-                final_decision = self.resolver_v88_final.resolve_all_hft_signals({
-                # NEW MODULES - PRIORITAS TERTINGGI (ZAO, SCT-AF, FVC-TWO) ⭐
-                'zao_v100': zao_result,
-                'sct_af_v99': sct_af_result,
-                'wmo_v100': wmo_result,
-                'fvc_two_v100': fvc_two_result,
+                # KUMPULKAN SEMUA HASIL MODULE untuk resolver GRAVITY
+                gravity_results = {
+                    'lpc_priority_v100': lpc_priority_result,
+                    'wgv_v100': wgv_result,
+                    'lpf_enhanced_v100': lpf_enhanced_v2_result,
+                    'ocv_v100': ocv_result,
+                    'tif_v100': tif_result,
+                    'sct_af_v99': sct_af_result if 'sct_af_result' in locals() else {},
+                }
                 
-                # EXISTING CRITICAL MODULES (BTRUSDT PATTERNS)
-                'evr_v98': evr_result,
-                'sce_v99': sce_result,
-                'fvc_rev_v100': fvc_rev_result,
+                # Gunakan resolver GRAVITY terlebih dahulu
+                gravity_decision = self.gravity_resolver.resolve_all_hft_signals_final(gravity_results)
                 
-                # OTHER CRITICAL MODULES
-                'rsc_priority': rsc_priority_result,
-                'zva_v97': zva_result,
-                'afa_v100': afa_result,
-                'lfc_enhanced': lfc_enhanced_result,
-                'nos_v100': nos_result,
-                'wmi_veto': wmi_veto_result,
-                'sat_v90': sat_result,
-            })
+                # Jika GRAVITY resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
+                if gravity_decision.get('final_bias') != 'NEUTRAL':
+                    final_decision = gravity_decision
+                else:
+                    # Lanjutkan ke rantai resolver yang sudah ada
+                    # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
+                    final_decision = self.resolver_v88_final.resolve_all_hft_signals({
+                    # NEW MODULES - PRIORITAS TERTINGGI (ZAO, SCT-AF, FVC-TWO) ⭐
+                    'zao_v100': zao_result,
+                    'sct_af_v99': sct_af_result,
+                    'wmo_v100': wmo_result,
+                    'fvc_two_v100': fvc_two_result,
+                    
+                    # EXISTING CRITICAL MODULES (BTRUSDT PATTERNS)
+                    'evr_v98': evr_result,
+                    'sce_v99': sce_result,
+                    'fvc_rev_v100': fvc_rev_result,
+                    
+                    # OTHER CRITICAL MODULES
+                    'rsc_priority': rsc_priority_result,
+                    'zva_v97': zva_result,
+                    'afa_v100': afa_result,
+                    'lfc_enhanced': lfc_enhanced_result,
+                    'nos_v100': nos_result,
+                    'wmi_veto': wmi_veto_result,
+                    'sat_v90': sat_result,
+                })
             
             # 🔴 PERBAIKAN 1: Gunakan 'final_bias' dari resolver_v88_final
             # Jika final resolver tidak memberikan keputusan kuat, fallback ke nuclear resolver
