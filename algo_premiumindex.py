@@ -17858,6 +17858,13 @@ class OutputFormatterV87:
         print(f"📌 REASON: {result['reason']}")
         print(f"⏳ ENTRY: {result['entry_status']}")
         print(f"{result['hold_status']}")
+        
+        # Tampilkan HFT Score jika ada (dari scoring system baru)
+        if 'score' in result:
+            score = result['score']
+            score_icon = "🔥" * max(1, abs(score) // 2)
+            score_direction = "LONG" if score > 0 else ("SHORT" if score < 0 else "NEUTRAL")
+            print(f"\n🎯 HFT SCORE: {score:+d} ({score_direction}) {score_icon}")
 
         if result['entry_ready']:
             print(f"\n{'✅'*10} ENTRY READY! {'✅'*10}")
@@ -18425,6 +18432,114 @@ class BinanceAnalyzerV87:
 
         self.oi_history = deque(maxlen=30)
         self._prefill_oi_history()
+
+    # ================= HFT SCORING SYSTEM - DOCTOR'S RECOMMENDATION =================
+    def calculate_hft_score(self, data: Dict) -> Dict:
+        """
+        🔥 HFT SCORING SYSTEM - FOKUS PREDIKSI LIKUIDASI 6-8%
+        Mengganti semua resolver kompleks dengan scoring sederhana ala Market Maker
+        """
+        score = 0
+        reasons = []
+
+        # 1. Payout Ratio (CORE - paling penting)
+        lpc_data = data.get('lpc', {})
+        payout_ratio = lpc_data.get('payout_ratio', 1.0)
+        if payout_ratio > 5:
+            score += 5
+            reasons.append(f"Payout ratio {payout_ratio:.1f}x >> 5")
+        elif payout_ratio < 0.2:
+            score -= 5
+            reasons.append(f"Payout ratio {payout_ratio:.1f}x << 0.2")
+
+        # 2. Jarak likuidasi terdekat (FREE LIQUIDITY)
+        short_dist = data.get('short_liq', 999)
+        long_dist = data.get('long_liq', 999)
+        if short_dist < 0.3:
+            score += 5
+            reasons.append(f"Short liq {short_dist:.2f}% < 0.3%")
+        if long_dist < 0.3:
+            score -= 5
+            reasons.append(f"Long liq {long_dist:.2f}% < 0.3%")
+
+        # 3. Orderbook vacuum (jalan kosong)
+        ask_vol = data.get('ask_volume_near', 0)
+        bid_vol = data.get('bid_volume_near', 0)
+        if ask_vol < bid_vol * 0.1 and ask_vol < 1000:
+            score += 3
+            reasons.append("Ask side tipis → vacuum up")
+        if bid_vol < ask_vol * 0.1 and bid_vol < 1000:
+            score -= 3
+            reasons.append("Bid side tipis → vacuum down")
+
+        # 4. Spoofing detection (dari modul AMD)
+        amd_data = data.get('amd', {})
+        if amd_data.get('is_spoof'):
+            if amd_data.get('bias') == 'LONG':
+                score += 2
+                reasons.append("Spoof up terdeteksi")
+            else:
+                score -= 2
+                reasons.append("Spoof down terdeteksi")
+
+        # 5. OI delta sebagai konfirmasi (bukan veto)
+        oi_delta = data.get('oi_delta_5m', 0)
+        if abs(oi_delta) < 0.2:
+            pass  # tidak ada OI baru → kurangi confidence sedikit
+
+        # 6. Cascade probability (dari LiquidationHeatGradient)
+        lhg_data = data.get('lhg', {})
+        if lhg_data.get('cascade_risk') != 'NONE':
+            if lhg_data.get('cascade_risk') == 'SHORT_CASCADE':
+                score += 4
+                reasons.append("Short cascade risk")
+            elif lhg_data.get('cascade_risk') == 'LONG_CASCADE':
+                score -= 4
+                reasons.append("Long cascade risk")
+
+        # 7. WMI sebagai konfirmasi arah (bukan veto absolut)
+        wmi = data.get('wmi_ratio', 0)
+        if wmi > 80 and short_dist < 1.0:
+            score += 3
+            reasons.append(f"WMI {wmi:.1f}x confirm short pool above")
+        if wmi < -80 and long_dist < 1.0:
+            score -= 3
+            reasons.append(f"WMI {wmi:.1f}x confirm long pool below")
+
+        # 8. RSI hanya sebagai filter exhaustion (bukan veto)
+        rsi = data.get('rsi6', 50)
+        if rsi > 90:
+            score -= 2
+            reasons.append("RSI > 90 (warning)")
+        elif rsi < 10:
+            score += 2
+            reasons.append("RSI < 10 (warning)")
+
+        # Tentukan bias dan confidence dari score
+        if score >= 8:
+            bias = "LONG"
+            confidence = "SUPREME"
+        elif score <= -8:
+            bias = "SHORT"
+            confidence = "SUPREME"
+        elif score >= 4:
+            bias = "LONG"
+            confidence = "HIGH"
+        elif score <= -4:
+            bias = "SHORT"
+            confidence = "HIGH"
+        else:
+            bias = "NEUTRAL"
+            confidence = "LOW"
+
+        return {
+            "bias": bias,
+            "confidence": confidence,
+            "score": score,
+            "reasons": reasons,
+            "phase": "HFT_SCORING"
+        }
+    # ================================================================================
 
     def _prefill_oi_history(self):
         """Prefill OI history dari data historical"""
@@ -19740,169 +19855,52 @@ class BinanceAnalyzerV87:
             tif_result = safe_dict(tif_result)
             wgv_result = safe_dict(wgv_result)
             
-            # KUMPULKAN SEMUA HASIL MODULE untuk resolver TRAP (UPDATED WITH CHINA ALGO)
-            trap_results = {
-                'pfe_v100': pfe_result,
-                'odc_v85': odc_result,
-                'flg_v88': flg_result,
-                'lfc_override': lfc_result if 'lfc_result' in locals() else {},
-                'wmi_veto': wmi_veto_result if 'wmi_veto_result' in locals() else {},
-                'zao_v100': zao_result if 'zao_result' in locals() else {},
-                'sct_af_v99': sct_af_result if 'sct_af_result' in locals() else {},
-                'vod_v100': vod_result if 'vod_result' in locals() else {},
-                'evr_v98': evr_result if 'evr_result' in locals() else {},
-                # 🔥 CHINA ALGO DATA
-                'zas_v100': zas_result if 'zas_result' in locals() else {},
-                'lcd': lcd_result if 'lcd_result' in locals() else {},
-                'lim': lim_result if 'lim_result' in locals() else {},
-                'zas_v87': zas_result if 'zas_result' in locals() else {},
-                'exhaustion': exhaustion if 'exhaustion' in locals() else {},
+            # ================= HFT SCORING SYSTEM - DOCTOR'S RECOMMENDATION =================
+            # GANTI SEMUA RESOLVER KOMPLEKS DENGAN SCORING SYSTEM SEDERHANA
+            
+            # Kumpulkan semua data yang diperlukan untuk scoring
+            scoring_data = {
+                # LPC (Liquidation Payout Calculator) - CORE
                 'lpc': lpc_result if 'lpc_result' in locals() else {},
-                'oi_delta_5m': oi_delta_5m,
-                'rsi6': rsi6,
-                'wmi_ratio': wmi_ratio,
+                
+                # Liquidation distances
                 'short_liq': liq.get('short_dist', 999),
                 'long_liq': liq.get('long_dist', 999),
+                
+                # Orderbook volume (untuk vacuum detection)
+                'ask_volume_near': ask_vol,
+                'bid_volume_near': bid_vol,
+                
+                # AMD (Aggression Mass Divergence) - untuk spoofing detection
+                'amd': amd_result if 'amd_result' in locals() else {},
+                
+                # OI delta
+                'oi_delta_5m': oi_delta_5m,
+                
+                # LHG (Liquidation Heat Gradient) - cascade probability
+                'lhg': lhg_result if 'lhg_result' in locals() else {},
+                
+                # WMI ratio
+                'wmi_ratio': wmi_ratio,
+                
+                # RSI6
+                'rsi6': rsi6,
             }
             
-            # Gunakan resolver TRAP terlebih dahulu (LEVEL -1 BLOCKERS)
-            trap_decision = self.trap_resolver.resolve_all_hft_signals_v88_final(trap_results)
+            # Hitung score dengan sistem scoring sederhana
+            hft_decision = self.calculate_hft_score(scoring_data)
             
-            # Jika TRAP resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
-            if trap_decision.get('final_bias') not in ['NEUTRAL', None]:
-                final_decision = trap_decision
-            else:
-                # ===== NEW ANTI-GRAVITY TRAP RESOLVER CHECK =====
-                # KUMPULKAN SEMUA HASIL MODULE untuk resolver ANTI-GRAVITY
-                gravity_results = {
-                    'gvs_v100': gvs_result,
-                    'scx_v87': scx_result,
-                    'fvc_enhanced_v100': fvc_enhanced_result,
-                    'pfe_v100': pfe_result,
-                    'lfc_override': lfc_result if 'lfc_result' in locals() else {},
-                    'wmi_veto': wmi_veto_result if 'wmi_veto_result' in locals() else {},
-                    'sct_af_v99': sct_af_result if 'sct_af_result' in locals() else {},
-                }
-                
-                # Gunakan resolver ANTI-GRAVITY terlebih dahulu (LEVEL -1 GRAVITY BAIT)
-                gravity_decision = self.gravity_resolver.resolve_all_hft_signals_final(gravity_results)
-                
-                # Jika ANTI-GRAVITY resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
-                if gravity_decision.get('final_bias') != 'NEUTRAL':
-                    final_decision = gravity_decision
-                else:
-                    # Lanjutkan ke rantai resolver yang sudah ada
-                    # KUMPULKAN SEMUA HASIL MODULE untuk resolver GRAVITY (EXISTING)
-                    gravity_old_results = {
-                        'lpc_priority_v100': lpc_priority_result,
-                        'wgv_v100': wgv_result,
-                        'lpf_enhanced_v100': lpf_enhanced_v2_result,
-                        'ocv_v100': ocv_result,
-                        'tif_v100': tif_result,
-                        'sct_af_v99': sct_af_result if 'sct_af_result' in locals() else {},
-                    }
-                    
-                    # Gunakan resolver GRAVITY (EXISTING) terlebih dahulu
-                    gravity_old_decision = self.gravity_resolver.resolve_all_hft_signals_final(gravity_old_results)
-                    
-                    # Jika GRAVITY (EXISTING) resolver memberikan sinyal (bukan NEUTRAL), gunakan sebagai final_decision
-                    if gravity_old_decision.get('final_bias') != 'NEUTRAL':
-                        final_decision = gravity_old_decision
-                    else:
-                        # Lanjutkan ke rantai resolver yang sudah ada
-                        # Gunakan Final Conflict Resolver untuk prioritas tertinggi (V100 Critical Patterns)
-                        final_decision = self.resolver_v88_final.resolve_all_hft_signals({
-                    # NEW MODULES - PRIORITAS TERTINGGI (ZAO, SCT-AF, FVC-TWO) ⭐
-                    'zao_v100': zao_result,
-                    'sct_af_v99': sct_af_result,
-                    'wmo_v100': wmo_result,
-                    'fvc_two_v100': fvc_two_result,
-                    
-                    # EXISTING CRITICAL MODULES (BTRUSDT PATTERNS)
-                    'evr_v98': evr_result,
-                    'sce_v99': sce_result,
-                    'fvc_rev_v100': fvc_rev_result,
-                    
-                    # OTHER CRITICAL MODULES
-                    'rsc_priority': rsc_priority_result,
-                    'zva_v97': zva_result,
-                    'afa_v100': afa_result,
-                    'lfc_enhanced': lfc_enhanced_result,
-                    'nos_v100': nos_result,
-                    'wmi_veto': wmi_veto_result,
-                    'sat_v90': sat_result,
-                })
-            
-            # 🔴 PERBAIKAN 1: Gunakan 'final_bias' dari resolver_v88_final
-            # Jika final resolver tidak memberikan keputusan kuat, fallback ke nuclear resolver
-            if final_decision.get('final_bias', 'NEUTRAL') == "NEUTRAL" and final_decision.get('priority', 99) > 10:
-                final_decision = self.nuclear_resolver.resolve_with_nuclear_protection(
-                    nos_res=nos_result,           # V100-NOS Nuclear Overbought Shield
-                    pbv_res=pbv_result,           # V100-PBV Position Build Verification
-                    fvc_res=fvc_result,           # V100-FVC Flow Volume Correlation
-                    tlf_res=tlf_result,           # V100-TLF Target Liquidation Focus
-                    sdd_res=sdd_result,           # V97-SDD Silent Distribution Detector
-                    sct_res=sct_result,           # V99-SCT Short Crowd Trap
-                    wmi_veto_res=wmi_veto_result, # V99-WMI Veto
-                    lim_res=lim_result,           # V99-LIM Liquidity Imbalance
-                    lft_res={},                   # V99-LFT placeholder
-                    psv_res={},                   # V99-PSV placeholder
-                    fvt_res={},                   # V99-FVT placeholder
-                    lfc_res=lfc_result            # V100-LFC
-                )
-            
-            # 🔴 PERBAIKAN 2: Sekarang nuclear_resolver mengembalikan dict dengan key 'bias'
-            # Jika nuclear resolver tidak memberikan keputusan kuat, fallback ke V88+ resolver
-            if final_decision.get('bias', 'NEUTRAL') == "NEUTRAL" and final_decision.get('priority_level', 99) > 10:
-                final_decision = self.conflict_resolver_v88plus.resolve(
-                    # PHAUSDT MODULES - PRIORITAS TERTINGGI!
-                    apm_res=apm_result,           # V99-APM Absorption Priority Module ⭐
-                    lfc_res=lfc_result,           # V100-LFC Liquidation Flush Coordinator ⭐
-                    fid_res=fid_result_plus,      # V82-FID-PLUS Fuel Ignition Detector ⭐
-                    arc_res=arc_result,           # V99-ARC Absorption Confirmation Rate ⭐
-                    
-                    # NEW V99 MODULES - PRIORITAS TERTINGGI!
-                    sct_res=sct_result,                    # V99 Short Crowd Trap ⭐
-                    crowd_cluster_res=crowd_cluster_result, # V99 Crowd vs Cluster ⭐
-                    oi_extremum_res=oi_extremum_result,     # V99 OI Build at Extremum ⭐
-                    
-                    # Existing V99 modules
-                    oi_build_res=oi_build_result,
-                    gravity_dist_res=gravity_dist_result,
-                    wmi_veto_res=wmi_veto_result,
-                    internal_trap_res=internal_trap_result,
-                    density_res=density_result,
-                    
-                    # Existing modules
-                    ehs_res=ehs_result,
-                    vac_res=vac_result,
-                    pbd_res=pbd_result,
-                    evh_res=evh_result,
-                    svi_res=svi_result,
-                    ecd_res=ecd_result,
-                    rpt_res=rpt_result,
-                    phase_res=phase_result,
-                    gwc_res=gwc_result,
-                    lvd_res=lvd_result,
-                    sdd_res=sdd_result,
-                    est_res=est_result,
-                    odc_res=odc_result,
-                    pdd_res=pdd_result,
-                    lep_res=lep_result,
-                    plr_res=plr_result,
-                    opd_res=opd_result,
-                    wmi_exhaust_res=wmi_exhaust_result,
-                    cascade_res=cascade_result,
-                    energy_res=energy_result,
-                    death_res=death_result,
-                    lgd_res=lgd_result,
-                    wsc_res=wsc_result,
-                    sat_res=sat_result,
-                    pet_res=pet_result,
-                    zgh_res=zgh_result,
-                    otf_res=otf_result,
-                    lim_res=lim_result
-                )
+            # Update final_decision dengan hasil scoring
+            final_decision = {
+                'bias': hft_decision['bias'],
+                'final_bias': hft_decision['bias'],
+                'confidence': hft_decision['confidence'],
+                'reason': " | ".join(hft_decision['reasons']),
+                'phase': hft_decision['phase'],
+                'score': hft_decision['score'],
+                'priority_level': 0 if abs(hft_decision['score']) >= 8 else (1 if abs(hft_decision['score']) >= 4 else 5)
+            }
+            # ================================================================================
 
             # 🔴 PERBAIKAN 3: Normalisasi final_decision untuk memiliki key 'bias'
             # Pastikan final_decision memiliki key 'bias' untuk digunakan di bagian selanjutnya
