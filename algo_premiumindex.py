@@ -21826,15 +21826,16 @@ class BinanceAnalyzerV87:
                     'sequence': v101_final.get('sequence', 'NONE')
                 }
             else:
-                # Gunakan HFT scoring jika V101 tidak override
+                # Fallback ke V102 jika tidak ada override dari V101/V102 priority tinggi
+                # Gunakan hasil default dari V102 resolver
                 final_decision = {
-                    'bias': hft_decision['bias'],
-                    'final_bias': hft_decision['bias'],
-                    'confidence': hft_decision['confidence'],
-                    'reason': " | ".join(hft_decision['reasons']),
-                    'phase': hft_decision['phase'],
-                    'score': hft_decision['score'],
-                    'priority_level': 0 if abs(hft_decision['score']) >= 8 else (1 if abs(hft_decision['score']) >= 4 else 5)
+                    'bias': v102_final.get('final_bias', 'NEUTRAL'),
+                    'final_bias': v102_final.get('final_bias', 'NEUTRAL'),
+                    'confidence': v102_final.get('confidence', 'LOW'),
+                    'reason': v102_final.get('reason', 'No strong signal detected'),
+                    'phase': v102_final.get('phase', 'NORMAL'),
+                    'priority_level': v102_final.get('priority_level', 99),
+                    'score': 0
                 }
             # ================================================================================
 
