@@ -348,6 +348,32 @@ LGT_FLOW_MAX_FOR_FUEL = 1.5         # Flow < 1.5 = No reversal fuel
 
 # ================= V100-TDI: TREND INTEGRITY FILTER CONFIG =================
 TDI_MACD_BEARISH_CONFIRM = True
+
+# ================= V101-LMP: LIQUIDITY MAGNET PROXIMITY CONFIG =================
+LMP_LONG_LIQ_CRITICAL = 0.1           # Long liq < 0.1% = Wajib pump dulu
+LMP_SHORT_LIQ_CRITICAL = 0.1          # Short liq < 0.1% = Wajib dump dulu
+LMP_DOUBLE_SWEEP_RATIO = 3.0          # Rasio jarak untuk double sweep zone
+
+# ================= V101-ECS: ENERGY COST SUPREMACY CONFIG =================
+ECS_ENERGY_RATIO_ABSOLUTE = 10.0       # Energy ratio > 10x = Absolute veto
+ECS_ENERGY_RATIO_STRONG = 5.0          # Energy ratio > 5x = Strong override
+
+# ================= V101-AFD: AGGRESSION-FLOW DIVERGENCE CONFIG =================
+AFD_AGG_DEAD_MAX = 0.2                  # Agg < 0.2 = Dead aggression
+AFD_FLOW_MIN = 1.0                      # Flow > 1.0 = Volume masuk
+AFD_FLOW_HIGH_MIN = 1.5                 # Flow > 1.5 untuk distribution
+AFD_WMI_DIST_MIN = 50                    # WMI > 50 untuk distribution
+
+# ================= V101-PSB: PRE-SWEEP BUILD PHASE CONFIG =================
+PSB_WMI_NEUTRAL_MAX = 20                 # |WMI| < 20 = Netral
+PSB_IMBALANCE_EXTREME_MIN = 100          # Imbalance > 100x = Extreme
+PSB_WMI_EXECUTION_MIN = 80                # |WMI| > 80 = Execution mode
+PSB_IMBALANCE_EXECUTION_MIN = 50          # Imbalance > 50x untuk execution
+
+# ================= V101-DSS: DOUBLE SWEEP SEQUENCE CONFIG =================
+DSS_LONG_CLOSE_MAX = 0.2                  # Long liq < 0.2% untuk double sweep
+DSS_SHORT_CLOSE_MAX = 2.0                  # Short liq < 2% untuk double sweep
+DSS_DISTANCE_RATIO = 3.0                   # Rasio jarak untuk first sweep
 TDI_OBV_NEGATIVE_CHECK = True
 TDI_PRICE_CHANGE_MIN_THRESHOLD = -1.0
 TDI_CONFIRMATION_REQUIRED_FLOW = 2.0
@@ -7752,6 +7778,507 @@ class TargetLiquidationFocusV100:
 
 
 # ================= V100: NUCLEAR CONFLICT RESOLVER UPDATE =================
+class NuclearConflictResolverV100:
+    """Placeholder class to maintain structure"""
+    pass
+
+
+# ================= V101-LMP: LIQUIDITY MAGNET PROXIMITY =================
+class LiquidityMagnetProximityV101:
+    """🔥 V101-LMP: LIQUIDITY MAGNET PROXIMITY - ANTI-BEATUSDT TRAP
+    
+    Prinsip HFT Binance:
+    Jika Long Liq < 0.1%, itu BUKAN sinyal SHORT, tapi sinyal LONG!
+    Kenapa? Karena MM tidak bisa dump tanpa bensin short di atas.
+    
+    Kasus BEATUSDT:
+    - Long Liq: -0.07% (SUPER DEKAT!)
+    - Bot pilih SHORT (dump ke long liq) → ❌ LOSS
+    - Harusnya: LONG dulu (pump untuk build short) → baru dump
+    """
+    
+    @staticmethod
+    def check(long_dist: float, short_dist: float) -> Dict:
+        """
+        Long liq terlalu dekat = WAJIB PUMP DULU
+        """
+        # Long liq sangat dekat (< 0.1%)
+        if abs(long_dist) < LMP_LONG_LIQ_CRITICAL:
+            return {
+                "bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "priority_level": 0,
+                "reason": f"LMP_MAGNET_PROXIMITY: Long liq {long_dist:.2f}% < {LMP_LONG_LIQ_CRITICAL}% "
+                         f"(TERLALU DEKAT!). MM TIDAK BISA DUMP tanpa bensin short di atas! "
+                         f"WAJIB PUMP DULU untuk build short positions!",
+                "override_modules": ["CASCADE_TIME", "LGD_GAP", "LPC_PAYOUT"]
+            }
+        
+        # Short liq sangat dekat (< 0.1%)
+        if abs(short_dist) < LMP_SHORT_LIQ_CRITICAL:
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "priority_level": 0,
+                "reason": f"LMP_MAGNET_PROXIMITY: Short liq {short_dist:.2f}% < {LMP_SHORT_LIQ_CRITICAL}% "
+                         f"(TERLALU DEKAT!). MM TIDAK BISA PUMP tanpa bensin long di bawah! "
+                         f"WAJIB DUMP DULU untuk build long positions!",
+                "override_modules": ["CASCADE_TIME", "LGD_GAP", "LPC_PAYOUT"]
+            }
+        
+        # Double sweep zone - sweep yang terdekat DULU
+        if abs(long_dist) < DSS_LONG_CLOSE_MAX and short_dist < DSS_SHORT_CLOSE_MAX:
+            if abs(long_dist) < short_dist / DSS_DISTANCE_RATIO:
+                return {
+                    "bias": "LONG",
+                    "confidence": "SUPREME",
+                    "priority_level": 0,
+                    "reason": f"LMP_DOUBLE_SWEEP: Long liq {long_dist:.2f}% vs Short {short_dist:.2f}%. "
+                             f"MM SWEEP YANG TERDEKAT DULU (LONG) baru SHORT!",
+                    "sequence": "FIRST_LONG_THEN_SHORT"
+                }
+            
+            if short_dist < abs(long_dist) / DSS_DISTANCE_RATIO:
+                return {
+                    "bias": "SHORT",
+                    "confidence": "SUPREME",
+                    "priority_level": 0,
+                    "reason": f"LMP_DOUBLE_SWEEP: Short liq {short_dist:.2f}% vs Long {long_dist:.2f}%. "
+                             f"MM SWEEP YANG TERDEKAT DULU (SHORT) baru LONG!",
+                    "sequence": "FIRST_SHORT_THEN_LONG"
+                }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V101-ECS: ENERGY COST SUPREMACY =================
+class EnergyCostSupremacyV101:
+    """🔥 V101-ECS: ENERGY COST SUPREMACY - ANTI-IRUSDT TRAP
+    
+    Prinsip HFT Binance:
+    MM itu EKONOMIS, bukan CEPAT. Mereka pilih jalur TERMURAH,
+    meskipun cascade time bilang jalur lain lebih cepat.
+    
+    Kasus IRUSDT:
+    - Energy Down: 59.23 vs Energy Up: 3.28 (18x lebih mahal!)
+    - Cascade Time bilang: SHORT (down faster)
+    - Bot pilih SHORT (ikut cascade) → ❌ LOSS
+    - Harusnya: LONG (ikut energy termurah)
+    """
+    
+    @staticmethod
+    def check(up_energy: float, down_energy: float, 
+              cascade_bias: str, lep_bias: str) -> Dict:
+        
+        # Jika energi 1 arah > 10x lebih mahal, ABSOLUTE VETO
+        if down_energy > up_energy * ECS_ENERGY_RATIO_ABSOLUTE:
+            return {
+                "bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "priority_level": 0,
+                "reason": f"ECS_ENERGY_SUPREMACY: Downside {down_energy:.1f} vs Upside {up_energy:.1f} "
+                         f"({down_energy/up_energy:.1f}x LEBIH MAHAL!). "
+                         f"MM TIDAK PERNAH pilih jalur mahal! Abaikan Cascade Time ({cascade_bias})!",
+                "override_modules": ["CASCADE_TIME", "LGD_GAP", "V93_CASCADE"]
+            }
+        
+        if up_energy > down_energy * ECS_ENERGY_RATIO_ABSOLUTE:
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "priority_level": 0,
+                "reason": f"ECS_ENERGY_SUPREMACY: Upside {up_energy:.1f} vs Downside {down_energy:.1f} "
+                         f"({up_energy/down_energy:.1f}x LEBIH MAHAL!). "
+                         f"MM pilih jalur murah (DUMP)! Abaikan Cascade Time ({cascade_bias})!",
+                "override_modules": ["CASCADE_TIME", "LGD_GAP", "V93_CASCADE"]
+            }
+        
+        # Jika energi > 5x lebih mahal, STRONG OVERRIDE (tapi bisa di-override module lain)
+        if down_energy > up_energy * ECS_ENERGY_RATIO_STRONG:
+            return {
+                "bias": "LONG",
+                "confidence": "SUPREME",
+                "priority_level": 1,
+                "reason": f"ECS_ENERGY_STRONG: Downside {down_energy:.1f} vs Upside {up_energy:.1f} "
+                         f"({down_energy/up_energy:.1f}x lebih mahal). Priority LONG.",
+                "override_modules": ["CASCADE_TIME"]
+            }
+        
+        if up_energy > down_energy * ECS_ENERGY_RATIO_STRONG:
+            return {
+                "bias": "SHORT",
+                "confidence": "SUPREME",
+                "priority_level": 1,
+                "reason": f"ECS_ENERGY_STRONG: Upside {up_energy:.1f} vs Downside {down_energy:.1f} "
+                         f"({up_energy/down_energy:.1f}x lebih mahal). Priority SHORT.",
+                "override_modules": ["CASCADE_TIME"]
+            }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V101-AFD: AGGRESSION-FLOW DIVERGENCE =================
+class AggressionFlowDivergenceV101:
+    """🔥 V101-AFD: AGGRESSION-FLOW DIVERGENCE - ANTI-STEALTH TRAP
+    
+    Prinsip HFT Binance:
+    Aggression rendah ≠ weak momentum. Bisa jadi STEALTH ACCUMULATION!
+    Whale pakai LIMIT ORDER (tidak terdeteksi di Agg) tapi volume tetap masuk.
+    
+    Kasus IRUSDT:
+    - Agg: 0.11x (DEAD!)
+    - Flow: 1.33x (MODERATE)
+    - Bot baca: Weak momentum → SHORT ❌
+    - Realita: Stealth accumulation → PUMP +8%!
+    """
+    
+    @staticmethod
+    def check(agg_ratio: float, flow: float, wmi: float) -> Dict:
+        
+        # Stealth accumulation - whale pakai limit order beli
+        if agg_ratio < AFD_AGG_DEAD_MAX and flow > AFD_FLOW_MIN:
+            return {
+                "bias": "LONG",
+                "confidence": "SUPREME",
+                "priority_level": 0,
+                "reason": f"AFD_STEALTH_ACCUM: Agg {agg_ratio:.2f}x (DEAD!) tapi Flow {flow:.2f}x (MASUK!). "
+                         f"Whale AKUMULASI pakai LIMIT ORDER (tidak terdeteksi di Agg)! "
+                         f"SIAP PUMP!",
+                "phase": "STEALTH_ACCUMULATION"
+            }
+        
+        # Stealth distribution - whale pakai limit order jual
+        if agg_ratio < AFD_AGG_DEAD_MAX and flow > AFD_FLOW_HIGH_MIN and abs(wmi) > AFD_WMI_DIST_MIN:
+            return {
+                "bias": "SHORT",
+                "confidence": "SUPREME",
+                "priority_level": 0,
+                "reason": f"AFD_STEALTH_DIST: Agg {agg_ratio:.2f}x (DEAD!) tapi Flow {flow:.2f}x (MASUK!) + "
+                         f"WMI {wmi:.1f}x. Whale DISTRIBUSI pakai limit order! SIAP DUMP!",
+                "phase": "STEALTH_DISTRIBUTION"
+            }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V101-PSB: PRE-SWEEP BUILD PHASE =================
+class PreSweepBuildPhaseV101:
+    """🔥 V101-PSB: PRE-SWEEP BUILD PHASE - ANTI-BEATUSDT TRAP
+    
+    Prinsip HFT Binance:
+    Imbalance tinggi ≠ execute sekarang. Bisa jadi BUILD PHASE!
+    MM butuh WMI ekstrim untuk eksekusi. Jika WMI netral, mereka build dulu.
+    
+    Kasus BEATUSDT:
+    - WMI: 0.0x (NETRAL!)
+    - Imbalance: 143.4x (EXTREME!)
+    - Bot baca: Execute SHORT sekarang → ❌ LOSS
+    - Realita: Build phase → pump dulu +8%!
+    """
+    
+    @staticmethod
+    def check(wmi: float, imbalance: float, agg: float) -> Dict:
+        
+        # Build phase - imbalance tinggi tapi WMI belum ekstrim
+        if abs(wmi) < PSB_WMI_NEUTRAL_MAX and imbalance > PSB_IMBALANCE_EXTREME_MIN:
+            # Arah build = kebalikan dari imbalance (biasanya)
+            build_direction = "LONG" if imbalance > 0 else "SHORT"
+            
+            return {
+                "bias": build_direction,
+                "confidence": "HIGH",
+                "priority_level": 0,
+                "reason": f"PSB_BUILD_PHASE: Imbalance {imbalance:.1f}x (EXTREME!) tapi WMI {wmi:.1f}x (NETRAL!). "
+                         f"MM sedang BUILD POSISI {build_direction} dulu sebelum sweep! "
+                         f"Jangan entry searah imbalance!",
+                "phase": "POSITION_BUILDING",
+                "estimated_build_time_minutes": 15
+            }
+        
+        # Execution phase - WMI ekstrim + Imbalance tinggi
+        if abs(wmi) > PSB_WMI_EXECUTION_MIN and imbalance > PSB_IMBALANCE_EXECUTION_MIN:
+            exec_direction = "LONG" if wmi > 0 else "SHORT"
+            
+            return {
+                "bias": exec_direction,
+                "confidence": "ABSOLUTE",
+                "priority_level": 1,
+                "reason": f"PSB_EXECUTION_PHASE: WMI {wmi:.1f}x (EKSTRIM!) + Imbalance {imbalance:.1f}x. "
+                         f"MM dalam mode EKSEKUSI! Ikuti arah WMI!",
+                "phase": "LIQUIDATION_EXECUTION"
+            }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V101-DSS: DOUBLE SWEEP SEQUENCE =================
+class DoubleSweepSequenceV101:
+    """🔥 V101-DSS: DOUBLE SWEEP SEQUENCE - ANTI-BEATUSDT TRAP
+    
+    Prinsip HFT Binance:
+    Dalam double sweep zone, MM sweep YANG TERDEKAT DULU,
+    baru yang payout besar.
+    
+    Kasus BEATUSDT:
+    - Long Liq: -0.07% (SUPER DEKAT!)
+    - Short Liq: +1.0% (DEKAT)
+    - Bot langsung SHORT (target long liq) → ❌ LOSS
+    - Realita: LONG dulu (sweep short liq), baru DUMP ke long liq!
+    """
+    
+    @staticmethod
+    def check(long_dist: float, short_dist: float, 
+              long_payout: float, short_payout: float) -> Dict:
+        
+        # Double sweep zone detected
+        if abs(long_dist) < DSS_LONG_CLOSE_MAX and short_dist < DSS_SHORT_CLOSE_MAX:
+            
+            # Jika long liq jauh lebih dekat (< 1/3 short dist)
+            if abs(long_dist) < short_dist / DSS_DISTANCE_RATIO:
+                return {
+                    "bias": "LONG",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": 0,
+                    "reason": f"DSS_FIRST_SWEEP: Long {long_dist:.2f}% vs Short {short_dist:.2f}%. "
+                             f"MM SWEEP YANG TERDEKAT DULU (LONG liq)! "
+                             f"Setelah itu baru SHORT ke payout besar.",
+                    "sequence": "FIRST_LONG_THEN_SHORT",
+                    "estimated_first_move": f"+{short_dist:.2f}%",
+                    "estimated_second_move": f"-{abs(long_dist):.2f}%"
+                }
+            
+            # Jika short liq jauh lebih dekat
+            if short_dist < abs(long_dist) / DSS_DISTANCE_RATIO:
+                return {
+                    "bias": "SHORT",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": 0,
+                    "reason": f"DSS_FIRST_SWEEP: Short {short_dist:.2f}% vs Long {long_dist:.2f}%. "
+                             f"MM SWEEP YANG TERDEKAT DULU (SHORT liq)! "
+                             f"Setelah itu baru LONG ke payout besar.",
+                    "sequence": "FIRST_SHORT_THEN_LONG",
+                    "estimated_first_move": f"-{abs(long_dist):.2f}%",
+                    "estimated_second_move": f"+{short_dist:.2f}%"
+                }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V101-FINAL: CONFLICT RESOLVER FINAL VERSION =================
+class ConflictResolverV101_FINAL:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V101 - ANTI-HFT MANIPULATION
+    
+    PRIORITY 0 (ABSOLUTE VETO - TIDAK BISA DI-OVERRIDE):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 0a. V101-LMP: Liquidity Magnet Proximity               │
+    │     → Long liq < 0.1% = LONG (tidak ada bensin dump)   │
+    │ 0b. V101-ECS: Energy Cost Supremacy                    │
+    │     → Energy > 10x = ikuti jalur murah                 │
+    │ 0c. V101-AFD: Aggression-Flow Divergence               │
+    │     → Agg < 0.2 + Flow > 1.0 = Stealth Accum           │
+    │ 0d. V101-DSS: Double Sweep Sequence                    │
+    │     → Sweep yang terdekat DULU                         │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 1 (STRONG OVERRIDE):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 1a. V101-PSB: Pre-Sweep Build Phase                    │
+    │ 1b. V94-EGR: Energy Gravity Rule                       │
+    │ 1c. V100-LFC: Payout Override                          │
+    │ 1d. V94-BPF: Bait Detection                            │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 2 (MODERATE):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 2a. V100-LPC: Payout Ratio                             │
+    │ 2b. V87-LIM: Imbalance                                  │
+    │ 2c. V93-CASCADE: Cascade Time                          │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 3 (WEAK - MUDAH DI-OVERRIDE):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 3a. V99-WMI: Whale Migration Index                     │
+    │ 3b. V100-RSI: RSI Levels                               │
+    │ 3c. V100-FLOW: Flow Volume                             │
+    └─────────────────────────────────────────────────────────┘
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ========== PRIORITY 0: ABSOLUTE VETO ==========
+        
+        # 0a. Liquidity Magnet Proximity
+        lmp_res = LiquidityMagnetProximityV101.check(
+            long_dist=results.get('long_liq', 999),
+            short_dist=results.get('short_liq', 999)
+        )
+        if lmp_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": lmp_res['bias'],
+                "confidence": lmp_res['confidence'],
+                "reason": lmp_res['reason'],
+                "phase": "LIQUIDITY_MAGNET_PROXIMITY",
+                "priority_level": 0,
+                "sequence": lmp_res.get('sequence', 'NONE')
+            }
+        
+        # 0b. Energy Cost Supremacy
+        ecs_res = EnergyCostSupremacyV101.check(
+            up_energy=results.get('up_energy', 0),
+            down_energy=results.get('down_energy', 0),
+            cascade_bias=results.get('cascade', {}).get('bias', 'NEUTRAL'),
+            lep_bias=results.get('lep', {}).get('bias', 'NEUTRAL')
+        )
+        if ecs_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": ecs_res['bias'],
+                "confidence": ecs_res['confidence'],
+                "reason": ecs_res['reason'],
+                "phase": "ENERGY_COST_SUPREMACY",
+                "priority_level": 0
+            }
+        
+        # 0c. Aggression-Flow Divergence
+        afd_res = AggressionFlowDivergenceV101.check(
+            agg_ratio=results.get('aggressive_ratio', 1.0),
+            flow=results.get('trade_flow', 1.0),
+            wmi=results.get('wmi_ratio', 0)
+        )
+        if afd_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": afd_res['bias'],
+                "confidence": afd_res['confidence'],
+                "reason": afd_res['reason'],
+                "phase": afd_res.get('phase', 'STEALTH_PHASE'),
+                "priority_level": 0
+            }
+        
+        # 0d. Double Sweep Sequence
+        dss_res = DoubleSweepSequenceV101.check(
+            long_dist=results.get('long_liq', 999),
+            short_dist=results.get('short_liq', 999),
+            long_payout=results.get('lpc', {}).get('payout_long', 0),
+            short_payout=results.get('lpc', {}).get('payout_short', 0)
+        )
+        if dss_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": dss_res['bias'],
+                "confidence": dss_res['confidence'],
+                "reason": dss_res['reason'],
+                "phase": "DOUBLE_SWEEP_SEQUENCE",
+                "priority_level": 0,
+                "sequence": dss_res.get('sequence', 'NONE')
+            }
+        
+        # ========== PRIORITY 1: STRONG OVERRIDE ==========
+        
+        # 1a. Pre-Sweep Build Phase
+        psb_res = PreSweepBuildPhaseV101.check(
+            wmi=results.get('wmi_ratio', 0),
+            imbalance=results.get('lim', {}).get('imbalance_ratio', 1.0),
+            agg=results.get('aggressive_ratio', 1.0)
+        )
+        if psb_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": psb_res['bias'],
+                "confidence": psb_res['confidence'],
+                "reason": psb_res['reason'],
+                "phase": psb_res.get('phase', 'BUILD_PHASE'),
+                "priority_level": 1
+            }
+        
+        # 1b. Energy Gravity Rule (existing)
+        egr_res = results.get('egr', {})
+        if egr_res.get('is_veto'):
+            return {
+                "final_bias": egr_res['bias'],
+                "confidence": egr_res.get('confidence', 'SUPREME'),
+                "reason": f"V94_EGR: {egr_res.get('reason', '')}",
+                "phase": "ENERGY_GRAVITY_VETO",
+                "priority_level": 1
+            }
+        
+        # 1c. LFC Payout Override (existing)
+        lfc_res = results.get('lfc_v100', {})
+        if lfc_res.get('lfc_override'):
+            return {
+                "final_bias": lfc_res['bias'],
+                "confidence": lfc_res.get('confidence', 'SUPREME'),
+                "reason": f"V100_LFC: {lfc_res.get('reason', '')}",
+                "phase": "PAYOUT_OVERRIDE",
+                "priority_level": 1
+            }
+        
+        # 1d. Bait Detection (existing)
+        bpf_res = results.get('bpf', {})
+        if bpf_res.get('is_bait'):
+            return {
+                "final_bias": bpf_res['bias'],
+                "confidence": bpf_res.get('confidence', 'SUPREME'),
+                "reason": f"V94_BPF: {bpf_res.get('reason', '')}",
+                "phase": "BAIT_DETECTED",
+                "priority_level": 1
+            }
+        
+        # ========== PRIORITY 2: MODERATE ==========
+        
+        # 2a. LPC Payout (jika ratio > 5x)
+        lpc_res = results.get('lpc', {})
+        if lpc_res.get('payout_ratio', 1.0) > 5.0:
+            return {
+                "final_bias": lpc_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V100_LPC: {lpc_res.get('reason', '')}",
+                "phase": "PAYOUT_DOMINANT",
+                "priority_level": 2
+            }
+        
+        # 2b. LIM Imbalance (jika > 50x)
+        lim_res = results.get('lim', {})
+        if lim_res.get('imbalance_ratio', 1.0) > 50:
+            return {
+                "final_bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V87_LIM: {lim_res.get('reason', '')}",
+                "phase": "IMBALANCE_EXTREME",
+                "priority_level": 2
+            }
+        
+        # 2c. Cascade Time (existing - sekarang priority lebih rendah!)
+        cascade_res = results.get('cascade', {})
+        if cascade_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": cascade_res['bias'],
+                "confidence": "MEDIUM",
+                "reason": f"V93_CASCADE: {cascade_res.get('reason', '')}",
+                "phase": "CASCADE_PATH",
+                "priority_level": 2
+            }
+        
+        # ========== PRIORITY 3: WEAK ==========
+        
+        # 3a. WMI (jika > 80)
+        if abs(results.get('wmi_ratio', 0)) > 80:
+            return {
+                "final_bias": "LONG" if results.get('wmi_ratio', 0) > 0 else "SHORT",
+                "confidence": "MEDIUM",
+                "reason": f"V99_WMI: WMI {results.get('wmi_ratio', 0):.1f}x",
+                "phase": "WHALE_SINGULARITY",
+                "priority_level": 3
+            }
+        
+        # Default
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected",
+            "phase": "NEUTRAL",
+            "priority_level": 3
+        }
+
+
 class NuclearConflictResolverV100:
     """
     🔥 V100: UPDATED HIERARCHY - NAORISUSDT FIX
@@ -18195,6 +18722,30 @@ class OutputFormatterV87:
         if "NEARBY_TARGET_PRIORITY" in result.get('phase', ''):
             print(f"\n🎯🎯🎯 CHINA ALGO NEARBY TARGET: {result['reason']}")
 
+        # ===== V101 ANTI-HFT MANIPULATION MODULES =====
+        if result.get('v101_phase') == 'LIQUIDITY_MAGNET_PROXIMITY':
+            print(f"\n🧲🧲🧲 V101-LMP: ACTIVE - {result.get('lmp_v101', {}).get('reason', '')}")
+
+        if result.get('v101_phase') == 'ENERGY_COST_SUPREMACY':
+            print(f"\n⚡⚡⚡ V101-ECS: ACTIVE - {result.get('ecs_v101', {}).get('reason', '')}")
+
+        if result.get('v101_phase') == 'STEALTH_PHASE' or result.get('afd_v101', {}).get('bias') != 'NEUTRAL':
+            afd = result.get('afd_v101', {})
+            if afd.get('bias') != 'NEUTRAL':
+                print(f"\n👻👻👻 V101-AFD: ACTIVE - {afd.get('reason', '')}")
+
+        if result.get('v101_phase') in ['BUILD_PHASE', 'LIQUIDATION_EXECUTION']:
+            print(f"\n🏗️🏗️🏗️ V101-PSB: ACTIVE - {result.get('psb_v101', {}).get('reason', '')}")
+
+        if result.get('v101_phase') == 'DOUBLE_SWEEP_SEQUENCE':
+            dss = result.get('dss_v101', {})
+            print(f"\n🔄🔄🔄 V101-DSS: ACTIVE - {dss.get('reason', '')}")
+            if dss.get('sequence'):
+                print(f"   📊 Sequence: {dss['sequence']}")
+
+        if result.get('sequence') and result['sequence'] != 'NONE':
+            print(f"\n📋 SWEEP SEQUENCE: {result['sequence']}")
+
         # DECISION
         print(f"\n{'='*40}")
         bias_color = "🟢" if result['bias'] == "LONG" else "🔴" if result['bias'] == "SHORT" else "⚪"
@@ -18625,6 +19176,14 @@ class BinanceAnalyzerV87:
         self.rsc_priority = RealShortCoveringPriorityModuleV99()     # V99-RSC-PRIO (PIXELUSDT)
         self.lfc_enhanced = LiquidationFlushCoordinatorEnhancedV100() # V100-LFC-ENHANCED
         self.final_resolver = ConflictResolverV88_PLUS_FINAL()       # Final resolver
+        
+        # ===== V101: ANTI-HFT MANIPULATION MODULES (BEATUSDT/IRUSDT FIX) =====
+        self.lmp_v101 = LiquidityMagnetProximityV101()           # V101-LMP
+        self.ecs_v101 = EnergyCostSupremacyV101()                # V101-ECS
+        self.afd_v101 = AggressionFlowDivergenceV101()           # V101-AFD
+        self.psb_v101 = PreSweepBuildPhaseV101()                 # V101-PSB
+        self.dss_v101 = DoubleSweepSequenceV101()                # V101-DSS
+        self.final_resolver_v101 = ConflictResolverV101_FINAL()  # V101 Final Resolver
         
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
@@ -20271,21 +20830,88 @@ class BinanceAnalyzerV87:
                 
                 # RSI6
                 'rsi6': rsi6,
+                
+                # ===== V101 MODULES DATA =====
+                'aggressive_ratio': trades.get('aggressive_ratio', 1.0) if 'trades' in locals() else 1.0,
+                'trade_flow': trades.get('ratio', 1.0) if 'trades' in locals() else 1.0,
+                'up_energy': up_energy if 'up_energy' in locals() else 0,
+                'down_energy': down_energy if 'down_energy' in locals() else 0,
+                'cascade': cascade_result if 'cascade_result' in locals() else {},
+                'lep': lep_result if 'lep_result' in locals() else {},
+                'lim': lim_result if 'lim_result' in locals() else {},
+                'egr': egr_result if 'egr_result' in locals() else {},
+                'lfc_v100': lfc_result if 'lfc_result' in locals() else {},
+                'bpf': bpf_result if 'bpf_result' in locals() else {},
             }
+            
+            # ===== V101: CALL NEW MODULES =====
+            lmp_result = self.lmp_v101.check(
+                long_dist=scoring_data['long_liq'],
+                short_dist=scoring_data['short_liq']
+            )
+            
+            ecs_result = self.ecs_v101.check(
+                up_energy=scoring_data['up_energy'],
+                down_energy=scoring_data['down_energy'],
+                cascade_bias=scoring_data['cascade'].get('bias', 'NEUTRAL'),
+                lep_bias=scoring_data['lep'].get('bias', 'NEUTRAL')
+            )
+            
+            afd_result = self.afd_v101.check(
+                agg_ratio=scoring_data['aggressive_ratio'],
+                flow=scoring_data['trade_flow'],
+                wmi=scoring_data['wmi_ratio']
+            )
+            
+            psb_result = self.psb_v101.check(
+                wmi=scoring_data['wmi_ratio'],
+                imbalance=scoring_data['lim'].get('imbalance_ratio', 1.0),
+                agg=scoring_data['aggressive_ratio']
+            )
+            
+            dss_result = self.dss_v101.check(
+                long_dist=scoring_data['long_liq'],
+                short_dist=scoring_data['short_liq'],
+                long_payout=scoring_data['lpc'].get('payout_long', 0),
+                short_payout=scoring_data['lpc'].get('payout_short', 0)
+            )
+            
+            # Add V101 results to scoring_data for resolver
+            scoring_data['lmp_v101'] = lmp_result
+            scoring_data['ecs_v101'] = ecs_result
+            scoring_data['afd_v101'] = afd_result
+            scoring_data['psb_v101'] = psb_result
+            scoring_data['dss_v101'] = dss_result
+            
+            # ===== V101: FINAL RESOLVER =====
+            v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
             # Hitung score dengan sistem scoring sederhana
             hft_decision = self.calculate_hft_score(scoring_data)
             
-            # Update final_decision dengan hasil scoring
-            final_decision = {
-                'bias': hft_decision['bias'],
-                'final_bias': hft_decision['bias'],
-                'confidence': hft_decision['confidence'],
-                'reason': " | ".join(hft_decision['reasons']),
-                'phase': hft_decision['phase'],
-                'score': hft_decision['score'],
-                'priority_level': 0 if abs(hft_decision['score']) >= 8 else (1 if abs(hft_decision['score']) >= 4 else 5)
-            }
+            # Update final_decision dengan hasil V101 resolver (prioritas lebih tinggi)
+            if v101_final.get('priority_level', 99) <= 1:
+                # V101 override jika priority 0 atau 1
+                final_decision = {
+                    'bias': v101_final['final_bias'],
+                    'final_bias': v101_final['final_bias'],
+                    'confidence': v101_final['confidence'],
+                    'reason': v101_final['reason'],
+                    'phase': v101_final['phase'],
+                    'priority_level': v101_final['priority_level'],
+                    'sequence': v101_final.get('sequence', 'NONE')
+                }
+            else:
+                # Gunakan HFT scoring jika V101 tidak override
+                final_decision = {
+                    'bias': hft_decision['bias'],
+                    'final_bias': hft_decision['bias'],
+                    'confidence': hft_decision['confidence'],
+                    'reason': " | ".join(hft_decision['reasons']),
+                    'phase': hft_decision['phase'],
+                    'score': hft_decision['score'],
+                    'priority_level': 0 if abs(hft_decision['score']) >= 8 else (1 if abs(hft_decision['score']) >= 4 else 5)
+                }
             # ================================================================================
 
             # 🔴 PERBAIKAN 3: Normalisasi final_decision untuk memiliki key 'bias'
