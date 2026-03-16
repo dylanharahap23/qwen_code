@@ -379,6 +379,25 @@ TDI_PRICE_CHANGE_MIN_THRESHOLD = -1.0
 TDI_CONFIRMATION_REQUIRED_FLOW = 2.0
 TDI_BEARISH_SIGNAL_THRESHOLD = 3     # Minimal 3 indikator bearish
 
+# ================= V101-OI_FUEL_VS_LIQ_GRAVITY CONFIG =================
+OIFUEL_OI_MIN_THRESHOLD = 1.0          # OI < 1% = Fuel lemah
+OIFUEL_LONG_DIST_MAX = 1.0             # Long liq < 1% = Dekat
+OIFUEL_WMI_EXTREME_NEG = -90            # WMI < -90 = Extreme negatif
+OIFUEL_AGG_DEAD_MAX = 0.2               # Agg < 0.2 = Tidak ada pembeli
+
+# ================= V101-FLUSH_SEQUENCE_VETO CONFIG =================
+FLUSH_WMI_THRESHOLD = -50                # WMI < -50 untuk konfirmasi flush
+FLUSH_MIN_PERCENT = 3.0                  # Minimal flush 3%
+
+# ================= V101-DEAD_AGG_MAGNET CONFIG =================
+DEAD_AGG_MAX = 0.01                       # Agg = 0 (dead)
+DEAD_WMI_EXTREME = 95                      # |WMI| > 95
+DEAD_RSI_OVERSOLD_MAX = 15                  # RSI < 15
+
+# ================= V101-WMI_DIRECTIONAL_LOCK CONFIG =================
+WMI_LOCK_THRESHOLD = 95                    # |WMI| > 95 = Lock
+WMI_LOCK_OI_FUEL_MIN = 2.5                  # OI > 2.5% untuk override WMI
+
 # ================= V100-FDF: FLUSH PROBABILITY CALCULATOR CONFIG =================
 FDF_LONG_LIQ_DANGER = 0.5
 FDF_AGGRESSION_DEATH = 0.1
@@ -8064,21 +8083,250 @@ class DoubleSweepSequenceV101:
         return {"bias": "NEUTRAL"}
 
 
-# ================= V101-FINAL: CONFLICT RESOLVER FINAL VERSION =================
+# ================= V101-OI_FUEL_VS_LIQ_GRAVITY =================
+class OIFuelVsLiqGravityV101:
+    """
+    🔥 V101: OI FUEL VS LIQUIDITY GRAVITY
+    Prinsip: Jika OI Delta < 1.0% (Lemah) DAN Long Liq < 1.0% (Dekat) 
+    DAN WMI Negatif, JANGAN LONG! Itu bukan Shield, itu Magnet Jatuh.
+    
+    Kasus LYNUSDT:
+    - OI Delta: +0.49% (LEMAH!)
+    - Long Liq: 0.64% (DEKAT!)
+    - WMI: -99.6x (EXTREME!)
+    - Agg: 0.0x (DEAD!)
+    - Bot: LONG (rebound) → ❌ LOSS -8%
+    - Harusnya: SHORT (cascade)
+    """
+    
+    @staticmethod
+    def check(oi_delta: float, long_dist: float, wmi: float, agg: float) -> Dict:
+        """
+        Kasus LYNUSDT: OI 0.49% (Lemah), Long Dist 0.64% (Dekat), WMI -99.6
+        """
+        # OI lemah, Long liq dekat, WMI ekstrim negatif
+        if oi_delta < OIFUEL_OI_MIN_THRESHOLD:
+            if abs(long_dist) < OIFUEL_LONG_DIST_MAX:
+                if wmi < OIFUEL_WMI_EXTREME_NEG:
+                    if agg < OIFUEL_AGG_DEAD_MAX:  # Tidak ada pembeli
+                        return {
+                            "bias": "SHORT",
+                            "confidence": "ABSOLUTE",
+                            "priority_level": -1,  # TERTINGGI!
+                            "reason": f"V101_FUEL_STARVATION: OI {oi_delta:+.2f}% (LEMAH!) + "
+                                     f"Long Liq {abs(long_dist):.2f}% (DEKAT!) + "
+                                     f"WMI {wmi:.1f}x (EXTREME!) + Agg {agg:.2f}x (DEAD!). "
+                                     f"Tidak ada fuel untuk hold! Ini GRAVITY CASCADE, "
+                                     f"bukan Shield! JANGAN TANGKAP PISAU JATUH!",
+                            "override_modules": ["BPF", "EGR", "LEP", "PLR"],
+                            "phase": "FUEL_STARVATION_CASCADE"
+                        }
+        
+        # Kasus sebaliknya: OI lemah, Short liq dekat, WMI ekstrim positif
+        # Note: short_dist perlu dipassing terpisah atau dari context lain
+        # Untuk sekarang kita fokus ke kasus LYNUSDT (long cascade)
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V101-FLUSH_SEQUENCE_VETO =================
+class FlushSequenceVetoV101:
+    """
+    🔥 V101: FLUSH SEQUENCE VETO
+    Prinsip: Jika LPF detect Flush > 3% DAN WMI searah dengan Flush,
+    BLOCK semua sinyal Rebound/Squeeze sampai flush selesai.
+    
+    Kasus LYNUSDT:
+    - LPF: FLUSH DETECTED (-3% to -7%)
+    - WMI: -99.6x (SEARAH dengan flush!)
+    - Bot: IGNORE flush, pilih LONG → ❌ LOSS
+    - Harusnya: WAIT atau SHORT (ikut flush)
+    """
+    
+    @staticmethod
+    def check(lpf_data: Dict, wmi: float) -> Dict:
+        if lpf_data.get('flush_detected'):
+            expected_range = lpf_data.get('expected_flush_range', '')
+            
+            # Cek apakah arah flush sesuai dengan arah WMI (Magnet)
+            if "DOWN" in expected_range or "-" in expected_range:
+                if wmi < FLUSH_WMI_THRESHOLD:  # WMI negatif searah dump
+                    # Parse expected range untuk dapat persentase
+                    try:
+                        parts = expected_range.replace('%', '').split(' to ')
+                        min_dump = abs(float(parts[0]))
+                    except:
+                        min_dump = FLUSH_MIN_PERCENT
+                    
+                    if min_dump >= FLUSH_MIN_PERCENT:
+                        return {
+                            "bias": "WAIT",  # Atau "SHORT" jika ingin trade flush
+                            "confidence": "ABSOLUTE",
+                            "priority_level": -1,
+                            "reason": f"V101_FLUSH_VETO: LPF predict {expected_range} SEARAH dengan WMI {wmi:.1f}x. "
+                                     f"Ini BUKAN Bait! Ini REAL DUMP! JANGAN ENTRY LONG sebelum flush selesai! "
+                                     f"Tunggu hingga {min_dump:.1f}% koreksi selesai.",
+                            "wait_for_flush": True,
+                            "estimated_flush": expected_range,
+                            "action": "WAIT_FOR_FLUSH_COMPLETION"
+                        }
+            
+            if "UP" in expected_range or "+" in expected_range:
+                if wmi > 50:  # WMI positif searah pump
+                    return {
+                        "bias": "WAIT",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -1,
+                        "reason": f"V101_FLUSH_VETO: LPF predict {expected_range} SEARAH dengan WMI {wmi:.1f}x. "
+                                 f"Ini REAL PUMP! Tapi tunggu konfirmasi breakout!",
+                        "wait_for_flush": True,
+                        "action": "WAIT_FOR_BREAKOUT"
+                    }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V101-DEAD_AGG_MAGNET =================
+class DeadAggMagnetV101:
+    """
+    🔥 V101: DEAD AGGRESSION MAGNET
+    Prinsip: Jika Agg = 0.0x, Market tidak punya tenaga untuk Rebound.
+    WMI Extrem menjadi Magnet Tarik, bukan Shield Tahan.
+    
+    Kasus LYNUSDT:
+    - Agg: 0.0x (DEAD!)
+    - WMI: -99.6x (EXTREME!)
+    - RSI: 9.8 (EXTREME OVERSOLD!)
+    - Bot baca: RSI rendah = Rebound → ❌ LOSS
+    - Realita: Agg 0 = NO BUYERS! Harga jatuh bebas!
+    """
+    
+    @staticmethod
+    def check(agg: float, wmi: float, rsi: float) -> Dict:
+        # Agg = 0 (dead) dan WMI ekstrim
+        if agg <= DEAD_AGG_MAX and abs(wmi) > DEAD_WMI_EXTREME:
+            
+            # Kasus 1: WMI Negatif + RSI Jatuh (LYNUSDT style)
+            if wmi < 0 and rsi < DEAD_RSI_OVERSOLD_MAX:
+                return {
+                    "bias": "SHORT",
+                    "confidence": "SUPREME",
+                    "priority_level": -1,
+                    "reason": f"V101_DEAD_MAGNET: Agg {agg:.2f}x (NO BUYERS!) + WMI {wmi:.1f}x (EXTREME!) + "
+                             f"RSI {rsi:.1f} (FALLING!). RSI rendah BUKAN bottom, itu indikator KECEPATAN JATUH! "
+                             f"MM akan tarik harga ke Long Liq tanpa hambatan!",
+                    "phase": "FREE_FALL_CASCADE"
+                }
+            
+            # Kasus 2: WMI Positif + RSI Tinggi
+            if wmi > 0 and rsi > (100 - DEAD_RSI_OVERSOLD_MAX):
+                return {
+                    "bias": "LONG",
+                    "confidence": "SUPREME",
+                    "priority_level": -1,
+                    "reason": f"V101_DEAD_MAGNET: Agg {agg:.2f}x (NO SELLERS!) + WMI {wmi:.1f}x (EXTREME!) + "
+                             f"RSI {rsi:.1f} (RISING!). RSI tinggi BUKAN top, itu indikator KECEPATAN NAIK! "
+                             f"MM akan pump harga ke Short Liq tanpa hambatan!",
+                    "phase": "FREE_PUMP_SQUEEZE"
+                }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V101-WMI_DIRECTIONAL_LOCK =================
+class WMIDirectionalLockV101:
+    """
+    🔥 V101: WMI DIRECTIONAL LOCK
+    Prinsip: WMI > 95 atau < -95 adalah ARAH UTAMA.
+    Imbalance/Energy hanya bisa override jika OI Delta > 2.5% (Fuel Kuat).
+    
+    Kasus IRUSDT vs LYNUSDT:
+    - IRUSDT: WMI 100 + OI 2.96% (FUEL KUAT) → LONG ✅
+    - LYNUSDT: WMI -99.6 + OI 0.49% (FUEL LEMAH) → SHORT ✅ (tapi bot pilih LONG)
+    """
+    
+    @staticmethod
+    def check(wmi: float, oi_delta: float, energy_bias: str, 
+              lim_bias: str = None) -> Dict:
+        
+        # Kasus 1: WMI > 95 (Target Short di Atas = LONG bias)
+        if wmi > WMI_LOCK_THRESHOLD:
+            # Jika fuel tidak cukup kuat untuk override
+            if oi_delta < WMI_LOCK_OI_FUEL_MIN:
+                # Energy setuju dengan WMI?
+                if energy_bias == "LONG":
+                    return {
+                        "bias": "LONG",
+                        "confidence": "HIGH",
+                        "priority_level": 0,
+                        "reason": f"V101_WMI_LOCK: WMI {wmi:.1f}x (Target ATAS) + OI {oi_delta:+.2f}% (LEMAH!). "
+                                 f"Tidak ada fuel untuk counter! Energy {energy_bias} konfirmasi. "
+                                 f"Ikuti arus WMI!",
+                        "phase": "WMI_DIRECTION_LOCK"
+                    }
+                
+                # Energy mencoba counter WMI (misal energy SHORT)
+                if energy_bias == "SHORT":
+                    return {
+                        "bias": "LONG",  # Override energy
+                        "confidence": "SUPREME",
+                        "priority_level": 0,
+                        "reason": f"V101_WMI_LOCK: WMI {wmi:.1f}x (Target ATAS) + OI {oi_delta:+.2f}% (LEMAH!). "
+                                 f"Energy {energy_bias} TIDAK VALID tanpa fuel OI > {WMI_LOCK_OI_FUEL_MIN}%! "
+                                 f"Potensi Squeeze tetap terjadi!",
+                        "phase": "WMI_OVERRIDE_ENERGY"
+                    }
+        
+        # Kasus 2: WMI < -95 (Target Long di Bawah = SHORT bias)
+        if wmi < -WMI_LOCK_THRESHOLD:
+            # Jika fuel tidak cukup kuat untuk override
+            if oi_delta < WMI_LOCK_OI_FUEL_MIN:
+                # Energy setuju dengan WMI?
+                if energy_bias == "SHORT":
+                    return {
+                        "bias": "SHORT",
+                        "confidence": "HIGH",
+                        "priority_level": 0,
+                        "reason": f"V101_WMI_LOCK: WMI {wmi:.1f}x (Target BAWAH) + OI {oi_delta:+.2f}% (LEMAH!). "
+                                 f"Tidak ada fuel untuk counter! Energy {energy_bias} konfirmasi. "
+                                 f"Ikuti arus WMI!",
+                        "phase": "WMI_DIRECTION_LOCK"
+                    }
+                
+                # Energy mencoba counter WMI (misal energy LONG untuk rebound)
+                if energy_bias == "LONG":
+                    return {
+                        "bias": "SHORT",  # Override energy LONG
+                        "confidence": "SUPREME",
+                        "priority_level": 0,
+                        "reason": f"V101_WMI_LOCK: WMI {wmi:.1f}x (Target BAWAH) + OI {oi_delta:+.2f}% (LEMAH!). "
+                                 f"Energy {energy_bias} TIDAK VALID tanpa fuel OI > {WMI_LOCK_OI_FUEL_MIN}%! "
+                                 f"Potensi CASCADE tetap terjadi!",
+                        "phase": "WMI_OVERRIDE_ENERGY"
+                    }
+        
+        return {"bias": "NEUTRAL"}
+
+
+# ================= V101-FINAL: CONFLICT RESOLVER FINAL VERSION (UPDATED) =================
 class ConflictResolverV101_FINAL:
     """
     🔥 URUTAN PRIORITAS MUTLAK V101 - ANTI-HFT MANIPULATION
     
+    PRIORITY -1 (ABSOLUTE VETO - TERTINGGI!):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -1a. V101-OI_FUEL_VS_LIQ_GRAVITY (Bensin vs Jurang)     │ ← NEW!
+    │ -1b. V101-FLUSH_SEQUENCE_VETO (Prioritas Flush)         │ ← NEW!
+    │ -1c. V101-DEAD_AGG_MAGNET (Agg 0 + WMI Extrem)          │ ← NEW!
+    └─────────────────────────────────────────────────────────┘
+    
     PRIORITY 0 (ABSOLUTE VETO - TIDAK BISA DI-OVERRIDE):
     ┌─────────────────────────────────────────────────────────┐
-    │ 0a. V101-LMP: Liquidity Magnet Proximity               │
-    │     → Long liq < 0.1% = LONG (tidak ada bensin dump)   │
-    │ 0b. V101-ECS: Energy Cost Supremacy                    │
-    │     → Energy > 10x = ikuti jalur murah                 │
-    │ 0c. V101-AFD: Aggression-Flow Divergence               │
-    │     → Agg < 0.2 + Flow > 1.0 = Stealth Accum           │
-    │ 0d. V101-DSS: Double Sweep Sequence                    │
-    │     → Sweep yang terdekat DULU                         │
+    │ 0a. V101-WMI_DIRECTIONAL_LOCK (Kunci Arah WMI)          │ ← NEW!
+    │ 0b. V101-LMP: Liquidity Magnet Proximity               │
+    │ 0c. V101-ECS: Energy Cost Supremacy                    │
+    │ 0d. V101-AFD: Aggression-Flow Divergence               │
+    │ 0e. V101-DSS: Double Sweep Sequence                    │
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY 1 (STRONG OVERRIDE):
@@ -8098,7 +8346,7 @@ class ConflictResolverV101_FINAL:
     
     PRIORITY 3 (WEAK - MUDAH DI-OVERRIDE):
     ┌─────────────────────────────────────────────────────────┐
-    │ 3a. V99-WMI: Whale Migration Index                     │
+    │ 3a. V99-WMI: Whale Migration Index (non-extreme)        │
     │ 3b. V100-RSI: RSI Levels                               │
     │ 3c. V100-FLOW: Flow Volume                             │
     └─────────────────────────────────────────────────────────┘
@@ -8107,24 +8355,88 @@ class ConflictResolverV101_FINAL:
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
         
+        # ========== PRIORITY -1: ABSOLUTE VETO (TERTINGGI!) ==========
+        
+        # -1a. OI Fuel vs Liquidity Gravity (Kasus LYNUSDT)
+        fuel_gravity = OIFuelVsLiqGravityV101.check(
+            oi_delta=results.get('oi_delta_5m', 0),
+            long_dist=results.get('long_liq', 999),
+            wmi=results.get('wmi_ratio', 0),
+            agg=results.get('aggressive_ratio', 1.0)
+        )
+        if fuel_gravity.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": fuel_gravity['bias'],
+                "confidence": fuel_gravity['confidence'],
+                "reason": fuel_gravity['reason'],
+                "phase": fuel_gravity.get('phase', 'FUEL_STARVATION'),
+                "priority_level": -1,
+                "override_modules": fuel_gravity.get('override_modules', [])
+            }
+        
+        # -1b. Flush Sequence Veto (Kasus LYNUSDT)
+        flush_veto = FlushSequenceVetoV101.check(
+            lpf_data=results.get('lpf', {}),
+            wmi=results.get('wmi_ratio', 0)
+        )
+        if flush_veto.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": flush_veto['bias'],
+                "confidence": flush_veto['confidence'],
+                "reason": flush_veto['reason'],
+                "phase": "FLUSH_VETO",
+                "priority_level": -1,
+                "wait_for_flush": flush_veto.get('wait_for_flush', False),
+                "estimated_flush": flush_veto.get('estimated_flush', ''),
+                "action": flush_veto.get('action', 'WAIT')
+            }
+        
+        # -1c. Dead Aggression Magnet (Kasus LYNUSDT)
+        dead_magnet = DeadAggMagnetV101.check(
+            agg=results.get('aggressive_ratio', 1.0),
+            wmi=results.get('wmi_ratio', 0),
+            rsi=results.get('rsi6', 50)
+        )
+        if dead_magnet.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": dead_magnet['bias'],
+                "confidence": dead_magnet['confidence'],
+                "reason": dead_magnet['reason'],
+                "phase": dead_magnet.get('phase', 'FREE_FALL'),
+                "priority_level": -1
+            }
+        
         # ========== PRIORITY 0: ABSOLUTE VETO ==========
         
-        # 0a. Liquidity Magnet Proximity
-        lmp_res = LiquidityMagnetProximityV101.check(
-            long_dist=results.get('long_liq', 999),
-            short_dist=results.get('short_liq', 999)
+        # 0a. WMI Directional Lock (NEW!)
+        wmi_lock = WMIDirectionalLockV101.check(
+            wmi=results.get('wmi_ratio', 0),
+            oi_delta=results.get('oi_delta_5m', 0),
+            energy_bias=results.get('energy_bias', 'NEUTRAL'),
+            lim_bias=results.get('lim', {}).get('bias', 'NEUTRAL')
         )
+        if wmi_lock.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": wmi_lock['bias'],
+                "confidence": wmi_lock['confidence'],
+                "reason": wmi_lock['reason'],
+                "phase": wmi_lock.get('phase', 'WMI_LOCK'),
+                "priority_level": 0
+            }
+        
+        # 0b. Liquidity Magnet Proximity (existing)
+        lmp_res = results.get('lmp_v101', {})
         if lmp_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": lmp_res['bias'],
-                "confidence": lmp_res['confidence'],
-                "reason": lmp_res['reason'],
+                "confidence": lmp_res.get('confidence', 'ABSOLUTE'),
+                "reason": lmp_res.get('reason', ''),
                 "phase": "LIQUIDITY_MAGNET_PROXIMITY",
                 "priority_level": 0,
                 "sequence": lmp_res.get('sequence', 'NONE')
             }
         
-        # 0b. Energy Cost Supremacy
+        # 0c. Energy Cost Supremacy
         ecs_res = EnergyCostSupremacyV101.check(
             up_energy=results.get('up_energy', 0),
             down_energy=results.get('down_energy', 0),
@@ -8140,7 +8452,7 @@ class ConflictResolverV101_FINAL:
                 "priority_level": 0
             }
         
-        # 0c. Aggression-Flow Divergence
+        # 0d. Aggression-Flow Divergence
         afd_res = AggressionFlowDivergenceV101.check(
             agg_ratio=results.get('aggressive_ratio', 1.0),
             flow=results.get('trade_flow', 1.0),
@@ -8155,7 +8467,7 @@ class ConflictResolverV101_FINAL:
                 "priority_level": 0
             }
         
-        # 0d. Double Sweep Sequence
+        # 0e. Double Sweep Sequence
         dss_res = DoubleSweepSequenceV101.check(
             long_dist=results.get('long_liq', 999),
             short_dist=results.get('short_liq', 999),
@@ -19183,6 +19495,13 @@ class BinanceAnalyzerV87:
         self.afd_v101 = AggressionFlowDivergenceV101()           # V101-AFD
         self.psb_v101 = PreSweepBuildPhaseV101()                 # V101-PSB
         self.dss_v101 = DoubleSweepSequenceV101()                # V101-DSS
+        
+        # ===== V101 NEW MODULES - ANTI-LYNUSDT CASCADE =====
+        self.oi_fuel_v101 = OIFuelVsLiqGravityV101()           # V101-OI_FUEL_VS_LIQ_GRAVITY
+        self.flush_veto_v101 = FlushSequenceVetoV101()         # V101-FLUSH_SEQUENCE_VETO
+        self.dead_magnet_v101 = DeadAggMagnetV101()            # V101-DEAD_AGG_MAGNET
+        self.wmi_lock_v101 = WMIDirectionalLockV101()          # V101-WMI_DIRECTIONAL_LOCK
+        
         self.final_resolver_v101 = ConflictResolverV101_FINAL()  # V101 Final Resolver
         
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
@@ -20876,12 +21195,50 @@ class BinanceAnalyzerV87:
                 short_payout=scoring_data['lpc'].get('payout_short', 0)
             )
             
+            # ===== V101 NEW MODULES - ANTI-LYNUSDT CASCADE =====
+            oi_fuel_result = self.oi_fuel_v101.check(
+                oi_delta=scoring_data['oi_delta_5m'],
+                long_dist=scoring_data['long_liq'],
+                wmi=scoring_data['wmi_ratio'],
+                agg=scoring_data['aggressive_ratio']
+            )
+            
+            flush_veto_result = self.flush_veto_v101.check(
+                lpf_data=scoring_data.get('lpf', {}),
+                wmi=scoring_data['wmi_ratio']
+            )
+            
+            dead_magnet_result = self.dead_magnet_v101.check(
+                agg=scoring_data['aggressive_ratio'],
+                wmi=scoring_data['wmi_ratio'],
+                rsi=scoring_data['rsi6']
+            )
+            
+            # Get energy_bias from ecs_result or lep_result
+            energy_bias = "NEUTRAL"
+            if ecs_result.get('bias') != 'NEUTRAL':
+                energy_bias = ecs_result['bias']
+            elif scoring_data.get('lep', {}).get('bias') != 'NEUTRAL':
+                energy_bias = scoring_data['lep']['bias']
+            
+            wmi_lock_result = self.wmi_lock_v101.check(
+                wmi=scoring_data['wmi_ratio'],
+                oi_delta=scoring_data['oi_delta_5m'],
+                energy_bias=energy_bias,
+                lim_bias=scoring_data['lim'].get('bias', 'NEUTRAL')
+            )
+            
             # Add V101 results to scoring_data for resolver
             scoring_data['lmp_v101'] = lmp_result
             scoring_data['ecs_v101'] = ecs_result
             scoring_data['afd_v101'] = afd_result
             scoring_data['psb_v101'] = psb_result
             scoring_data['dss_v101'] = dss_result
+            scoring_data['oi_fuel_v101'] = oi_fuel_result
+            scoring_data['flush_veto_v101'] = flush_veto_result
+            scoring_data['dead_magnet_v101'] = dead_magnet_result
+            scoring_data['wmi_lock_v101'] = wmi_lock_result
+            scoring_data['energy_bias'] = energy_bias
             
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
