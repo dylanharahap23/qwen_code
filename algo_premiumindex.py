@@ -411,6 +411,35 @@ GOD_PAYOUT_RATIO_PRIORITY = 50
 GOD_NEARBY_LIQ_THRESHOLD = 1.0
 
 # ================= V100-VOD: VOLUME-OI DIVERGENCE CONFIG =================
+VOD_RSI_OVERBOUGHT_THRESHOLD = 70.0      # RSI > 70 = overbought
+VOD_OI_DROP_MIN = -1.0                    # OI drop > 1%
+VOD_FLOW_DISTRIBUTION_MIN = 1.5            # Flow > 1.5x untuk distribution
+VOD_FLOW_DISTRIBUTION_MAX = 3.0            # Flow < 3.0x (moderate, not extreme)
+VOD_AGG_MAX = 3.0                          # Agg < 3.0 (tidak terlalu tinggi)
+
+# ================= V99-OAI: OI ACCELERATION PHASE CONFIG =================
+OAI_OI_DROP_FAST_MIN = -2.0                 # OI drop > 2% = fast exit
+OAI_OI_DROP_MODERATE_MIN = -1.0             # OI drop > 1% = moderate exit
+OAI_RSI_OVERBOUGHT_MIN = 70.0                # RSI > 70 = overbought
+OAI_PRICE_RISE_FOR_COVERING = 1.0            # Price naik > 1% untuk short covering
+
+# ================= V97-SDD: SILENT DISTRIBUTION DETECTOR CONFIG =================
+SDD_RSI_OVERBOUGHT_MIN = 70.0                # RSI > 70 = overbought
+SDD_OI_DROP_MIN = -1.0                        # OI drop > 1%
+SDD_FLOW_MIN = 1.0                            # Flow > 1.0x
+SDD_FLOW_MAX = 3.0                            # Flow < 3.0x (moderate)
+SDD_AGG_MAX = 3.0                             # Agg < 3.0 (not too high)
+
+# ================= V100-CPO: CASCADE PRIORITY OVERRIDE CONFIG =================
+CPO_OI_DROP_MIN = -1.0                        # OI drop > 1%
+CPO_RSI_OVERBOUGHT_MIN = 70.0                  # RSI > 70 = overbought
+
+# ================= V100-LRS: LONG REWARD SCORE CONFIG =================
+LRS_LONG_REWARD_THRESHOLD = 8.0                # Long liq > 8% = juicy target
+LRS_SHORT_REWARD_THRESHOLD = 3.0                # Short liq < 3% = small target
+LRS_OI_DROP_MIN = -1.0                          # OI drop > 1% untuk konfirmasi exit
+
+# ================= V100-VOD: VOLUME-OI DIVERGENCE CONFIG (LEGACY) =================
 VOD_RSI_OVERBOUGHT_THRESHOLD = 75.0      # RSI > 75 = Danger
 VOD_OI_BUILDING_MIN = 0.5                # OI increase > 0.5% = New Positions
 VOD_FLOW_HIGH_THRESHOLD = 2.0            # Flow > 2.0x = Distribution Volume
@@ -1907,7 +1936,16 @@ class GravityOverdriveModuleV100:
 
 # ================= V100-VOD: VOLUME-OI DIVERGENCE DETECTOR =================
 class VolumeOIDivergenceDetectorV100:
-    """🔥 V100-VOD: VOLUME-OI DIVERGENCE DETECTOR - ANTI-DISTRIBUTION TRAP
+    """🔥 V100-VOD: VOLUME-OI DIVERGENCE DETECTOR - ANTI-BDXN TRAP
+    
+    🔥 V100-VOD: ANTI-BDXN TRAP
+    Jika RSI > 70 AND OI dropping AND Flow > 1.5 = DISTRIBUTION!
+    
+    Kasus BDXNUSDT:
+    - RSI: 75.4 (>70)
+    - OI: -2.59% (< -1%)
+    - Flow: 1.78x (1.5-3.0)
+    - Agg: 1.86x (<3.0)
     
     Prinsip HFT Binances:
     Jika RSI OVERBOUGHT (>75) + OI Building POSITIVE + High Flow 
@@ -1918,9 +1956,11 @@ class VolumeOIDivergenceDetectorV100:
     • OI Building di area Overbought = Weak Hands Entry (Easy Target)
     """
     
-    VOD_RSI_OVERBOUGHT_THRESHOLD = 75.0
-    VOD_OI_BUILDING_MIN = 0.5
-    VOD_FLOW_HIGH_THRESHOLD = 2.0
+    VOD_RSI_OVERBOUGHT_THRESHOLD = 70.0      # RSI > 70 = overbought
+    VOD_OI_DROP_MIN = -1.0                    # OI drop > 1%
+    VOD_FLOW_DISTRIBUTION_MIN = 1.5            # Flow > 1.5x untuk distribution
+    VOD_FLOW_DISTRIBUTION_MAX = 3.0            # Flow < 3.0x (moderate, not extreme)
+    VOD_AGG_MAX = 3.0                          # Agg < 3.0 (tidak terlalu tinggi)
     VOD_OBV_NEGATIVE_CHECK = True
     
     @staticmethod
@@ -1929,9 +1969,12 @@ class VolumeOIDivergenceDetectorV100:
         oi_delta_5m: float,
         trade_flow: float,
         obv_value: float,
-        price_change: float
+        price_change: float,
+        agg_ratio: float = 1.0
     ) -> Dict:
         """
+        Deteksi volume-OI divergence = whale distribution
+        
         XANUSDT Case Validation:
         - RSI: 79.3 (> 75) ✅ Triggered
         - OI: +1.31% (>0.5%) ✅ Building
@@ -1940,6 +1983,26 @@ class VolumeOIDivergenceDetectorV100:
         - Price: +1.35% (Stable/Rising) ✅ Distraction
         """
         
+        # ================= V100-VOD: ANTI-BDXN TRAP (NEW LOGIC) =================
+        # Jika RSI > 70 AND OI dropping AND Flow > 1.5 = DISTRIBUTION!
+        if rsi6 > VolumeOIDivergenceDetectorV100.VOD_RSI_OVERBOUGHT_THRESHOLD:
+            if oi_delta_5m < VolumeOIDivergenceDetectorV100.VOD_OI_DROP_MIN:
+                if trade_flow > VolumeOIDivergenceDetectorV100.VOD_FLOW_DISTRIBUTION_MIN:
+                    if trade_flow < VolumeOIDivergenceDetectorV100.VOD_FLOW_DISTRIBUTION_MAX:
+                        if agg_ratio < VolumeOIDivergenceDetectorV100.VOD_AGG_MAX:
+                            return {
+                                "is_distribution": True,
+                                "bias": "SHORT",
+                                "confidence": "ABSOLUTE",
+                                "priority_level": -1,  # TERTINGGI!
+                                "reason": f"VOD_DISTRIBUTION: RSI {rsi6:.1f} (>70) + "
+                                         f"OI {oi_delta_5m:.2f}% (DROP!) + Flow {trade_flow:.2f}x = "
+                                         f"WHALE DISTRIBUTION! JANGAN LONG!",
+                                "phase": "DISTRIBUTION_PHASE",
+                                "override_modules": ["WMI_LOCK", "ENERGY_PATH", "LPC_PAYOUT"]
+                            }
+        
+        # ================= LEGACY VOD LOGIC (XANUSDT PATTERN) =================
         distribution_signals = []
         severity_score = 0
         
@@ -1949,12 +2012,12 @@ class VolumeOIDivergenceDetectorV100:
             severity_score += 30
             
         # CHECK 2: OI Building While Expensive
-        if oi_delta_5m > VolumeOIDivergenceDetectorV100.VOD_OI_BUILDING_MIN:
+        if oi_delta_5m > 0.5:
             distribution_signals.append("OI_BUILDING_AT_RESISTANCE")
             severity_score += 25
             
         # CHECK 3: High Volume Distribution
-        if trade_flow >= VolumeOIDivergenceDetectorV100.VOD_FLOW_HIGH_THRESHOLD:
+        if trade_flow >= 2.0:
             distribution_signals.append("HIGH_VOLUME_DISTRIBUTION")
             severity_score += 25
             
@@ -1981,7 +2044,7 @@ class VolumeOIDivergenceDetectorV100:
                 "wait_condition": "OBV_RECOVERY"
             }
         
-        return {"is_distribution_trap": False, "bias": "NEUTRAL"}
+        return {"is_distribution": False, "is_distribution_trap": False, "bias": "NEUTRAL"}
 
 
 # ================= V100-IER-PRIORITY: INSTITUTIONAL EXIT OVERRIDE =================
