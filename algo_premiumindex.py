@@ -4960,6 +4960,32 @@ class SuperiorWDMVIP99:
             agg: Aggressive Ratio (untuk validasi exhaustion)
         """
         # ============================================
+        # 🔴 FIX SIRENUSDT: VALIDASI LIM IMBALANCE SEBELUM WMI VETO
+        # ============================================
+        # Jika WMI negatif (target long di bawah) tapi SHORT crowded di atas (>20x)
+        if wmi_ratio < -95 and short_imbalance and short_imbalance > 20.0:
+            return {
+                "is_veto": False,  # JANGAN veto!
+                "bias": "LONG",    # Ikuti imbalance
+                "warning": True,
+                "reason": f"V99_CROWD_OVERRIDE: WMI {wmi_ratio:.1f}x TAPI "
+                         f"Short Imbalance {short_imbalance:.1f}x > 20x! "
+                         f"Crowd SHORT lebih penting! SQUEEZE!",
+                "phase": "CROWD_OVERRIDE_WMI"
+            }
+        
+        # Jika WMI positif (target short di atas) tapi LONG crowded
+        if wmi_ratio > 95 and short_imbalance and short_imbalance < 0.05:  # Long crowded
+            return {
+                "is_veto": False,
+                "bias": "SHORT",
+                "warning": True,
+                "reason": f"V99_CROWD_OVERRIDE: WMI {wmi_ratio:.1f}x TAPI "
+                         f"Long Crowded! DUMP!",
+                "phase": "CROWD_OVERRIDE_WMI"
+            }
+        
+        # ============================================
         # VALIDASI BARU: Jangan veto jika Short Imbalance Ekstrim (>50x)
         # ============================================
         if wmi_ratio < -95 and short_imbalance and short_imbalance > SCT_IMBALANCE_THRESHOLD:
@@ -5060,6 +5086,77 @@ class SuperiorWDMVIP99:
                 }
         
         return {"is_veto": False, "bias": "NEUTRAL", "reason": ""}
+
+
+# ================= V103: WMI VETO VALIDATOR (ANTI-SIREN/BDXN TRAP) =================
+class WMIVetoValidatorV103:
+    """
+    🔥 V103: WMI VETO VALIDATOR - CEK IMBALANCE SEBELUM VETO
+    
+    Kasus SIRENUSDT:
+    - WMI: -99.2x (minta SHORT)
+    - LIM Imbalance: 40x (minta LONG)
+    - Validator harus batalkan WMI veto!
+    
+    Kasus BDXNUSDT:
+    - WMI: -99.6x (minta SHORT)
+    - LIM Imbalance: 60x (minta LONG)
+    - Validator harus batalkan WMI veto!
+    """
+    
+    @staticmethod
+    def validate(wmi_ratio: float, lim_imbalance: float, 
+                 agg_ratio: float = None, flow: float = None) -> Dict:
+        """
+        Validasi apakah WMI veto boleh dijalankan
+        
+        Args:
+            wmi_ratio: Whale Migration Index
+            lim_imbalance: Imbalance ratio dari LIM module
+            agg_ratio: Aggressive ratio (optional)
+            flow: Trade flow (optional)
+        
+        Returns:
+            Dict dengan allow_veto, bias, reason
+        """
+        # Jika |WMI| tidak ekstrim, veto boleh jalan
+        if abs(wmi_ratio) < 95:
+            return {
+                "allow_veto": True,
+                "bias": "NEUTRAL",
+                "reason": "WMI tidak ekstrim, veto boleh jalan"
+            }
+        
+        # 🔴 CEK KASUS SIREN/BDXN: WMI negatif tapi SHORT crowded
+        if wmi_ratio < -95:  # WMI minta SHORT (target long di bawah)
+            if lim_imbalance > 20.0:  # Tapi SHORT crowded di atas
+                return {
+                    "allow_veto": False,  # BATALKAN VETO!
+                    "bias": "LONG",
+                    "reason": f"VETO_VALIDATOR: WMI {wmi_ratio:.1f}x (minta SHORT) TAPI "
+                             f"LIM Imbalance {lim_imbalance:.1f}x > 20x (minta LONG). "
+                             f"Crowd SHORT lebih penting! WMI VETO DIBATALKAN!",
+                    "override_modules": ["WMI_VETO", "WMI_ABSOLUTE_LOCK"]
+                }
+        
+        # Kasus sebaliknya: WMI positif tapi LONG crowded
+        if wmi_ratio > 95:  # WMI minta LONG (target short di atas)
+            if lim_imbalance < 0.05:  # LONG crowded
+                return {
+                    "allow_veto": False,
+                    "bias": "SHORT",
+                    "reason": f"VETO_VALIDATOR: WMI {wmi_ratio:.1f}x (minta LONG) TAPI "
+                             f"LIM Imbalance {lim_imbalance:.1f}x (LONG crowded). "
+                             f"WMI VETO DIBATALKAN!",
+                    "override_modules": ["WMI_VETO", "WMI_ABSOLUTE_LOCK"]
+                }
+        
+        # Jika lolos validasi, veto boleh jalan
+        return {
+            "allow_veto": True,
+            "bias": "NEUTRAL",
+            "reason": "Veto validator passed"
+        }
 
 
 class OIBuildValidatorV99:
@@ -10013,6 +10110,18 @@ class ConflictResolverV102_FINAL_ENHANCED:
                 "phase": "OVERSOLD_DOWNTREND",
                 "priority_level": -6,
                 "override_modules": oversold_dt.get('override_modules', [])
+            }
+        
+        # ========== PRIORITY -2.5: WMI VETO VALIDATOR (TAMBAHAN!) ==========
+        wmi_validator = results.get('wmi_veto_validator_v103', {})
+        if wmi_validator.get('allow_veto') == False:  # Validator batalkan veto
+            return {
+                "final_bias": wmi_validator['bias'],
+                "confidence": "ABSOLUTE",
+                "reason": wmi_validator.get('reason', ''),
+                "phase": "WMI_VETO_VALIDATOR_OVERRIDE",
+                "priority_level": -2.5,  # Antara -2 dan -3
+                "override_modules": wmi_validator.get('override_modules', [])
             }
         
         # ========== PRIORITY -2: IRUSDT PATCH (TERTINGGI!) ==========
@@ -20601,6 +20710,20 @@ class ConflictResolverV87:
                 "warning": "DO NOT ENTRY - WAIT FOR REAL SWEEP"
             }
 
+        # 🔴 PRIORITAS BARU: LIM IMBALANCE EKSTREM (SEBELUM WMI!)
+        if lim_result.get('bias') != 'NEUTRAL':
+            ratio = lim_result.get('imbalance_ratio', 1.0)
+            if ratio > 20.0:  # Imbalance ekstrem
+                confidence = "ABSOLUTE" if ratio > 50.0 else "SUPREME"
+                return {
+                    "bias": lim_result['bias'],
+                    "confidence": confidence,
+                    "reason": f"V87_LIM_EXTREME: {lim_result['reason']} "
+                             f"(Ratio {ratio:.1f}x > 20x!)",
+                    "phase": "IMBALANCE_EXTREME_PRIORITY",
+                    "ttk_info": {"estimated_minutes": 5, "urgency": "IMMINENT", "fuel_ready": "YES"}
+                }
+
         # 4. LIM (Liquidity Imbalance Momentum)
         if lim_result.get('bias') != "NEUTRAL":
             ratio = lim_result.get('imbalance_ratio', 1.0)
@@ -20836,6 +20959,11 @@ class OutputFormatterV87:
 
         if result.get('sequence') and result['sequence'] != 'NONE':
             print(f"\n📋 SWEEP SEQUENCE: {result['sequence']}")
+
+        # ===== V103: WMI VETO VALIDATOR =====
+        if result.get('wmi_veto_validator_v103', {}).get('allow_veto') == False:
+            print(f"\n🛡️ WMI_VETO_VALIDATOR: ACTIVE")
+            print(f"   📌 {result['wmi_veto_validator_v103']['reason']}")
 
         # DECISION
         print(f"\n{'='*40}")
@@ -22372,6 +22500,27 @@ class BinanceAnalyzerV87:
                 agg=trades.get('aggressive_ratio', None)
             )
             
+            # ===== V103: WMI VETO VALIDATOR =====
+            # Ambil imbalance ratio dari LIM
+            lim_imbalance = lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0
+            
+            wmi_veto_validator = WMIVetoValidatorV103.validate(
+                wmi_ratio=wmi_ratio,
+                lim_imbalance=lim_imbalance,
+                agg_ratio=trades.get('aggressive_ratio', 0),
+                flow=trades.get('ratio', 0)
+            )
+            
+            # Update wmi_veto_result jika validator membatalkan veto
+            if not wmi_veto_validator.get('allow_veto', True):
+                # Override wmi_veto_result
+                wmi_veto_result = {
+                    "is_veto": False,
+                    "bias": wmi_veto_validator['bias'],
+                    "reason": wmi_veto_validator['reason'],
+                    "phase": "WMI_VETO_VALIDATOR_OVERRIDE"
+                }
+            
             # Internal Trap Detection (FMT)
             internal_trap_result = self.internal_trap.detect(
                 trade_flow=trades['ratio'],
@@ -22967,6 +23116,9 @@ class BinanceAnalyzerV87:
                 'egr': egr_result if 'egr_result' in locals() else {},
                 'lfc_v100': lfc_result if 'lfc_result' in locals() else {},
                 'bpf': bpf_result if 'bpf_result' in locals() else {},
+                
+                # ===== V103: WMI VETO VALIDATOR =====
+                'wmi_veto_validator_v103': wmi_veto_validator if 'wmi_veto_validator' in locals() else {}
             }
             
             # ===== V101: CALL NEW MODULES =====
