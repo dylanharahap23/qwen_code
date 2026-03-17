@@ -692,6 +692,33 @@ OVERSOLD_24H_CHANGE_MIN = -10.0               # 24h change < -10%
 OVERSOLD_WMI_MIN = -90                        # WMI < -90 untuk konfirmasi bearish
 OVERSOLD_DOWNTREND_PRIORITY = -6              # Priority -6
 
+# ================= V104: EXECUTION LAYER CONFIG =================
+# Execution Void Detector
+EXECUTION_VOID_FLOW_MAX = 0.8          # Flow < 0.8 = market tipis
+EXECUTION_VOID_AGG_MAX = 0.3            # Agg < 0.3 = no resistance
+EXECUTION_VOID_PRIORITY = -5             # Priority tinggi
+
+# No Aggression Override
+NO_AGGRESSION_FLOW_MAX = 0.6            # Flow < 0.6
+NO_AGGRESSION_AGG_MAX = 0.2             # Agg < 0.2
+NO_AGGRESSION_PRIORITY = -4              # Priority sangat tinggi
+
+# Path Resistance Model
+PATH_RESISTANCE_FLOW_WEIGHT = 1.0        # Weight untuk flow dalam resistance
+PATH_RESISTANCE_AGG_WEIGHT = 1.0         # Weight untuk agg dalam resistance
+PATH_RESISTANCE_PRIORITY = -3             # Priority
+
+# Microstructure Break
+MICRO_BREAK_LOOKBACK = 5                  # Candles untuk lookback
+MICRO_BREAK_VOLUME_MIN = 1.2              # Minimal volume ratio
+MICRO_BREAK_PRIORITY = -2                  # Priority
+
+# Time Lag Engine
+TIME_LAG_WAIT_SECONDS = 60                 # 1 menit default wait
+TIME_LAG_TRIGGER_FLOW_MIN = 1.5            # Flow spike untuk trigger
+TIME_LAG_TRIGGER_AGG_MIN = 1.2             # Agg spike untuk trigger
+TIME_LAG_PRIORITY = -1                      # Priority terendah di layer eksekusi
+
 
 # ================= V100-CHINA-ALGO: CHINA ALGO TRADING LOGIC =================
 class ChinaAlgoTradingLogicV100:
@@ -5157,6 +5184,299 @@ class WMIVetoValidatorV103:
             "bias": "NEUTRAL",
             "reason": "Veto validator passed"
         }
+
+
+# ================= V104: EXECUTION VOID DETECTOR =================
+class ExecutionVoidDetectorV104:
+    """
+    🔥 V104: EXECUTION VOID DETECTOR - DETEKSI JALUR KOSONG
+    
+    Kalau market "mati" (flow rendah, agg rendah), arah = yang paling kosong,
+    bukan yang paling logis berdasarkan indikator.
+    
+    Kasus SIRENUSDT:
+    - Flow: 0.52x (tipis)
+    - Agg: 0.18x (no resistance)
+    - Cascade Up: 2.26 (lebih cepat)
+    - Result: VOID_UP_EXPANSION → PUMP +8%
+    """
+    
+    @staticmethod
+    def detect(flow: float, agg: float, cascade_up: float, cascade_down: float) -> Dict:
+        """
+        Deteksi apakah market dalam kondisi void dan arah mana yang kosong
+        """
+        # Cek kondisi market tipis (no resistance)
+        if flow < EXECUTION_VOID_FLOW_MAX and agg < EXECUTION_VOID_AGG_MAX:
+            
+            # Bandingkan cascade time (mana yang lebih cepat = lebih kosong)
+            if cascade_up < cascade_down:
+                return {
+                    "active": True,
+                    "bias": "LONG",
+                    "void_direction": "UP",
+                    "priority": EXECUTION_VOID_PRIORITY,
+                    "reason": f"EXECUTION_VOID_UP: Flow {flow:.2f}x (tipis) + "
+                             f"Agg {agg:.2f}x (no resistance) + "
+                             f"Cascade Up {cascade_up:.2f} < Down {cascade_down:.2f}. "
+                             f"Jalur atas KOSONG! Pump mudah!",
+                    "confidence": "ABSOLUTE"
+                }
+            else:
+                return {
+                    "active": True,
+                    "bias": "SHORT",
+                    "void_direction": "DOWN",
+                    "priority": EXECUTION_VOID_PRIORITY,
+                    "reason": f"EXECUTION_VOID_DOWN: Flow {flow:.2f}x (tipis) + "
+                             f"Agg {agg:.2f}x (no resistance) + "
+                             f"Cascade Down {cascade_down:.2f} < Up {cascade_up:.2f}. "
+                             f"Jalur bawah KOSONG! Dump mudah!",
+                    "confidence": "ABSOLUTE"
+                }
+        
+        return {
+            "active": False,
+            "bias": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V104: NO AGGRESSION OVERRIDE =================
+class NoAggressionOverrideV104:
+    """
+    🔥 V104: NO AGGRESSION OVERRIDE - "NO PLAYER MARKET" MODE
+    
+    Jika aggression sangat rendah (<0.2) dan flow sangat rendah (<0.6),
+    ignore semua MM logic! Market dalam mode "no player".
+    
+    Ini HARUS jadi override utama sebelum logic apapun!
+    """
+    
+    @staticmethod
+    def detect(agg: float, flow: float, price_change: float = None) -> Dict:
+        """
+        Deteksi apakah market dalam mode "no player"
+        """
+        if agg < NO_AGGRESSION_AGG_MAX and flow < NO_AGGRESSION_FLOW_MAX:
+            
+            price_context = f" Price {price_change:+.2f}%" if price_change else ""
+            
+            return {
+                "active": True,
+                "bias": "NEUTRAL",  # Tidak ada arah, tapi ini override!
+                "priority": NO_AGGRESSION_PRIORITY,
+                "reason": f"NO_PLAYER_MARKET: Agg {agg:.2f}x (MATI) + "
+                         f"Flow {flow:.2f}x (SEPI){price_context}. "
+                         f"TIDAK ADA PLAYER! IGNORE ALL MM LOGIC! "
+                         f"Market akan bergerak ke arah orderflow real-time.",
+                "override_all_mm_logic": True,
+                "confidence": "ABSOLUTE"
+            }
+        
+        return {
+            "active": False,
+            "bias": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V104: PATH RESISTANCE MODEL =================
+class PathResistanceModelV104:
+    """
+    🔥 V104: PATH RESISTANCE MODEL - BUKAN HANYA PAYOUT
+    
+    path_score = liquidity / resistance
+    resistance = flow * agg
+    
+    Jika resistance sangat rendah, arah = path termudah.
+    """
+    
+    @staticmethod
+    def calculate(short_liq_size: float, long_liq_size: float,
+                  short_dist: float, long_dist: float,
+                  flow: float, agg: float) -> Dict:
+        """
+        Hitung path score untuk kedua arah
+        """
+        # Hitung resistance (semakin kecil semakin mudah)
+        resistance = max(flow * agg, 0.01)  # Hindari division by zero
+        
+        # Hitung liquidity value (size / distance = density)
+        short_liquidity = short_liq_size / max(abs(short_dist), 0.01)
+        long_liquidity = long_liq_size / max(abs(long_dist), 0.01)
+        
+        # Path score = liquidity / resistance
+        short_score = short_liquidity / resistance
+        long_score = long_liquidity / resistance
+        
+        # Tentukan arah termudah
+        if short_score > long_score * 1.5:
+            return {
+                "active": True,
+                "bias": "LONG",
+                "short_score": round(short_score, 2),
+                "long_score": round(long_score, 2),
+                "priority": PATH_RESISTANCE_PRIORITY,
+                "reason": f"PATH_RESISTANCE: Short Score {short_score:.2f} > Long {long_score:.2f}. "
+                         f"Resistance {resistance:.2f} (RENDAH!). "
+                         f"Jalur ke SHORT LIQ paling mudah!",
+                "confidence": "HIGH"
+            }
+        elif long_score > short_score * 1.5:
+            return {
+                "active": True,
+                "bias": "SHORT",
+                "short_score": round(short_score, 2),
+                "long_score": round(long_score, 2),
+                "priority": PATH_RESISTANCE_PRIORITY,
+                "reason": f"PATH_RESISTANCE: Long Score {long_score:.2f} > Short {short_score:.2f}. "
+                         f"Resistance {resistance:.2f} (RENDAH!). "
+                         f"Jalur ke LONG LIQ paling mudah!",
+                "confidence": "HIGH"
+            }
+        
+        return {
+            "active": False,
+            "bias": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V104: MICROSTRUCTURE BREAK DETECTOR =================
+class MicrostructureBreakDetectorV104:
+    """
+    🔥 V104: MICROSTRUCTURE BREAK DETECTOR
+    
+    Deteksi ketika price break local high/low dengan no sell pressure.
+    
+    if price_breaks_local_high and no_sell_pressure:
+        bias = LONG
+    """
+    
+    @staticmethod
+    def detect(current_price: float, price_history: List[float],
+               volume_ratio: float, sell_pressure: float) -> Dict:
+        """
+        Deteksi microstructure break
+        """
+        if len(price_history) < MICRO_BREAK_LOOKBACK + 1:
+            return {"active": False, "bias": "NEUTRAL"}
+        
+        # Ambil local high/low dari history
+        recent_prices = price_history[-MICRO_BREAK_LOOKBACK:]
+        local_high = max(recent_prices)
+        local_low = min(recent_prices)
+        
+        # Cek break dengan konfirmasi volume
+        if current_price > local_high and volume_ratio > MICRO_BREAK_VOLUME_MIN:
+            if sell_pressure < 0.5:  # No sell pressure
+                return {
+                    "active": True,
+                    "bias": "LONG",
+                    "break_type": "HIGH_BREAK",
+                    "priority": MICRO_BREAK_PRIORITY,
+                    "reason": f"MICRO_BREAK_UP: Price {current_price:.4f} > Local High {local_high:.4f} "
+                             f"dengan Volume {volume_ratio:.2f}x + Sell Pressure {sell_pressure:.2f}x (rendah). "
+                             f"Break valid! LONG!",
+                    "confidence": "HIGH"
+                }
+        
+        elif current_price < local_low and volume_ratio > MICRO_BREAK_VOLUME_MIN:
+            if sell_pressure > 1.5:  # High sell pressure
+                return {
+                    "active": True,
+                    "bias": "SHORT",
+                    "break_type": "LOW_BREAK",
+                    "priority": MICRO_BREAK_PRIORITY,
+                    "reason": f"MICRO_BREAK_DOWN: Price {current_price:.4f} < Local Low {local_low:.4f} "
+                             f"dengan Volume {volume_ratio:.2f}x + Sell Pressure {sell_pressure:.2f}x (tinggi). "
+                             f"Break valid! SHORT!",
+                    "confidence": "HIGH"
+                }
+        
+        return {
+            "active": False,
+            "bias": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V104: TIME LAG ENGINE =================
+class TimeLagEngineV104:
+    """
+    🔥 V104: TIME LAG ENGINE - TUNGGU EXECUTION TRIGGER
+    
+    Lo detect "niat" terlalu cepat. Harus tunggu execution trigger:
+    - Flow spike
+    - Agg spike
+    - Break microstructure
+    """
+    
+    def __init__(self):
+        self.signal_first_seen = {}
+        self.trigger_detected = {}
+    
+    def check_signal(self, signal_key: str, current_time: float,
+                    current_flow: float, current_agg: float,
+                    prev_flow: float = None, prev_agg: float = None) -> Dict:
+        """
+        Cek apakah signal sudah waktunya dieksekusi
+        """
+        # Jika pertama kali lihat signal, catat waktu
+        if signal_key not in self.signal_first_seen:
+            self.signal_first_seen[signal_key] = current_time
+            self.trigger_detected[signal_key] = False
+            return {
+                "ready": False,
+                "wait_seconds": TIME_LAG_WAIT_SECONDS,
+                "reason": "TIME_LAG: First detection, waiting for execution trigger"
+            }
+        
+        # Hitung berapa lama sudah menunggu
+        elapsed = current_time - self.signal_first_seen[signal_key]
+        
+        # Jika sudah melebihi waktu tunggu, auto ready
+        if elapsed > TIME_LAG_WAIT_SECONDS:
+            return {
+                "ready": True,
+                "reason": f"TIME_LAG: Wait time exceeded ({elapsed:.0f}s > {TIME_LAG_WAIT_SECONDS}s)"
+            }
+        
+        # Cek execution trigger
+        if not self.trigger_detected[signal_key]:
+            # Flow spike
+            if prev_flow and current_flow > prev_flow * TIME_LAG_TRIGGER_FLOW_MIN:
+                self.trigger_detected[signal_key] = True
+                return {
+                    "ready": True,
+                    "trigger": "FLOW_SPIKE",
+                    "reason": f"TIME_LAG: Flow spike detected! {current_flow:.2f}x > {prev_flow:.2f}x"
+                }
+            
+            # Agg spike
+            if prev_agg and current_agg > prev_agg * TIME_LAG_TRIGGER_AGG_MIN:
+                self.trigger_detected[signal_key] = True
+                return {
+                    "ready": True,
+                    "trigger": "AGG_SPIKE",
+                    "reason": f"TIME_LAG: Agg spike detected! {current_agg:.2f}x > {prev_agg:.2f}x"
+                }
+        
+        # Belum ready
+        remaining = TIME_LAG_WAIT_SECONDS - elapsed
+        return {
+            "ready": False,
+            "wait_seconds": remaining,
+            "reason": f"TIME_LAG: Waiting for trigger ({remaining:.0f}s remaining)"
+        }
+    
+    def reset(self, signal_key: str):
+        """Reset tracking untuk signal tertentu"""
+        if signal_key in self.signal_first_seen:
+            del self.signal_first_seen[signal_key]
+        if signal_key in self.trigger_detected:
+            del self.trigger_detected[signal_key]
 
 
 class OIBuildValidatorV99:
@@ -10051,6 +10371,69 @@ class ConflictResolverV102_FINAL_ENHANCED:
             if 'bias' not in res:
                 res['bias'] = default_bias
             return res
+        
+        # ========== PRIORITY -5: NO AGGRESSION OVERRIDE (TERTINGGI!) ==========
+        no_agg = results.get('no_agg_override_v104', {})
+        if no_agg.get('active') and no_agg.get('override_all_mm_logic'):
+            return {
+                "final_bias": "NEUTRAL",  # Tidak ada arah, tapi override!
+                "confidence": no_agg.get('confidence', 'ABSOLUTE'),
+                "reason": no_agg.get('reason', ''),
+                "phase": "NO_PLAYER_MARKET",
+                "priority_level": -5,
+                "override_all_mm_logic": True,
+                "action": "WAIT_FOR_ORDERFLOW"
+            }
+        
+        # ========== PRIORITY -4: EXECUTION VOID DETECTOR ==========
+        void_res = results.get('execution_void_v104', {})
+        if void_res.get('active'):
+            return {
+                "final_bias": void_res['bias'],
+                "confidence": void_res.get('confidence', 'ABSOLUTE'),
+                "reason": void_res.get('reason', ''),
+                "phase": f"EXECUTION_VOID_{void_res.get('void_direction', 'UNKNOWN')}",
+                "priority_level": -4,
+                "void_direction": void_res.get('void_direction', 'NONE')
+            }
+        
+        # ========== PRIORITY -3: PATH RESISTANCE MODEL ==========
+        path_res = results.get('path_resistance_v104', {})
+        if path_res.get('active'):
+            return {
+                "final_bias": path_res['bias'],
+                "confidence": path_res.get('confidence', 'HIGH'),
+                "reason": path_res.get('reason', ''),
+                "phase": "PATH_RESISTANCE",
+                "priority_level": -3,
+                "short_score": path_res.get('short_score', 0),
+                "long_score": path_res.get('long_score', 0)
+            }
+        
+        # ========== PRIORITY -2: MICROSTRUCTURE BREAK ==========
+        micro_res = results.get('micro_break_v104', {})
+        if micro_res.get('active'):
+            return {
+                "final_bias": micro_res['bias'],
+                "confidence": micro_res.get('confidence', 'HIGH'),
+                "reason": micro_res.get('reason', ''),
+                "phase": f"MICRO_BREAK_{micro_res.get('break_type', 'UNKNOWN')}",
+                "priority_level": -2
+            }
+        
+        # ========== PRIORITY -1: TIME LAG ENGINE ==========
+        time_lag = results.get('time_lag_v104', {})
+        if time_lag and not time_lag.get('ready', True):
+            # Jika belum ready, return WAIT
+            return {
+                "final_bias": "NEUTRAL",
+                "confidence": "HIGH",
+                "reason": time_lag.get('reason', 'TIME_LAG: Waiting for execution trigger'),
+                "phase": "TIME_LAG_WAIT",
+                "priority_level": -1,
+                "wait_seconds": time_lag.get('wait_seconds', 60),
+                "action": "WAIT"
+            }
         
         # ========== PRIORITY -10: WMI ABSOLUTE LOCK (TERTINGGI!) ==========
         wmi_absolute = safe_module_result('wmi_absolute_v103')
@@ -20964,6 +21347,28 @@ class OutputFormatterV87:
         if result.get('wmi_veto_validator_v103', {}).get('allow_veto') == False:
             print(f"\n🛡️ WMI_VETO_VALIDATOR: ACTIVE")
             print(f"   📌 {result['wmi_veto_validator_v103']['reason']}")
+        
+        # ===== V104: EXECUTION LAYER STATUS =====
+        if result.get('no_agg_override_v104', {}).get('active'):
+            print(f"\n💀 NO_PLAYER_MARKET: ACTIVE - {result['no_agg_override_v104']['reason']}")
+        
+        if result.get('execution_void_v104', {}).get('active'):
+            void = result['execution_void_v104']
+            void_icon = "🚀" if void.get('void_direction') == 'UP' else "📉"
+            print(f"{void_icon} EXECUTION_VOID: {void['reason']}")
+        
+        if result.get('path_resistance_v104', {}).get('active'):
+            path = result['path_resistance_v104']
+            print(f"🛣️ PATH_RESISTANCE: {path['reason']}")
+        
+        if result.get('micro_break_v104', {}).get('active'):
+            micro = result['micro_break_v104']
+            print(f"🔨 MICRO_BREAK: {micro['reason']}")
+        
+        if result.get('time_lag_v104', {}):
+            time_lag = result['time_lag_v104']
+            if not time_lag.get('ready', True):
+                print(f"⏳ TIME_LAG: {time_lag.get('reason', 'Waiting...')}")
 
         # DECISION
         print(f"\n{'='*40}")
@@ -21437,6 +21842,13 @@ class BinanceAnalyzerV87:
         self.oi_price_divergence = OIPriceDivergenceDetectorV103()      # V103 baru! ⭐
         self.long_liq_hunt = LongLiqHuntPriorityV103()                  # V103 baru! ⭐
         self.oversold_downtrend = OversoldInDowntrendFilterV103()       # V103 baru! ⭐
+        
+        # ===== V104: EXECUTION LAYER MODULES =====
+        self.execution_void = ExecutionVoidDetectorV104()          # V104 baru! 🔥
+        self.no_agg_override = NoAggressionOverrideV104()         # V104 baru! 🔥
+        self.path_resistance = PathResistanceModelV104()          # V104 baru! 🔥
+        self.micro_break = MicrostructureBreakDetectorV104()      # V104 baru! 🔥
+        self.time_lag = TimeLagEngineV104()                       # V104 baru! 🔥
         
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
@@ -23356,6 +23768,59 @@ class BinanceAnalyzerV87:
             scoring_data['oi_price_div_v103'] = oi_price_div_result
             scoring_data['long_liq_hunt_v103'] = long_liq_hunt_result
             scoring_data['oversold_downtrend_v103'] = oversold_downtrend_result
+            
+            # ===== V104: EXECUTION LAYER DETECTION =====
+            # 1. No Aggression Override (PALING PENTING!)
+            no_agg_result = self.no_agg_override.detect(
+                agg=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                price_change=change_5m
+            )
+            
+            # 2. Execution Void Detector
+            void_result = self.execution_void.detect(
+                flow=trades.get('ratio', 1.0),
+                agg=trades.get('aggressive_ratio', 1.0),
+                cascade_up=cascade_result.get('up_time', 999) if 'cascade_result' in locals() else 999,
+                cascade_down=cascade_result.get('down_time', 999) if 'cascade_result' in locals() else 999
+            )
+            
+            # 3. Path Resistance Model
+            path_result = self.path_resistance.calculate(
+                short_liq_size=liq.get('short_vol', 1.0),
+                long_liq_size=liq.get('long_vol', 1.0),
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999),
+                flow=trades.get('ratio', 1.0),
+                agg=trades.get('aggressive_ratio', 1.0)
+            )
+            
+            # 4. Microstructure Break Detector
+            micro_result = self.micro_break.detect(
+                current_price=price,
+                price_history=list(self.state_mgr.price_history),
+                volume_ratio=volume_ratio,
+                sell_pressure=1.0 / max(trades.get('ratio', 1.0), 0.01)  # Inverse of flow
+            )
+            
+            # 5. Time Lag Engine - Buat signal key unik
+            signal_key = f"{self.symbol}_{int(time.time() / 60)}"  # Per menit
+            time_lag_result = self.time_lag.check_signal(
+                signal_key=signal_key,
+                current_time=time.time(),
+                current_flow=trades.get('ratio', 1.0),
+                current_agg=trades.get('aggressive_ratio', 1.0),
+                prev_flow=self.state_mgr.flow_history[-2] if len(self.state_mgr.flow_history) >= 2 else None,
+                prev_agg=self.state_mgr.aggressive_history[-2] if len(self.state_mgr.aggressive_history) >= 2 else None
+            )
+            
+            # Tambahkan ke scoring_data
+            scoring_data['no_agg_override_v104'] = no_agg_result
+            scoring_data['execution_void_v104'] = void_result
+            scoring_data['path_resistance_v104'] = path_result
+            scoring_data['micro_break_v104'] = micro_result
+            scoring_data['time_lag_v104'] = time_lag_result
+            scoring_data['signal_key'] = signal_key
             
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
