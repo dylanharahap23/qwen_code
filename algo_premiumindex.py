@@ -666,6 +666,32 @@ LDR_LONG_DIST_CLOSE_MAX = 2.0                    # Long liq < 2% = very close
 LDR_SHORT_DIST_FAR_MIN = 10.0                    # Short liq > 10% = very far
 LDR_IMBALANCE_MIN = 50.0                         # Imbalance > 50x untuk konfirmasi
 
+# ================= V103: WMI ABSOLUTE PRIORITY CONFIG =================
+WMI_ABSOLUTE_THRESHOLD = 95.0           # |WMI| > 95 = Absolute Priority
+WMI_ABSOLUTE_PRIORITY = -10              # Priority tertinggi
+
+# ================= V103: OI EXPLOSION TRAP CONFIG =================
+OI_EXPLOSION_THRESHOLD = 20.0            # OI > 20% = Explosion
+OI_EXPLOSION_PRICE_MAX = 1.0              # Price change < 1% untuk validasi
+OI_EXPLOSION_PRIORITY = -9                # Priority -9
+
+# ================= V103: OI-PRICE DIVERGENCE CONFIG =================
+OIP_DIVERGENCE_OI_MIN = 10.0              # OI > 10%
+OIP_DIVERGENCE_PRICE_MAX = 0.5             # Price change < 0.5%
+OIP_DIVERGENCE_PRIORITY = -8               # Priority -8
+
+# ================= V103: LONG LIQ HUNT CONFIG =================
+LONG_LIQ_HUNT_WMI_MIN = -90                # WMI < -90
+LONG_LIQ_HUNT_DIST_MAX = 2.0                # Long dist < 2%
+LONG_LIQ_HUNT_RATIO = 3.0                   # Long dist < Short dist / 3
+LONG_LIQ_HUNT_PRIORITY = -7                 # Priority -7
+
+# ================= V103: OVERSOLD DOWNTREND CONFIG =================
+OVERSOLD_RSI_MAX = 30                        # RSI < 30
+OVERSOLD_24H_CHANGE_MIN = -10.0               # 24h change < -10%
+OVERSOLD_WMI_MIN = -90                        # WMI < -90 untuk konfirmasi bearish
+OVERSOLD_DOWNTREND_PRIORITY = -6              # Priority -6
+
 
 # ================= V100-CHINA-ALGO: CHINA ALGO TRADING LOGIC =================
 class ChinaAlgoTradingLogicV100:
@@ -9047,6 +9073,229 @@ class LiquidationDistanceRatioV102:
         return {"bias": "NEUTRAL", "priority_level": 99}
 
 
+# ================= V103: WMI ABSOLUTE PRIORITY LOCK =================
+class WMIAbsolutePriorityLockV103:
+    """
+    🔥 V103: WMI ABSOLUTE PRIORITY LOCK - TERTINGGI!
+    
+    Jika |WMI| > 95, TIDAK ADA MODULE LAIN YANG BOLEH OVERRIDE!
+    WMI adalah arah utama market maker.
+    
+    Kasus BDXNUSDT:
+    - WMI: -99.6x (HARUS DOMINAN!)
+    - EIO coba override dengan imbalance 60x → ❌ SALAH!
+    """
+    
+    @staticmethod
+    def detect(wmi_ratio: float) -> Dict:
+        """
+        Deteksi apakah WMI dalam kondisi absolut lock
+        """
+        if abs(wmi_ratio) > WMI_ABSOLUTE_THRESHOLD:
+            # Tentukan bias berdasarkan arah WMI
+            bias = "SHORT" if wmi_ratio < 0 else "LONG"
+            direction = "BEARISH" if wmi_ratio < 0 else "BULLISH"
+            
+            return {
+                "active": True,
+                "bias": bias,
+                "priority": WMI_ABSOLUTE_PRIORITY,
+                "reason": f"WMI_ABSOLUTE_LOCK: |WMI| {abs(wmi_ratio):.1f}x > {WMI_ABSOLUTE_THRESHOLD}. "
+                         f"TIDAK BISA DI-OVERRIDE MODULE APAPUN! Arah {direction} WAJIB DIUTAMAKAN!",
+                "override_all": True,
+                "confidence": "ABSOLUTE"
+            }
+        
+        return {
+            "active": False,
+            "bias": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V103: OI EXPLOSION TRAP DETECTOR =================
+class OIExplosionTrapDetectorV103:
+    """
+    🔥 V103: OI EXPLOSION TRAP DETECTOR
+    
+    OI normal build = 1-5%. Jika OI > 20%, itu TIDAK NORMAL!
+    Apalagi jika harga tidak ikut naik signifikan.
+    
+    Kasus BDXNUSDT:
+    - OI: +30.49% (EXPLOSION!)
+    - Price: -0.36% (TIDAK IKUT NAIK!)
+    - Interpretasi: INI TRAP! Whale manipulasi OI.
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, price_change: float, wmi_ratio: float) -> Dict:
+        """
+        Deteksi OI explosion yang mencurigakan
+        """
+        if oi_delta > OI_EXPLOSION_THRESHOLD:
+            # Jika harga tidak ikut naik signifikan
+            if price_change < OI_EXPLOSION_PRICE_MAX:
+                # Tentukan bias berdasarkan WMI (jika ada) atau default
+                bias = "SHORT" if wmi_ratio < 0 else "LONG"
+                
+                return {
+                    "active": True,
+                    "bias": bias,
+                    "priority": OI_EXPLOSION_PRIORITY,
+                    "reason": f"OI_EXPLOSION_TRAP: OI +{oi_delta:.1f}% (MELEDAK!) "
+                             f"tapi Price {price_change:+.2f}% (TIDAK KONFIRM). "
+                             f"Ini MANIPULASI WHALE! BUKAN FUEL SQUEEZE!",
+                    "override_modules": ["FID", "PBV", "EIO"],
+                    "confidence": "ABSOLUTE"
+                }
+        
+        return {
+            "active": False,
+            "bias": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V103: OI-PRICE DIVERGENCE DETECTOR =================
+class OIPriceDivergenceDetectorV103:
+    """
+    🔥 V103: OI-PRICE DIVERGENCE DETECTOR
+    
+    Pattern klasik "Smart Money Distribution":
+    - OI naik besar (>10%)
+    - Price stagnan atau turun (<0.5%)
+    - Whale build posisi melawan retail via limit orders
+    
+    Kasus BDXNUSDT:
+    - OI: +30.49% (MELEDAK!)
+    - Price: -0.36% (STAGNAN!)
+    - Interpretasi: Whale BUILD SHORTS via LIMIT ORDERS!
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, price_change: float, wmi_ratio: float) -> Dict:
+        """
+        Deteksi divergensi antara OI dan price
+        """
+        if oi_delta > OIP_DIVERGENCE_OI_MIN and price_change < OIP_DIVERGENCE_PRICE_MAX:
+            # Tentukan bias berdasarkan WMI
+            bias = "SHORT" if wmi_ratio < 0 else "LONG"
+            direction = "SHORT" if wmi_ratio < 0 else "LONG"
+            
+            return {
+                "active": True,
+                "bias": bias,
+                "priority": OIP_DIVERGENCE_PRIORITY,
+                "reason": f"OI_PRICE_DIVERGENCE: OI +{oi_delta:.1f}% (MELEDAK!) "
+                         f"tapi Price {price_change:+.2f}% (STAGNAN!). "
+                         f"Whale sedang BUILD POSISI {direction} via LIMIT ORDERS! "
+                         f"Ini DISTRIBUSI, BUKAN AKUMULASI!",
+                "override_modules": ["PBV", "FID", "EIO"],
+                "confidence": "ABSOLUTE"
+            }
+        
+        return {
+            "active": False,
+            "bias": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V103: LONG LIQ HUNT PRIORITY =================
+class LongLiqHuntPriorityV103:
+    """
+    🔥 V103: LONG LIQ HUNT PRIORITY
+    
+    Dengan WMI -99.6x, Long Liq di -1.3% adalah TARGET UTAMA!
+    MM akan hunt long liq dulu sebelum squeeze.
+    
+    Rule:
+    - WMI < -90 (Long pool besar di bawah)
+    - Long dist < 2% (dekat)
+    - Long dist jauh lebih dekat dari short dist (ratio > 3x)
+    """
+    
+    @staticmethod
+    def detect(wmi_ratio: float, long_dist: float, short_dist: float) -> Dict:
+        """
+        Deteksi apakah long liq adalah target hunt utama
+        """
+        if wmi_ratio < LONG_LIQ_HUNT_WMI_MIN:
+            if abs(long_dist) < LONG_LIQ_HUNT_DIST_MAX:
+                # Cek apakah long jauh lebih dekat dari short
+                if abs(long_dist) < abs(short_dist) / LONG_LIQ_HUNT_RATIO:
+                    return {
+                        "active": True,
+                        "bias": "SHORT",
+                        "priority": LONG_LIQ_HUNT_PRIORITY,
+                        "reason": f"LONG_LIQ_HUNT_PRIORITY: WMI {wmi_ratio:.1f}x (LONG POOL BESAR!) + "
+                                 f"Long Liq {abs(long_dist):.2f}% (SANGAT DEKAT!) + "
+                                 f"Short Liq {short_dist:.2f}% (JAUH). "
+                                 f"MM akan HUNT LONG LIQ DULU sebelum squeeze!",
+                        "override_modules": ["EIO", "SAT", "LPC"],
+                        "confidence": "ABSOLUTE"
+                    }
+        
+        return {
+            "active": False,
+            "bias": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V103: OVERSOLD IN DOWNTREND FILTER =================
+class OversoldInDowntrendFilterV103:
+    """
+    🔥 V103: OVERSOLD IN DOWNTREND FILTER
+    
+    RSI oversold di downtrend kuat = BISA TETAP OVERSOLD!
+    Jangan langsung LONG tanpa konfirmasi trend.
+    
+    Kasus BDXNUSDT:
+    - RSI: 26.9 (oversold)
+    - Price 24h: -10%+ (downtrend kuat)
+    - WMI: -99.6x (confirm bearish)
+    - Interpretasi: JANGAN LONG! Oversold bisa tetap oversold!
+    """
+    
+    @staticmethod
+    def detect(rsi: float, price_change_24h: float, wmi_ratio: float) -> Dict:
+        """
+        Deteksi oversold dalam downtrend kuat
+        """
+        if rsi < OVERSOLD_RSI_MAX and price_change_24h < OVERSOLD_24H_CHANGE_MIN:
+            # Jika WMI juga bearish, confirmasi kuat
+            if wmi_ratio < OVERSOLD_WMI_MIN:
+                return {
+                    "active": True,
+                    "bias": "SHORT",
+                    "priority": OVERSOLD_DOWNTREND_PRIORITY,
+                    "reason": f"OVERSOLD_DOWNTREND: RSI {rsi:.1f} oversold TAPI "
+                             f"Price 24h {price_change_24h:.1f}% (DOWNTREND KUAT!) + "
+                             f"WMI {wmi_ratio:.1f}x (BEARISH!). "
+                             f"Oversold bisa TETAP OVERSOLD di downtrend! JANGAN LONG!",
+                    "override_modules": ["OTF", "FID", "ORO"],
+                    "confidence": "ABSOLUTE"
+                }
+            
+            # Jika WMI tidak bearish, tetap warning
+            return {
+                "active": True,
+                "bias": "NEUTRAL",
+                "priority": OVERSOLD_DOWNTREND_PRIORITY + 1,
+                "reason": f"OVERSOLD_WARNING: RSI {rsi:.1f} oversold + "
+                         f"Price 24h {price_change_24h:.1f}% (downtrend). "
+                         f"Hati-hati! Oversold bisa berlanjut!",
+                "confidence": "HIGH"
+            }
+        
+        return {
+            "active": False,
+            "bias": "NEUTRAL",
+            "priority": 99
+        }
+
+
 # ================= V101-FINAL: CONFLICT RESOLVER FINAL VERSION (UPDATED) =================
 class ConflictResolverV101_FINAL:
     """
@@ -9705,6 +9954,66 @@ class ConflictResolverV102_FINAL_ENHANCED:
             if 'bias' not in res:
                 res['bias'] = default_bias
             return res
+        
+        # ========== PRIORITY -10: WMI ABSOLUTE LOCK (TERTINGGI!) ==========
+        wmi_absolute = safe_module_result('wmi_absolute_v103')
+        if wmi_absolute.get('active', False):
+            return {
+                "final_bias": wmi_absolute['bias'],
+                "confidence": wmi_absolute.get('confidence', 'ABSOLUTE'),
+                "reason": wmi_absolute.get('reason', ''),
+                "phase": "WMI_ABSOLUTE_LOCK",
+                "priority_level": -10,
+                "override_all": True
+            }
+        
+        # ========== PRIORITY -9: OI EXPLOSION TRAP ==========
+        oi_explosion = safe_module_result('oi_explosion_v103')
+        if oi_explosion.get('active', False):
+            return {
+                "final_bias": oi_explosion['bias'],
+                "confidence": oi_explosion.get('confidence', 'ABSOLUTE'),
+                "reason": oi_explosion.get('reason', ''),
+                "phase": "OI_EXPLOSION_TRAP",
+                "priority_level": -9,
+                "override_modules": oi_explosion.get('override_modules', [])
+            }
+        
+        # ========== PRIORITY -8: OI-PRICE DIVERGENCE ==========
+        oi_price_div = safe_module_result('oi_price_div_v103')
+        if oi_price_div.get('active', False):
+            return {
+                "final_bias": oi_price_div['bias'],
+                "confidence": oi_price_div.get('confidence', 'ABSOLUTE'),
+                "reason": oi_price_div.get('reason', ''),
+                "phase": "OI_PRICE_DIVERGENCE",
+                "priority_level": -8,
+                "override_modules": oi_price_div.get('override_modules', [])
+            }
+        
+        # ========== PRIORITY -7: LONG LIQ HUNT ==========
+        long_liq_hunt = safe_module_result('long_liq_hunt_v103')
+        if long_liq_hunt.get('active', False):
+            return {
+                "final_bias": long_liq_hunt['bias'],
+                "confidence": long_liq_hunt.get('confidence', 'ABSOLUTE'),
+                "reason": long_liq_hunt.get('reason', ''),
+                "phase": "LONG_LIQ_HUNT",
+                "priority_level": -7,
+                "override_modules": long_liq_hunt.get('override_modules', [])
+            }
+        
+        # ========== PRIORITY -6: OVERSOLD IN DOWNTREND ==========
+        oversold_dt = safe_module_result('oversold_downtrend_v103')
+        if oversold_dt.get('active', False):
+            return {
+                "final_bias": oversold_dt['bias'],
+                "confidence": oversold_dt.get('confidence', 'ABSOLUTE'),
+                "reason": oversold_dt.get('reason', ''),
+                "phase": "OVERSOLD_DOWNTREND",
+                "priority_level": -6,
+                "override_modules": oversold_dt.get('override_modules', [])
+            }
         
         # ========== PRIORITY -2: IRUSDT PATCH (TERTINGGI!) ==========
         
@@ -20994,6 +21303,13 @@ class BinanceAnalyzerV87:
         self.sat_priority_v102 = SATModulePriorityV102()            # V102-SAT
         self.ldr_v102 = LiquidationDistanceRatioV102()              # V102-LDR
         
+        # ===== V103: NEW MODULES - ABSOLUTE PRIORITY LOCKS =====
+        self.wmi_absolute_lock = WMIAbsolutePriorityLockV103()          # V103 baru! ⭐ TERTINGGI!
+        self.oi_explosion_trap = OIExplosionTrapDetectorV103()          # V103 baru! ⭐
+        self.oi_price_divergence = OIPriceDivergenceDetectorV103()      # V103 baru! ⭐
+        self.long_liq_hunt = LongLiqHuntPriorityV103()                  # V103 baru! ⭐
+        self.oversold_downtrend = OversoldInDowntrendFilterV103()       # V103 baru! ⭐
+        
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
         self.sce_v99 = ShortCrowdExhaustionValidatorV99()            # V99-SCE (Short Crowd Exhaustion) ⭐ NEW!
@@ -22850,6 +23166,45 @@ class BinanceAnalyzerV87:
             scoring_data['sat_priority_v102'] = sat_priority_result
             scoring_data['ldr_v102'] = ldr_result
             
+            # ===== V103: NEW MODULES - ABSOLUTE PRIORITY LOCKS =====
+            # V103-WMI: WMI Absolute Priority Lock (TERTINGGI!)
+            wmi_absolute_result = self.wmi_absolute_lock.detect(wmi_ratio)
+            
+            # V103-OI-EXPLOSION: OI Explosion Trap Detector
+            oi_explosion_result = self.oi_explosion_trap.detect(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                wmi_ratio=wmi_ratio
+            )
+            
+            # V103-OI-PRICE-DIV: OI-Price Divergence Detector
+            oi_price_div_result = self.oi_price_divergence.detect(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                wmi_ratio=wmi_ratio
+            )
+            
+            # V103-LONG-LIQ-HUNT: Long Liq Hunt Priority
+            long_liq_hunt_result = self.long_liq_hunt.detect(
+                wmi_ratio=wmi_ratio,
+                long_dist=liq.get('long_dist', 999),
+                short_dist=liq.get('short_dist', 999)
+            )
+            
+            # V103-OVERSOLD-DT: Oversold In Downtrend Filter
+            oversold_downtrend_result = self.oversold_downtrend.detect(
+                rsi=rsi6,
+                price_change_24h=change_24h,
+                wmi_ratio=wmi_ratio
+            )
+            
+            # Add V103 results to scoring_data
+            scoring_data['wmi_absolute_v103'] = wmi_absolute_result
+            scoring_data['oi_explosion_v103'] = oi_explosion_result
+            scoring_data['oi_price_div_v103'] = oi_price_div_result
+            scoring_data['long_liq_hunt_v103'] = long_liq_hunt_result
+            scoring_data['oversold_downtrend_v103'] = oversold_downtrend_result
+            
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
@@ -23955,6 +24310,51 @@ class BinanceAnalyzerV87:
                 "phase": ldr_result.get('phase', 'NONE'),
                 "priority_level": ldr_result.get('priority_level', 99),
                 "override_modules": ldr_result.get('override_modules', [])
+            }
+            
+            # ===== HASIL V103 MODULES - ABSOLUTE PRIORITY LOCKS =====
+            result["wmi_absolute_v103"] = {
+                "active": wmi_absolute_result.get('active', False),
+                "bias": wmi_absolute_result.get('bias', 'NEUTRAL'),
+                "confidence": wmi_absolute_result.get('confidence', 'LOW'),
+                "reason": wmi_absolute_result.get('reason', ''),
+                "priority": wmi_absolute_result.get('priority', 99)
+            }
+            
+            result["oi_explosion_v103"] = {
+                "active": oi_explosion_result.get('active', False),
+                "bias": oi_explosion_result.get('bias', 'NEUTRAL'),
+                "confidence": oi_explosion_result.get('confidence', 'LOW'),
+                "reason": oi_explosion_result.get('reason', ''),
+                "priority": oi_explosion_result.get('priority', 99),
+                "override_modules": oi_explosion_result.get('override_modules', [])
+            }
+            
+            result["oi_price_div_v103"] = {
+                "active": oi_price_div_result.get('active', False),
+                "bias": oi_price_div_result.get('bias', 'NEUTRAL'),
+                "confidence": oi_price_div_result.get('confidence', 'LOW'),
+                "reason": oi_price_div_result.get('reason', ''),
+                "priority": oi_price_div_result.get('priority', 99),
+                "override_modules": oi_price_div_result.get('override_modules', [])
+            }
+            
+            result["long_liq_hunt_v103"] = {
+                "active": long_liq_hunt_result.get('active', False),
+                "bias": long_liq_hunt_result.get('bias', 'NEUTRAL'),
+                "confidence": long_liq_hunt_result.get('confidence', 'LOW'),
+                "reason": long_liq_hunt_result.get('reason', ''),
+                "priority": long_liq_hunt_result.get('priority', 99),
+                "override_modules": long_liq_hunt_result.get('override_modules', [])
+            }
+            
+            result["oversold_downtrend_v103"] = {
+                "active": oversold_downtrend_result.get('active', False),
+                "bias": oversold_downtrend_result.get('bias', 'NEUTRAL'),
+                "confidence": oversold_downtrend_result.get('confidence', 'LOW'),
+                "reason": oversold_downtrend_result.get('reason', ''),
+                "priority": oversold_downtrend_result.get('priority', 99),
+                "override_modules": oversold_downtrend_result.get('override_modules', [])
             }
             
             result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
