@@ -5991,6 +5991,95 @@ class SilentDistributionDetectorV97:
         return {"active": False, "bias": "NEUTRAL", "reason": ""}
 
 
+# ================= V100-CPO: CASCADE PRIORITY OVERRIDE =================
+class CascadePriorityOverrideV100:
+    """
+    🔥 V100-CPO: Cascade Priority Override - ANTI-BDXN TRAP
+    Jika OI < -1% AND Cascade bilang SHORT → JANGAN override dengan Energy!
+    
+    Kasus BDXNUSDT:
+    - OI: -2.59% (< -1%)
+    - CASCADE: SHORT (0.06 vs 2.21)
+    - ENERGY: LONG (3.53 vs 18.67)
+    - Bot pilih ENERGY ❌ (salah!)
+    - Harusnya pilih CASCADE! ✅
+    """
+    
+    @staticmethod
+    def check(oi_delta: float, cascade_bias: str, energy_bias: str, rsi: float) -> Dict:
+        """
+        Override energy dengan cascade jika OI drop + RSI tinggi
+        """
+        if oi_delta < CPO_OI_DROP_MIN:                         # OI drop > 1%
+            if cascade_bias == "SHORT":                        # Cascade bilang SHORT
+                if rsi > CPO_RSI_OVERBOUGHT_MIN:               # RSI > 70
+                    if energy_bias == "LONG":                  # Energy bilang LONG (conflict)
+                        return {
+                            "override_energy": True,
+                            "bias": "SHORT",
+                            "confidence": "ABSOLUTE",
+                            "priority_level": 0,
+                            "reason": f"CPO_CASCADE_PRIORITY: OI {oi_delta:.2f}% (DROP!) + "
+                                     f"Cascade SHORT + RSI {rsi:.1f} (OVERBOUGHT!) = "
+                                     f"DUMP IMMINENT! Abaikan Energy {energy_bias}!",
+                            "phase": "CASCADE_PRIORITY_ACTIVE"
+                        }
+        
+        return {"override_energy": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V100-LRS: LONG REWARD SCORE =================
+class LongRewardScoreV100:
+    """
+    🔥 V100-LRS: Long Reward Score - ANTI-BDXN TRAP
+    Hitung apakah Long Liq worth it untuk MM
+    Formula: reward = long_liq_distance * long_leverage_estimate
+    Jika reward > 10% = MM akan target long liq meski jauh!
+    
+    Kasus BDXNUSDT:
+    - Long Liq: -12.14% (JUICY!)
+    - Short Liq: +2.17% (SMALL)
+    - OI: -2.59% (MASS EXIT!)
+    """
+    
+    @staticmethod
+    def calculate(long_dist: float, short_dist: float, oi_delta: float) -> Dict:
+        """
+        Hitung apakah long liq layak ditarget MM
+        """
+        long_reward = abs(long_dist)                           # 12.14%
+        short_reward = abs(short_dist)                         # 2.17%
+        
+        if long_reward > LRS_LONG_REWARD_THRESHOLD:            # Long liq > 8%
+            if short_reward < LRS_SHORT_REWARD_THRESHOLD:      # Short liq < 3%
+                if oi_delta < LRS_OI_DROP_MIN:                 # OI drop > 1%
+                    return {
+                        "target_long_liq": True,
+                        "bias": "SHORT",
+                        "confidence": "HIGH",
+                        "priority_level": 0,
+                        "reason": f"LRS_LONG_REWARD: Long liq {long_reward:.1f}% (JUICY!) + "
+                                 f"Short liq {short_reward:.1f}% (SMALL) + "
+                                 f"OI {oi_delta:.2f}% (EXIT!) = "
+                                 f"MM akan target LONG LIQ! DUMP!",
+                        "phase": "LONG_REWARD_TARGET"
+                    }
+        
+        # Long reward besar tapi OI belum drop (warning)
+        if long_reward > LRS_LONG_REWARD_THRESHOLD:
+            return {
+                "target_long_liq": False,
+                "warning": True,
+                "bias": "NEUTRAL",
+                "confidence": "MEDIUM",
+                "reason": f"LRS_WARNING: Long liq {long_reward:.1f}% juicy, tapi OI {oi_delta:.2f}%. "
+                         f"Monitor untuk potensi dump.",
+                "phase": "POTENTIAL_TARGET"
+            }
+        
+        return {"target_long_liq": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
 # ================= V102-EIO: EXTREME IMBALANCE OVERRIDE =================
 class ExtremeImbalanceOverrideV102:
     """
