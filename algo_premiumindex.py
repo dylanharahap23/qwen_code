@@ -22558,25 +22558,26 @@ class BinanceAnalyzerV87:
             # ===== NEW ANTI-XANUSDT MODULES =====
             # V100-VOD: Volume-OI Divergence
             vod_result = self.vod_v100.detect(
-                rsi=rsi6,
-                oi_delta=oi_delta_5m,
-                flow=trades.get('ratio', 1.0),
-                agg=trades.get('aggressive_ratio', 1.0)
+                rsi6=rsi6,
+                oi_delta_5m=oi_delta_5m,
+                trade_flow=trades.get('ratio', 1.0),
+                obv_value=current_obv,
+                price_change=change_5m,
+                agg_ratio=trades.get('aggressive_ratio', 1.0)
             )
             
             # V99-OAI: OI Acceleration Phase
-            oai_result = self.oai_v99.detect(
+            oai_result = self.oai_v99.analyze(
                 oi_delta=oi_delta_5m,
                 price_change=change_5m,
-                rsi=rsi6
+                flow=trades.get('ratio', 1.0)
             )
             
             # V97-SDD: Silent Distribution Detector
-            sdd_result = self.sdd_v97.detect(
+            sdd_result = self.sdd_v97.analyze(
                 rsi=rsi6,
                 oi_delta=oi_delta_5m,
-                flow=trades.get('ratio', 1.0),
-                agg=trades.get('aggressive_ratio', 1.0)
+                flow=trades.get('ratio', 1.0)
             )
             
             # V100-CPO: Cascade Priority Override
