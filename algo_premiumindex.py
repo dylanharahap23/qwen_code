@@ -590,6 +590,31 @@ PFR_FLOW_MIN = 1.0                                # Flow > 1.0
 CCR_RSI_OVERSOLD_MAX = 30.0                      # RSI < 30 = Prefer LONG
 CCR_RSI_OVERBOUGHT_MIN = 70.0                     # RSI > 70 = Prefer SHORT
 
+# ================= V102-ENHANCED: ANTI-VANRY & ANTI-SIREN CONFIG =================
+
+# V102-AFDE: AGGRESSION-FLOW DIVERGENCE ENHANCED
+AFDE_AGG_HIGH_MIN = 3.0              # Agg > 3.0 = suspicious
+AFDE_FLOW_LOW_MAX = 1.0              # Flow < 1.0 = low volume
+AFDE_OI_DROP_MIN = -0.5               # OI drop > -0.5%
+AFDE_PRICE_DROP_MAX = 0                # Price change < 0 (negative)
+
+# V102-SCXE: SHORT CROWD EXTREMIZATION ENHANCED
+SCXE_IMBALANCE_CATASTROPHIC = 1000.0   # Imbalance > 1000x = catastrophic
+SCXE_IMBALANCE_EXTREME = 500.0         # Imbalance > 500x = extreme
+SCXE_RSI_OVERSOLD_EXTREME = 10.0       # RSI < 10 = extreme oversold
+SCXE_LONG_DIST_CLOSE = 0.5             # Long liq < 0.5% = very close
+
+# V102-OIPM: OI-PRICE CONTEXT MATRIX
+OIPM_OI_DROP_THRESHOLD = -1.0           # OI drop > 1%
+OIPM_OI_RISE_THRESHOLD = 1.0            # OI rise > 1%
+OIPM_PRICE_DROP_THRESHOLD = -1.0        # Price drop > 1%
+OIPM_PRICE_RISE_THRESHOLD = 1.0         # Price rise > 1%
+OIPM_AGG_HIGH_MIN = 2.0                 # Agg > 2.0 = high aggression
+OIPM_AGG_LOW_MAX = 0.2                   # Agg < 0.2 = low aggression
+OIPM_FLOW_HIGH_MIN = 1.5                 # Flow > 1.5 = high volume
+OIPM_FLOW_LOW_MAX = 1.0                  # Flow < 1.0 = low volume
+OIPM_RSI_OVERSOLD_EXTREME = 10.0         # RSI < 10 = extreme oversold
+
 
 # ================= V100-CHINA-ALGO: CHINA ALGO TRADING LOGIC =================
 class ChinaAlgoTradingLogicV100:
@@ -8521,6 +8546,197 @@ class CascadeConflictResolverV102:
         return {"bias": "NEUTRAL"}
 
 
+# ================= V102-AFDE: AGGRESSION-FLOW DIVERGENCE ENHANCED =================
+class AggressionFlowDivergenceEnhancedV102:
+    """
+    🔥 V102-AFDE: AGGRESSION-FLOW DIVERGENCE ENHANCED - ANTI-VANRY TRAP
+    
+    Kasus VANRYUSDT:
+    - Agg: 4.0x (HIGH!)
+    - Flow: 0.67x (LOW!)
+    - OI: -1.41% (DROP!)
+    - Price: -1.77% (DROP!)
+    - Bot baca: Agg tinggi = Bullish → LONG ❌
+    - Realita: FAKE MOMENTUM! Whale distribusi via limit orders!
+    """
+    
+    @staticmethod
+    def detect(agg_ratio: float, flow: float, oi_delta: float, price_change: float) -> Dict:
+        """
+        Deteksi fake momentum trap (VANRY pattern)
+        """
+        # FAKE MOMENTUM TRAP (VANRY Pattern)
+        if agg_ratio > AFDE_AGG_HIGH_MIN:                    # Agg > 3.0
+            if flow < AFDE_FLOW_LOW_MAX:                     # Flow < 1.0
+                if oi_delta < AFDE_OI_DROP_MIN:              # OI drop > -0.5%
+                    if price_change < AFDE_PRICE_DROP_MAX:   # Price drop (negative)
+                        return {
+                            "trap_type": "FAKE_AGGRESSION_DISTRIBUTION",
+                            "bias": "SHORT",
+                            "confidence": "ABSOLUTE",
+                            "priority_level": -2,  # TERTINGGI!
+                            "reason": f"AFDE_FAKE_MOMENTUM: Agg {agg_ratio:.1f}x (HIGH!) + "
+                                     f"Flow {flow:.2f}x (LOW!) + OI {oi_delta:.2f}% (DROP!) + "
+                                     f"Price {price_change:.2f}% (DROP!). "
+                                     f"Ini BUKAN momentum asli! Whale DISTRIBUSI via LIMIT ORDERS! "
+                                     f"DILARANG LONG! Ikuti arah SHORT!",
+                            "phase": "FAKE_MOMENTUM_TRAP"
+                        }
+        
+        # REAL ACCUMULATION (kebalikan)
+        if agg_ratio > OIPM_AGG_HIGH_MIN and flow > OIPM_FLOW_HIGH_MIN and oi_delta > OIPM_OI_RISE_THRESHOLD:
+            return {
+                "trap_type": "REAL_ACCUMULATION",
+                "bias": "LONG",
+                "confidence": "HIGH",
+                "priority_level": 0,
+                "reason": f"AFDE_REAL_ACCUMULATION: Agg {agg_ratio:.1f}x + Flow {flow:.2f}x + "
+                         f"OI {oi_delta:+.2f}% = Whale akumulasi asli!",
+                "phase": "REAL_ACCUMULATION"
+            }
+        
+        return {"trap_type": "NONE", "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V102-SCXE: SHORT CROWD EXTREMIZATION ENHANCED =================
+class ShortCrowdExtremizationEnhancedV102:
+    """
+    🔥 V102-SCXE: SHORT CROWD EXTREMIZATION ENHANCED - ANTI-SIREN TRAP
+    
+    Kasus SIRENUSDT:
+    - Imbalance: 4283.9x (CATASTROPHIC!)
+    - RSI: 5.0 (EXTREME OVERSOLD!)
+    - Long Liq: -0.20% (SANGAT DEKAT!)
+    - WMI: -100.0x (Long pool below)
+    - OI: -1.23% (DROP!)
+    - Bot baca: WMI negatif + Long liq dekat = SHORT ❌
+    - Realita: SHORT TRAP! 4283.9x shorts akan di-squeeze!
+    """
+    
+    @staticmethod
+    def detect(imbalance_ratio: float, rsi: float, long_dist: float, 
+               wmi: float, oi_delta: float) -> Dict:
+        """
+        Deteksi catastrophic short crowd + oversold = SPRING TRAP!
+        """
+        # CATASTROPHIC LEVEL (>1000x) - Override ALL
+        if imbalance_ratio > SCXE_IMBALANCE_CATASTROPHIC:  # >1000x
+            if rsi < SCXE_RSI_OVERSOLD_EXTREME:            # RSI < 10
+                if abs(long_dist) < SCXE_LONG_DIST_CLOSE:   # Long liq < 0.5%
+                    return {
+                        "trap_type": "LIQUIDITY_VACUUM_SPRING",
+                        "bias": "LONG",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -2,  # TERTINGGI!
+                        "reason": f"SCXE_CATASTROPHIC_SPRING: Imbalance {imbalance_ratio:.1f}x (CATASTROPHIC!) + "
+                                 f"RSI {rsi:.1f} (EXTREME OVERSOLD!) + Long Liq {long_dist:.2f}% (SANGAT DEKAT!). "
+                                 f"MM akan SQUEEZE untuk harvest {imbalance_ratio:.0f}x shorts! "
+                                 f"Override WMI {wmi:.1f}x dan OI {oi_delta:.2f}%!",
+                        "phase": "CATASTROPHIC_SPRING_TRAP",
+                        "override_modules": ["V101_FUEL_STARVATION", "LPC_PAYOUT", "ENERGY_PATH", "WMI_VETO"]
+                    }
+        
+        # EXTREME LEVEL (500-1000x) - High priority
+        elif imbalance_ratio > SCXE_IMBALANCE_EXTREME:      # >500x
+            if rsi < SCXE_RSI_OVERSOLD_EXTREME:            # RSI < 10
+                return {
+                    "trap_type": "EXTREME_SPRING",
+                    "bias": "LONG",
+                    "confidence": "SUPREME",
+                    "priority_level": -1,
+                    "reason": f"SCXE_EXTREME_SPRING: Imbalance {imbalance_ratio:.1f}x + RSI {rsi:.1f}. "
+                             f"SQUEEZE IMMINENT! JANGAN SHORT!",
+                    "phase": "EXTREME_SPRING_TRAP"
+                }
+        
+        return {"trap_type": "NONE", "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V102-OIPM: OI-PRICE CONTEXT MATRIX =================
+class OIPriceContextMatrixV102:
+    """
+    🔥 V102-OIPM: OI-PRICE CONTEXT MATRIX
+    
+    Matrix Interpretasi:
+    OI Δ  | Price Δ | Agg   | Flow  | RSI   | Interpretasi
+    ------|---------|-------|-------|-------|------------------
+    ↓     | ↓       | HIGH  | LOW   | Any   | DISTRIBUTION (SHORT) ← VANRY
+    ↓     | ↓       | LOW   | LOW   | < 10  | SHORT COVERING (LONG) ← SIREN
+    ↓     | ↑       | Any   | Any   | Any   | SHORT COVERING (LONG)
+    ↑     | ↓       | LOW   | HIGH  | Any   | ACCUMULATION (LONG)
+    ↑     | ↑       | Any   | Any   | Any   | LONG BUILDING (LONG)
+    """
+    
+    @staticmethod
+    def interpret(oi_delta: float, price_change: float, agg_ratio: float, 
+                  flow: float, rsi: float) -> Dict:
+        """
+        Interpretasi kombinasi OI + Price + Agg + Flow + RSI
+        """
+        
+        # CASE 1: DISTRIBUTION (VANRY Pattern) - OI ↓ + Price ↓ + Agg HIGH + Flow LOW
+        if oi_delta < OIPM_OI_DROP_THRESHOLD:  # OI drop > 1%
+            if price_change < OIPM_PRICE_DROP_THRESHOLD:  # Price drop > 1%
+                if agg_ratio > OIPM_AGG_HIGH_MIN:  # Agg > 2.0
+                    if flow < OIPM_FLOW_LOW_MAX:  # Flow < 1.0
+                        return {
+                            "phase": "DISTRIBUTION_PHASE",
+                            "bias": "SHORT",
+                            "confidence": "ABSOLUTE",
+                            "reason": f"OIPM_DISTRIBUTION: OI ↓{oi_delta:.2f}% + Price ↓{price_change:.2f}% + "
+                                     f"Agg {agg_ratio:.1f}x + Flow {flow:.2f}x = WHALE DISTRIBUTION! SHORT!",
+                            "priority_level": 0
+                        }
+        
+        # CASE 2: SHORT COVERING (SIREN Pattern) - OI ↓ + Price ↓ + Agg LOW + RSI < 10
+        if oi_delta < OIPM_OI_DROP_THRESHOLD:  # OI drop > 1%
+            if price_change < OIPM_PRICE_DROP_THRESHOLD:  # Price drop > 1%
+                if agg_ratio < OIPM_AGG_LOW_MAX:  # Agg < 0.2
+                    if rsi < OIPM_RSI_OVERSOLD_EXTREME:  # RSI < 10
+                        return {
+                            "phase": "SHORT_COVERING_PHASE",
+                            "bias": "LONG",
+                            "confidence": "SUPREME",
+                            "reason": f"OIPM_SHORT_COVERING: OI ↓{oi_delta:.2f}% + Price ↓{price_change:.2f}% + "
+                                     f"Agg {agg_ratio:.2f}x + RSI {rsi:.1f} = SHORT COVERING! LONG!",
+                            "priority_level": 0
+                        }
+        
+        # CASE 3: SHORT COVERING (umum) - OI ↓ + Price ↑
+        if oi_delta < OIPM_OI_DROP_THRESHOLD and price_change > OIPM_PRICE_RISE_THRESHOLD:
+            return {
+                "phase": "SHORT_COVERING_GENERAL",
+                "bias": "LONG",
+                "confidence": "HIGH",
+                "reason": f"OIPM_SHORT_COVERING: OI ↓{oi_delta:.2f}% + Price ↑{price_change:+.2f}% = SHORT COVERING!",
+                "priority_level": 0
+            }
+        
+        # CASE 4: ACCUMULATION - OI ↑ + Price ↓ + Flow HIGH
+        if oi_delta > OIPM_OI_RISE_THRESHOLD and price_change < OIPM_PRICE_DROP_THRESHOLD:
+            if flow > OIPM_FLOW_HIGH_MIN:
+                return {
+                    "phase": "ACCUMULATION_PHASE",
+                    "bias": "LONG",
+                    "confidence": "SUPREME",
+                    "reason": f"OIPM_ACCUMULATION: OI ↑{oi_delta:+.2f}% + Price ↓{price_change:.2f}% + "
+                             f"Flow {flow:.2f}x = WHALE ACCUMULATION! LONG!",
+                    "priority_level": 0
+                }
+        
+        # CASE 5: LONG BUILDING - OI ↑ + Price ↑
+        if oi_delta > OIPM_OI_RISE_THRESHOLD and price_change > OIPM_PRICE_RISE_THRESHOLD:
+            return {
+                "phase": "LONG_BUILDING",
+                "bias": "LONG",
+                "confidence": "HIGH",
+                "reason": f"OIPM_LONG_BUILDING: OI ↑{oi_delta:+.2f}% + Price ↑{price_change:+.2f}% = LONG BUILDING!",
+                "priority_level": 1
+            }
+        
+        return {"phase": "NORMAL", "bias": "NEUTRAL", "priority_level": 99}
+
+
 # ================= V101-FINAL: CONFLICT RESOLVER FINAL VERSION (UPDATED) =================
 class ConflictResolverV101_FINAL:
     """
@@ -9081,6 +9297,325 @@ class ConflictResolverV102_FINAL:
             }
         
         # ========== PRIORITY 3: WEAK ==========
+        
+        # 3a. WMI (jika > 80 tapi tidak ekstrim)
+        if abs(results.get('wmi_ratio', 0)) > 80:
+            return {
+                "final_bias": "LONG" if results.get('wmi_ratio', 0) > 0 else "SHORT",
+                "confidence": "MEDIUM",
+                "reason": f"V99_WMI: WMI {results.get('wmi_ratio', 0):.1f}x",
+                "phase": "WHALE_SIGNAL",
+                "priority_level": 3
+            }
+        
+        # Default
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected",
+            "phase": "NEUTRAL",
+            "priority_level": 3
+        }
+
+
+# ================= V102-FINAL-ENHANCED: CONFLICT RESOLVER DENGAN ANTI-VANRY & ANTI-SIREN =================
+class ConflictResolverV102_FINAL_ENHANCED:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V102-ENHANCED:
+    
+    PRIORITY -2 (ABSOLUTE OVERRIDE - VANRY & SIREN FIX):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -2a. V102-SCXE: Short Crowd Extremization Enhanced     │ ← SIREN FIX!
+    │ -2b. V102-AFDE: Aggression-Flow Divergence Enhanced    │ ← VANRY FIX!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -1 (ABSOLUTE VETO - EXISTING V101):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -1a. V101-OI_FUEL_VS_LIQ_GRAVITY (Bensin vs Jurang)    │
+    │ -1b. V101-FLUSH_SEQUENCE_VETO (Prioritas Flush)        │
+    │ -1c. V101-DEAD_AGG_MAGNET (Agg 0 + WMI Extrem)         │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 0 (CONTEXT MATRIX & V102 MODULES):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 0a. V102-OIPM: OI-Price Context Matrix                  │ ← NEW!
+    │ 0b. V102-CCR: Cascade Conflict Resolver                 │
+    │ 0c. V102-ORO: Oversold Reversal Override                │
+    │ 0d. V102-WNTF: WMI Negative Trap Filter                 │
+    │ 0e. V102-PFR: PBV Fuel Priority Rule                    │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 1 (V101 STRONG MODULES):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 1a. V101-WMI_DIRECTIONAL_LOCK                           │
+    │ 1b. V101-LMP: Liquidity Magnet Proximity                │
+    │ 1c. V101-ECS: Energy Cost Supremacy                     │
+    │ 1d. V101-AFD: Aggression-Flow Divergence                │
+    │ 1e. V101-DSS: Double Sweep Sequence                     │
+    │ 1f. V101-PSB: Pre-Sweep Build Phase                     │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 2 (LEGACY MODULES):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 2a. V100-LPC: Payout Ratio                              │
+    │ 2b. V87-LIM: Imbalance                                  │
+    │ 2c. V93-CASCADE: Cascade Time                           │
+    │ 2d. V94-EGR: Energy Gravity Rule                        │
+    │ 2e. V94-BPF: Bait Detection                             │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 3 (WEAK SIGNALS):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 3a. V99-WMI: Whale Migration Index (non-extreme)        │
+    │ 3b. V100-RSI: RSI Levels                                │
+    └─────────────────────────────────────────────────────────┘
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ========== PRIORITY -2: VANRY & SIREN FIX (TERTINGGI!) ==========
+        
+        # -2a. SCXE: Short Crowd Extremization Enhanced (SIREN FIX)
+        scxe_res = results.get('scxe_v102', {})
+        if scxe_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": scxe_res['bias'],
+                "confidence": scxe_res.get('confidence', 'ABSOLUTE'),
+                "reason": scxe_res.get('reason', ''),
+                "phase": scxe_res.get('phase', 'CATASTROPHIC_SPRING'),
+                "priority_level": -2
+            }
+        
+        # -2b. AFDE: Aggression-Flow Divergence Enhanced (VANRY FIX)
+        afde_res = results.get('afde_v102', {})
+        if afde_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": afde_res['bias'],
+                "confidence": afde_res.get('confidence', 'ABSOLUTE'),
+                "reason": afde_res.get('reason', ''),
+                "phase": afde_res.get('phase', 'FAKE_MOMENTUM_TRAP'),
+                "priority_level": -2
+            }
+        
+        # ========== PRIORITY -1: ABSOLUTE VETO (EXISTING V101) ==========
+        
+        # -1a. OI Fuel vs Liquidity Gravity
+        fuel_gravity = results.get('oi_fuel_v101', {})
+        if fuel_gravity.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": fuel_gravity['bias'],
+                "confidence": fuel_gravity.get('confidence', 'ABSOLUTE'),
+                "reason": fuel_gravity.get('reason', ''),
+                "phase": fuel_gravity.get('phase', 'FUEL_STARVATION'),
+                "priority_level": -1
+            }
+        
+        # -1b. Flush Sequence Veto
+        flush_veto = results.get('flush_veto_v101', {})
+        if flush_veto.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": flush_veto['bias'],
+                "confidence": flush_veto.get('confidence', 'ABSOLUTE'),
+                "reason": flush_veto.get('reason', ''),
+                "phase": "FLUSH_VETO",
+                "priority_level": -1
+            }
+        
+        # -1c. Dead Aggression Magnet
+        dead_magnet = results.get('dead_magnet_v101', {})
+        if dead_magnet.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": dead_magnet['bias'],
+                "confidence": dead_magnet.get('confidence', 'SUPREME'),
+                "reason": dead_magnet.get('reason', ''),
+                "phase": dead_magnet.get('phase', 'FREE_FALL'),
+                "priority_level": -1
+            }
+        
+        # ========== PRIORITY 0: CONTEXT MATRIX & V102 MODULES ==========
+        
+        # 0a. OIPM: OI-Price Context Matrix
+        oipm_res = results.get('oipm_v102', {})
+        if oipm_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": oipm_res['bias'],
+                "confidence": oipm_res.get('confidence', 'HIGH'),
+                "reason": oipm_res.get('reason', ''),
+                "phase": oipm_res.get('phase', 'CONTEXT_PHASE'),
+                "priority_level": 0
+            }
+        
+        # 0b. Cascade Conflict Resolver (CCR)
+        ccr_res = results.get('ccr_v102', {})
+        if ccr_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": ccr_res['bias'],
+                "confidence": ccr_res.get('confidence', 'SUPREME'),
+                "reason": ccr_res.get('reason', ''),
+                "phase": ccr_res.get('phase', 'RSI_RESOLVE'),
+                "priority_level": 0
+            }
+        
+        # 0c. Oversold Reversal Override (ORO)
+        oro_res = results.get('oro_v102', {})
+        if oro_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": oro_res['bias'],
+                "confidence": oro_res.get('confidence', 'SUPREME'),
+                "reason": oro_res.get('reason', ''),
+                "phase": oro_res.get('phase', 'OVERSOLD_REVERSAL'),
+                "priority_level": 0
+            }
+        
+        # 0d. WMI Negative Trap Filter (WNTF)
+        wntf_res = results.get('wntf_v102', {})
+        if wntf_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": wntf_res['bias'],
+                "confidence": wntf_res.get('confidence', 'ABSOLUTE'),
+                "reason": wntf_res.get('reason', ''),
+                "phase": wntf_res.get('phase', 'WMI_TRAP'),
+                "priority_level": 0
+            }
+        
+        # 0e. PBV Fuel Priority Rule (PFR)
+        pfr_res = results.get('pfr_v102', {})
+        if pfr_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": pfr_res['bias'],
+                "confidence": pfr_res.get('confidence', 'SUPREME'),
+                "reason": pfr_res.get('reason', ''),
+                "phase": pfr_res.get('phase', 'FUEL_PRIORITY'),
+                "priority_level": 0
+            }
+        
+        # ========== PRIORITY 1: V101 STRONG MODULES ==========
+        
+        # 1a. WMI Directional Lock
+        wmi_lock = results.get('wmi_lock_v101', {})
+        if wmi_lock.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": wmi_lock['bias'],
+                "confidence": wmi_lock.get('confidence', 'HIGH'),
+                "reason": wmi_lock.get('reason', ''),
+                "phase": wmi_lock.get('phase', 'WMI_LOCK'),
+                "priority_level": 1
+            }
+        
+        # 1b. Liquidity Magnet Proximity
+        lmp_res = results.get('lmp_v101', {})
+        if lmp_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": lmp_res['bias'],
+                "confidence": lmp_res.get('confidence', 'ABSOLUTE'),
+                "reason": lmp_res.get('reason', ''),
+                "phase": "LIQUIDITY_MAGNET_PROXIMITY",
+                "priority_level": 1
+            }
+        
+        # 1c. Energy Cost Supremacy
+        ecs_res = results.get('ecs_v101', {})
+        if ecs_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": ecs_res['bias'],
+                "confidence": ecs_res.get('confidence', 'ABSOLUTE'),
+                "reason": ecs_res.get('reason', ''),
+                "phase": "ENERGY_COST_SUPREMACY",
+                "priority_level": 1
+            }
+        
+        # 1d. Aggression-Flow Divergence (original)
+        afd_res = results.get('afd_v101', {})
+        if afd_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": afd_res['bias'],
+                "confidence": afd_res.get('confidence', 'SUPREME'),
+                "reason": afd_res.get('reason', ''),
+                "phase": afd_res.get('phase', 'STEALTH_PHASE'),
+                "priority_level": 1
+            }
+        
+        # 1e. Double Sweep Sequence
+        dss_res = results.get('dss_v101', {})
+        if dss_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": dss_res['bias'],
+                "confidence": dss_res.get('confidence', 'ABSOLUTE'),
+                "reason": dss_res.get('reason', ''),
+                "phase": "DOUBLE_SWEEP_SEQUENCE",
+                "priority_level": 1
+            }
+        
+        # 1f. Pre-Sweep Build Phase
+        psb_res = results.get('psb_v101', {})
+        if psb_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": psb_res['bias'],
+                "confidence": psb_res.get('confidence', 'HIGH'),
+                "reason": psb_res.get('reason', ''),
+                "phase": psb_res.get('phase', 'BUILD_PHASE'),
+                "priority_level": 1
+            }
+        
+        # ========== PRIORITY 2: LEGACY MODULES ==========
+        
+        # 2a. LPC Payout (jika ratio > 5x)
+        lpc_res = results.get('lpc', {})
+        if lpc_res.get('payout_ratio', 1.0) > 5.0:
+            return {
+                "final_bias": lpc_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V100_LPC: {lpc_res.get('reason', '')}",
+                "phase": "PAYOUT_DOMINANT",
+                "priority_level": 2
+            }
+        
+        # 2b. LIM Imbalance (jika > 50x)
+        lim_res = results.get('lim', {})
+        if lim_res.get('imbalance_ratio', 1.0) > 50:
+            return {
+                "final_bias": lim_res['bias'],
+                "confidence": "HIGH",
+                "reason": f"V87_LIM: {lim_res.get('reason', '')}",
+                "phase": "IMBALANCE_EXTREME",
+                "priority_level": 2
+            }
+        
+        # 2c. Cascade Time
+        cascade_res = results.get('cascade', {})
+        if cascade_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": cascade_res['bias'],
+                "confidence": "MEDIUM",
+                "reason": f"V93_CASCADE: {cascade_res.get('reason', '')}",
+                "phase": "CASCADE_PATH",
+                "priority_level": 2
+            }
+        
+        # 2d. Energy Gravity Rule
+        egr_res = results.get('egr', {})
+        if egr_res.get('is_veto'):
+            return {
+                "final_bias": egr_res['bias'],
+                "confidence": egr_res.get('confidence', 'SUPREME'),
+                "reason": f"V94_EGR: {egr_res.get('reason', '')}",
+                "phase": "ENERGY_GRAVITY_VETO",
+                "priority_level": 2
+            }
+        
+        # 2e. Bait Detection
+        bpf_res = results.get('bpf', {})
+        if bpf_res.get('is_bait'):
+            return {
+                "final_bias": bpf_res['bias'],
+                "confidence": bpf_res.get('confidence', 'SUPREME'),
+                "reason": f"V94_BPF: {bpf_res.get('reason', '')}",
+                "phase": "BAIT_DETECTED",
+                "priority_level": 2
+            }
+        
+        # ========== PRIORITY 3: WEAK SIGNALS ==========
         
         # 3a. WMI (jika > 80 tapi tidak ekstrim)
         if abs(results.get('wmi_ratio', 0)) > 80:
@@ -20022,6 +20557,12 @@ class BinanceAnalyzerV87:
         self.ccr_v102 = CascadeConflictResolverV102()            # V102-CCR
         self.final_resolver_v102 = ConflictResolverV102_FINAL()  # V102 Final Resolver
         
+        # ===== V102 ENHANCED MODULES - ANTI-VANRY & ANTI-SIREN =====
+        self.afde_v102 = AggressionFlowDivergenceEnhancedV102()        # V102-AFDE
+        self.scxe_v102 = ShortCrowdExtremizationEnhancedV102()         # V102-SCXE
+        self.oipm_v102 = OIPriceContextMatrixV102()                    # V102-OIPM
+        self.final_resolver_v102_enhanced = ConflictResolverV102_FINAL_ENHANCED()  # V102 Enhanced Resolver
+        
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
         self.sce_v99 = ShortCrowdExhaustionValidatorV99()            # V99-SCE (Short Crowd Exhaustion) ⭐ NEW!
@@ -21797,14 +22338,60 @@ class BinanceAnalyzerV87:
             scoring_data['pfr_v102'] = pfr_result
             scoring_data['ccr_v102'] = ccr_result
             
+            # ===== V102 ENHANCED MODULES - ANTI-VANRY & ANTI-SIREN =====
+            # V102-AFDE: Aggression-Flow Divergence Enhanced
+            afde_result = self.afde_v102.detect(
+                agg_ratio=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                oi_delta=oi_delta_5m,
+                price_change=change_5m
+            )
+            
+            # V102-SCXE: Short Crowd Extremization Enhanced
+            scxe_result = self.scxe_v102.detect(
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                rsi=rsi6,
+                long_dist=liq.get('long_dist', 999),
+                wmi=wmi_ratio,
+                oi_delta=oi_delta_5m
+            )
+            
+            # V102-OIPM: OI-Price Context Matrix
+            oipm_result = self.oipm_v102.interpret(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                agg_ratio=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                rsi=rsi6
+            )
+            
+            # Add V102 Enhanced results to scoring_data
+            scoring_data['afde_v102'] = afde_result
+            scoring_data['scxe_v102'] = scxe_result
+            scoring_data['oipm_v102'] = oipm_result
+            
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
             # ===== V102: FINAL RESOLVER (dengan prioritas lebih tinggi!) =====
             v102_final = self.final_resolver_v102.resolve_all_signals(scoring_data)
             
-            # Gunakan V102 resolver jika ada signal dengan priority_level <= -2
-            if v102_final.get('priority_level', 99) <= -2:
+            # ===== V102 ENHANCED: FINAL RESOLVER (ANTI-VANRY & ANTI-SIREN - TERTINGGI!) =====
+            v102_enhanced_final = self.final_resolver_v102_enhanced.resolve_all_signals(scoring_data)
+            
+            # Gunakan V102 Enhanced resolver jika ada signal dengan priority_level <= -2 (VANRY/SIREN fix)
+            if v102_enhanced_final.get('priority_level', 99) <= -2:
+                final_decision = {
+                    'bias': v102_enhanced_final['final_bias'],
+                    'final_bias': v102_enhanced_final['final_bias'],
+                    'confidence': v102_enhanced_final['confidence'],
+                    'reason': v102_enhanced_final['reason'],
+                    'phase': v102_enhanced_final['phase'],
+                    'priority_level': v102_enhanced_final['priority_level'],
+                    'override_modules': v102_enhanced_final.get('override_modules', [])
+                }
+            elif v102_final.get('priority_level', 99) <= -2:
+                # V102 original override (TRIAUSDT fix)
                 final_decision = {
                     'bias': v102_final['final_bias'],
                     'final_bias': v102_final['final_bias'],
@@ -21826,15 +22413,14 @@ class BinanceAnalyzerV87:
                     'sequence': v101_final.get('sequence', 'NONE')
                 }
             else:
-                # Fallback ke V102 jika tidak ada override dari V101/V102 priority tinggi
-                # Gunakan hasil default dari V102 resolver
+                # Fallback ke V102 Enhanced jika tidak ada override dari priority tinggi
                 final_decision = {
-                    'bias': v102_final.get('final_bias', 'NEUTRAL'),
-                    'final_bias': v102_final.get('final_bias', 'NEUTRAL'),
-                    'confidence': v102_final.get('confidence', 'LOW'),
-                    'reason': v102_final.get('reason', 'No strong signal detected'),
-                    'phase': v102_final.get('phase', 'NORMAL'),
-                    'priority_level': v102_final.get('priority_level', 99),
+                    'bias': v102_enhanced_final.get('final_bias', 'NEUTRAL'),
+                    'final_bias': v102_enhanced_final.get('final_bias', 'NEUTRAL'),
+                    'confidence': v102_enhanced_final.get('confidence', 'LOW'),
+                    'reason': v102_enhanced_final.get('reason', 'No strong signal detected'),
+                    'phase': v102_enhanced_final.get('phase', 'NORMAL'),
+                    'priority_level': v102_enhanced_final.get('priority_level', 99),
                     'score': 0
                 }
             # ================================================================================
@@ -22817,6 +23403,36 @@ class BinanceAnalyzerV87:
             
             result["v102_phase"] = v102_final.get('phase', 'NORMAL')
             result["v102_priority_level"] = v102_final.get('priority_level', 99)
+            
+            # ===== HASIL V102 ENHANCED ANTI-VANRY & ANTI-SIREN MODULES =====
+            result["afde_v102"] = {
+                "bias": afde_result.get('bias', 'NEUTRAL'),
+                "trap_type": afde_result.get('trap_type', 'NONE'),
+                "confidence": afde_result.get('confidence', 'LOW'),
+                "reason": afde_result.get('reason', ''),
+                "phase": afde_result.get('phase', 'NONE'),
+                "priority_level": afde_result.get('priority_level', 99)
+            }
+            
+            result["scxe_v102"] = {
+                "bias": scxe_result.get('bias', 'NEUTRAL'),
+                "trap_type": scxe_result.get('trap_type', 'NONE'),
+                "confidence": scxe_result.get('confidence', 'LOW'),
+                "reason": scxe_result.get('reason', ''),
+                "phase": scxe_result.get('phase', 'NONE'),
+                "priority_level": scxe_result.get('priority_level', 99)
+            }
+            
+            result["oipm_v102"] = {
+                "bias": oipm_result.get('bias', 'NEUTRAL'),
+                "phase": oipm_result.get('phase', 'NORMAL'),
+                "confidence": oipm_result.get('confidence', 'LOW'),
+                "reason": oipm_result.get('reason', ''),
+                "priority_level": oipm_result.get('priority_level', 99)
+            }
+            
+            result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
+            result["v102_enhanced_priority_level"] = v102_enhanced_final.get('priority_level', 99)
 
             return result
         except Exception as e:
