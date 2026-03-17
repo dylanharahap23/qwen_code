@@ -2066,7 +2066,15 @@ class VolumeOIDivergenceDetectorV100:
                 "wait_condition": "OBV_RECOVERY"
             }
         
-        return {"is_distribution": False, "is_distribution_trap": False, "bias": "NEUTRAL"}
+        # 🔴 FIX: Always return a dictionary with 'bias' key
+        return {
+            "is_distribution": False, 
+            "is_distribution_trap": False, 
+            "bias": "NEUTRAL",
+            "confidence": "LOW",
+            "priority_level": 99,
+            "reason": "No distribution detected"
+        }
 
 
 # ================= V100-IER-PRIORITY: INSTITUTIONAL EXIT OVERRIDE =================
@@ -9688,10 +9696,20 @@ class ConflictResolverV102_FINAL_ENHANCED:
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
         
+        # 🔴 FIX: Helper function to safely get module result
+        def safe_module_result(module_name: str, default_bias: str = "NEUTRAL") -> Dict:
+            """Get module result with guaranteed 'bias' key"""
+            res = results.get(module_name, {})
+            if not isinstance(res, dict):
+                return {"bias": default_bias}
+            if 'bias' not in res:
+                res['bias'] = default_bias
+            return res
+        
         # ========== PRIORITY -2: IRUSDT PATCH (TERTINGGI!) ==========
         
         # -2a. V102-EIO: Extreme Imbalance Override
-        eio_res = results.get('eio_v102', {})
+        eio_res = safe_module_result('eio_v102')
         if eio_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": eio_res['bias'],
@@ -9703,7 +9721,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -2b. V102-MOD: Massive OI Drop Validator
-        mod_res = results.get('mod_v102', {})
+        mod_res = safe_module_result('mod_v102')
         if mod_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": mod_res['bias'],
@@ -9717,7 +9735,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
         # ========== PRIORITY -1: IRUSDT FIX & EXISTING MODULES ==========
         
         # -1a. V102-CTP: Cascade Time Priority
-        ctp_res = results.get('ctp_v102', {})
+        ctp_res = safe_module_result('ctp_v102')
         if ctp_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": ctp_res['bias'],
@@ -9728,7 +9746,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -1b. V102-SAT: SAT Module Priority
-        sat_res = results.get('sat_priority_v102', {})
+        sat_res = safe_module_result('sat_priority_v102')
         if sat_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": sat_res['bias'],
@@ -9739,7 +9757,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -1c. V102-LDR: Liquidation Distance Ratio
-        ldr_res = results.get('ldr_v102', {})
+        ldr_res = safe_module_result('ldr_v102')
         if ldr_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": ldr_res['bias'],
@@ -9750,7 +9768,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -1d. V100-VOD: Volume-OI Divergence (BDXN)
-        vod_res = results.get('vod_v100', {})
+        vod_res = safe_module_result('vod_v100')
         if vod_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": vod_res['bias'],
@@ -9761,7 +9779,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -1e. V99-OAI: OI Acceleration Phase (BDXN)
-        oai_res = results.get('oai_v99', {})
+        oai_res = safe_module_result('oai_v99')
         if oai_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": oai_res['bias'],
@@ -9772,7 +9790,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -1f. V97-SDD: Silent Distribution Detector (BDXN)
-        sdd_res = results.get('sdd_v97', {})
+        sdd_res = safe_module_result('sdd_v97')
         if sdd_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": sdd_res['bias'],
@@ -9783,7 +9801,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -1g. V102-SCXE: Short Crowd Extremization (SIREN)
-        scxe_res = results.get('scxe_v102', {})
+        scxe_res = safe_module_result('scxe_v102')
         if scxe_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": scxe_res['bias'],
@@ -9794,7 +9812,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -1h. V102-AFDE: Aggression-Flow Divergence (VANRY)
-        afde_res = results.get('afde_v102', {})
+        afde_res = safe_module_result('afde_v102')
         if afde_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": afde_res['bias'],
@@ -9807,7 +9825,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
         # ========== PRIORITY -1a: V101 ABSOLUTE VETO ==========
         
         # -1a. V101-OI_FUEL_VS_LIQ_GRAVITY
-        fuel_gravity = results.get('oi_fuel_v101', {})
+        fuel_gravity = safe_module_result('oi_fuel_v101')
         if fuel_gravity.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": fuel_gravity['bias'],
@@ -9818,7 +9836,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -1b. V101-FLUSH_SEQUENCE_VETO
-        flush_veto = results.get('flush_veto_v101', {})
+        flush_veto = safe_module_result('flush_veto_v101')
         if flush_veto.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": flush_veto['bias'],
@@ -9829,7 +9847,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # -1c. V101-DEAD_AGG_MAGNET
-        dead_magnet = results.get('dead_magnet_v101', {})
+        dead_magnet = safe_module_result('dead_magnet_v101')
         if dead_magnet.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": dead_magnet['bias'],
@@ -9842,7 +9860,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
         # ========== PRIORITY 0: CASCADE PRIORITY & CONTEXT ==========
         
         # 0a. OIPM: OI-Price Context Matrix
-        oipm_res = results.get('oipm_v102', {})
+        oipm_res = safe_module_result('oipm_v102')
         if oipm_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": oipm_res['bias'],
@@ -9853,7 +9871,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 0b. Cascade Conflict Resolver (CCR)
-        ccr_res = results.get('ccr_v102', {})
+        ccr_res = safe_module_result('ccr_v102')
         if ccr_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": ccr_res['bias'],
@@ -9864,7 +9882,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 0c. Oversold Reversal Override (ORO)
-        oro_res = results.get('oro_v102', {})
+        oro_res = safe_module_result('oro_v102')
         if oro_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": oro_res['bias'],
@@ -9875,7 +9893,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 0d. WMI Negative Trap Filter (WNTF)
-        wntf_res = results.get('wntf_v102', {})
+        wntf_res = safe_module_result('wntf_v102')
         if wntf_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": wntf_res['bias'],
@@ -9886,7 +9904,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 0e. PBV Fuel Priority Rule (PFR)
-        pfr_res = results.get('pfr_v102', {})
+        pfr_res = safe_module_result('pfr_v102')
         if pfr_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": pfr_res['bias'],
@@ -9899,7 +9917,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
         # ========== PRIORITY 1: V101 STRONG MODULES ==========
         
         # 1a. WMI Directional Lock
-        wmi_lock = results.get('wmi_lock_v101', {})
+        wmi_lock = safe_module_result('wmi_lock_v101')
         if wmi_lock.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": wmi_lock['bias'],
@@ -9910,7 +9928,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 1b. Liquidity Magnet Proximity
-        lmp_res = results.get('lmp_v101', {})
+        lmp_res = safe_module_result('lmp_v101')
         if lmp_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": lmp_res['bias'],
@@ -9921,7 +9939,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 1c. Energy Cost Supremacy
-        ecs_res = results.get('ecs_v101', {})
+        ecs_res = safe_module_result('ecs_v101')
         if ecs_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": ecs_res['bias'],
@@ -9932,7 +9950,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 1d. Aggression-Flow Divergence (original)
-        afd_res = results.get('afd_v101', {})
+        afd_res = safe_module_result('afd_v101')
         if afd_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": afd_res['bias'],
@@ -9943,7 +9961,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 1e. Double Sweep Sequence
-        dss_res = results.get('dss_v101', {})
+        dss_res = safe_module_result('dss_v101')
         if dss_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": dss_res['bias'],
@@ -9954,7 +9972,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 1f. Pre-Sweep Build Phase
-        psb_res = results.get('psb_v101', {})
+        psb_res = safe_module_result('psb_v101')
         if psb_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": psb_res['bias'],
@@ -9967,7 +9985,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
         # ========== PRIORITY 2: LEGACY MODULES ==========
         
         # 2a. LPC Payout (jika ratio > 5x)
-        lpc_res = results.get('lpc', {})
+        lpc_res = safe_module_result('lpc')
         if lpc_res.get('payout_ratio', 1.0) > 5.0:
             return {
                 "final_bias": lpc_res['bias'],
@@ -9978,7 +9996,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 2b. LIM Imbalance (jika > 50x)
-        lim_res = results.get('lim', {})
+        lim_res = safe_module_result('lim')
         if lim_res.get('imbalance_ratio', 1.0) > 50:
             return {
                 "final_bias": lim_res['bias'],
@@ -9989,7 +10007,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 2c. Cascade Time
-        cascade_res = results.get('cascade', {})
+        cascade_res = safe_module_result('cascade')
         if cascade_res.get('bias') != 'NEUTRAL':
             return {
                 "final_bias": cascade_res['bias'],
@@ -10000,7 +10018,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 2d. Energy Gravity Rule
-        egr_res = results.get('egr', {})
+        egr_res = safe_module_result('egr')
         if egr_res.get('is_veto'):
             return {
                 "final_bias": egr_res['bias'],
@@ -10011,7 +10029,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
             }
         
         # 2e. Bait Detection
-        bpf_res = results.get('bpf', {})
+        bpf_res = safe_module_result('bpf')
         if bpf_res.get('is_bait'):
             return {
                 "final_bias": bpf_res['bias'],
