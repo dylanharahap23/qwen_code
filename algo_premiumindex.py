@@ -21016,6 +21016,10 @@ class BinanceAnalyzerV87:
         
         # ===== NEW ANTI-XANUSDT MODULES =====
         self.vod_v100 = VolumeOIDivergenceDetectorV100()          # V100-VOD
+        self.oai_v99 = OIAccelerationPhaseV99()                   # V99-OAI
+        self.sdd_v97 = SilentDistributionDetectorV97()            # V97-SDD
+        self.cpo_v100 = CascadePriorityOverrideV100()             # V100-CPO
+        self.lrs_v100 = LongRewardScoreV100()                     # V100-LRS
         self.ier_priority_v100 = InstitutionalExitPriorityV100()  # V100-IER-PRIORITY
         self.xan_resolver = ConflictResolverV88_PLUS_FINAL_XAN_FIXED()  # New resolver for XAN
         
@@ -22465,26 +22469,49 @@ class BinanceAnalyzerV87:
             # ===== NEW ANTI-XANUSDT MODULES =====
             # V100-VOD: Volume-OI Divergence
             vod_result = self.vod_v100.detect(
-                rsi6=rsi6,
-                oi_delta_5m=oi_delta_5m,
-                trade_flow=trades.get('ratio', 0),
-                obv_value=current_obv,
-                price_change=change_5m
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 1.0),
+                agg=trades.get('aggressive_ratio', 1.0)
             )
             
-            # V100-IER-PRIORITY: Institutional Exit Override
-            ier_priority_result = self.ier_priority_v100.validate(
-                ier_data=ier_result if 'ier_result' in locals() else {},
-                wmi_data={'mass_ratio': wmi_ratio},
-                lfc_data=lfc_result if 'lfc_result' in locals() else {}
+            # V99-OAI: OI Acceleration Phase
+            oai_result = self.oai_v99.detect(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                rsi=rsi6
+            )
+            
+            # V97-SDD: Silent Distribution Detector
+            sdd_result = self.sdd_v97.detect(
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 1.0),
+                agg=trades.get('aggressive_ratio', 1.0)
+            )
+            
+            # V100-CPO: Cascade Priority Override
+            cpo_result = self.cpo_v100.check(
+                oi_delta=oi_delta_5m,
+                cascade_bias=cascade_result.get('bias', 'NEUTRAL') if 'cascade_result' in locals() else 'NEUTRAL',
+                energy_bias=energy_bias if 'energy_bias' in locals() else 'NEUTRAL',
+                rsi=rsi6
+            )
+            
+            # V100-LRS: Long Reward Score
+            lrs_result = self.lrs_v100.calculate(
+                long_dist=liq.get('long_dist', 999),
+                short_dist=liq.get('short_dist', 999),
+                oi_delta=oi_delta_5m
             )
             
             # Safe dict untuk hasil anti-XANUSDT
             vod_result = safe_dict(vod_result)
+            oai_result = safe_dict(oai_result)
+            sdd_result = safe_dict(sdd_result)
+            cpo_result = safe_dict(cpo_result)
+            lrs_result = safe_dict(lrs_result)
             ier_priority_result = safe_dict(ier_priority_result)
-            
-            # Add VOD result to scoring_data (PENTING untuk resolver!)
-            scoring_data['vod_v100'] = vod_result
             
             # ===== NEW ANTI-LYNUSDT MODULES =====
             # V100-AEF: Aggression Extinction Filter (Market Death Detection)
@@ -22785,6 +22812,13 @@ class BinanceAnalyzerV87:
             scoring_data['afde_v102'] = afde_result
             scoring_data['scxe_v102'] = scxe_result
             scoring_data['oipm_v102'] = oipm_result
+            
+            # Add ANTI-BDXN results to scoring_data
+            scoring_data['vod_v100'] = vod_result
+            scoring_data['oai_v99'] = oai_result
+            scoring_data['sdd_v97'] = sdd_result
+            scoring_data['cpo_v100'] = cpo_result
+            scoring_data['lrs_v100'] = lrs_result
             
             # ===== ANTI-IRUSDT MODULES =====
             # V102-EIO: Extreme Imbalance Override
