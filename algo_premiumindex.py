@@ -22483,6 +22483,9 @@ class BinanceAnalyzerV87:
             vod_result = safe_dict(vod_result)
             ier_priority_result = safe_dict(ier_priority_result)
             
+            # Add VOD result to scoring_data (PENTING untuk resolver!)
+            scoring_data['vod_v100'] = vod_result
+            
             # ===== NEW ANTI-LYNUSDT MODULES =====
             # V100-AEF: Aggression Extinction Filter (Market Death Detection)
             # ⚠️ PENTING: Gunakan nama variabel berbeda agar tidak konflik dengan aef_result (V77 AEF)
