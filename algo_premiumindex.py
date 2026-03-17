@@ -644,6 +644,28 @@ OIPM_FLOW_HIGH_MIN = 1.5                 # Flow > 1.5 = high volume
 OIPM_FLOW_LOW_MAX = 1.0                  # Flow < 1.0 = low volume
 OIPM_RSI_OVERSOLD_EXTREME = 10.0         # RSI < 10 = extreme oversold
 
+# ================= V102-EIO: EXTREME IMBALANCE OVERRIDE CONFIG =================
+EIO_IMBALANCE_THRESHOLD = 50.0               # Imbalance > 50x = extreme
+EIO_WMI_IGNORE = True                         # Ignore WMI saat imbalance ekstrem
+
+# ================= V102-MOD: MASSIVE OI DROP VALIDATOR CONFIG =================
+MOD_OI_DROP_MASSIVE_MIN = -10.0                # OI drop > 10% = massive
+MOD_IMBALANCE_MIN = 50.0                       # Imbalance > 50x untuk konfirmasi
+MOD_PRICE_DROP_MAX = 0                          # Price change < 0 (negative)
+
+# ================= V102-CTP: CASCADE TIME PRIORITY CONFIG =================
+CTP_CASCADE_RATIO_THRESHOLD = 10.0             # Cascade difference > 10x
+CTP_IMBALANCE_MIN = 20.0                        # Imbalance > 20x untuk validasi
+
+# ================= V102-SAT: SAT MODULE PRIORITY CONFIG =================
+SAT_IMBALANCE_EXTREME = 50.0                    # Imbalance > 50x = extreme
+SAT_WMI_NEGATIVE_IGNORE = -90                    # WMI < -90 yang harus di-ignore
+
+# ================= V102-LDR: LIQUIDATION DISTANCE RATIO CONFIG =================
+LDR_LONG_DIST_CLOSE_MAX = 2.0                    # Long liq < 2% = very close
+LDR_SHORT_DIST_FAR_MIN = 10.0                    # Short liq > 10% = very far
+LDR_IMBALANCE_MIN = 50.0                         # Imbalance > 50x untuk konfirmasi
+
 
 # ================= V100-CHINA-ALGO: CHINA ALGO TRADING LOGIC =================
 class ChinaAlgoTradingLogicV100:
@@ -8800,6 +8822,223 @@ class OIPriceContextMatrixV102:
         return {"phase": "NORMAL", "bias": "NEUTRAL", "priority_level": 99}
 
 
+# ================= V102-EIO: EXTREME IMBALANCE OVERRIDE =================
+class ExtremeImbalanceOverrideV102:
+    """
+    🔥 V102-EIO: Extreme Imbalance Override - ANTI-IRUSDT TRAP
+    Jika Imbalance > 50x, WAJIB override WMI!
+    
+    Kasus IRUSDT:
+    - Imbalance: 76.0x (>50x)
+    - WMI: -99.7x (LONG_LIQ_WHALE)
+    - Bot pilih SHORT (ikut WMI) ❌
+    - Harusnya: Imbalance 76x = SHORTS OVERCROWDED → SQUEEZE!
+    """
+    
+    @staticmethod
+    def detect(imbalance_ratio: float, wmi_ratio: float, 
+               cascade_bias: str, energy_bias: str) -> Dict:
+        """
+        Deteksi extreme imbalance dan override WMI
+        """
+        if imbalance_ratio > EIO_IMBALANCE_THRESHOLD:          # Imbalance > 50x
+            # Extreme crowd detected - prioritize cascade over energy
+            if cascade_bias == "LONG" and energy_bias == "SHORT":
+                return {
+                    "bias": "LONG",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -2,  # TERTINGGI!
+                    "reason": f"EIO_EXTREME_IMBALANCE: Imbalance {imbalance_ratio:.1f}x (>50x)! "
+                             f"SHORTS OVERCROWDED! Cascade Time LONG ({cascade_bias}) harus prioritas! "
+                             f"Override WMI {wmi_ratio:.1f}x dan Energy {energy_bias}!",
+                    "phase": "EXTREME_IMBALANCE_SQUEEZE",
+                    "override_modules": ["WMI_LOCK", "WMI_VETO", "ENERGY_PATH", "LPC_PAYOUT"]
+                }
+            elif cascade_bias == "SHORT" and energy_bias == "LONG":
+                return {
+                    "bias": "SHORT",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -2,
+                    "reason": f"EIO_EXTREME_IMBALANCE: Imbalance {imbalance_ratio:.1f}x (>50x)! "
+                             f"LONGS OVERCROWDED! Cascade Time SHORT ({cascade_bias}) harus prioritas! "
+                             f"Override WMI {wmi_ratio:.1f}x dan Energy {energy_bias}!",
+                    "phase": "EXTREME_IMBALANCE_DUMP",
+                    "override_modules": ["WMI_LOCK", "WMI_VETO", "ENERGY_PATH", "LPC_PAYOUT"]
+                }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V102-MOD: MASSIVE OI DROP VALIDATOR =================
+class MassiveOIDropValidatorV102:
+    """
+    🔥 V102-MOD: Massive OI Drop Validator - ANTI-IRUSDT TRAP
+    OI Drop > 10% + Price Drop = SHORT COVERING (LONG bias)!
+    
+    Kasus IRUSDT:
+    - OI: -13.11% (< -10%) = MASSIVE DROP!
+    - Price: -2.12% (< 0) = DROP!
+    - Imbalance: 76.0x (>50x) = EXTREME!
+    - Bot baca: OI drop = weak fuel → SHORT ❌
+    - Realita: SHORT COVERING! Whale tutup short sebelum squeeze!
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, price_change: float, 
+               imbalance_ratio: float, wmi_ratio: float) -> Dict:
+        """
+        Deteksi massive OI drop = short covering
+        """
+        if oi_delta < MOD_OI_DROP_MASSIVE_MIN:                # OI drop > 10%
+            if price_change < MOD_PRICE_DROP_MAX:             # Price drop (negative)
+                if imbalance_ratio > MOD_IMBALANCE_MIN:       # Imbalance > 50x
+                    return {
+                        "bias": "LONG",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -2,  # TERTINGGI!
+                        "reason": f"MOD_MASSIVE_OI_DROP: OI {oi_delta:.2f}% (MASSIVE DROP!) + "
+                                 f"Price {price_change:.2f}% (DROP!) + "
+                                 f"Imbalance {imbalance_ratio:.1f}x (EXTREME!) = "
+                                 f"Ini SHORT COVERING! Whale tutup short positions MASSAL! "
+                                 f"SQUEEZE IMMINENT! Override WMI {wmi_ratio:.1f}x!",
+                        "phase": "MASSIVE_SHORT_COVERING",
+                        "override_modules": ["WMI_LOCK", "OI_FUEL", "LPC_PAYOUT"]
+                    }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V102-CTP: CASCADE TIME PRIORITY =================
+class CascadeTimePriorityV102:
+    """
+    🔥 V102-CTP: Cascade Time Priority - ANTI-IRUSDT TRAP
+    Jika Cascade Time difference > 10x, prioritas CASCADE atas ENERGY!
+    
+    Kasus IRUSDT:
+    - CASCADE UP: 2.26 | CASCADE DOWN: 164.51 (73x faster UP!)
+    - ENERGY UP: 28.98 | ENERGY DOWN: 2.64 (10x cheaper DOWN!)
+    - Bot pilih ENERGY (lebih murah) ❌
+    - Harusnya: dengan Imbalance 76x, pilih CASCADE (kecepatan)!
+    """
+    
+    @staticmethod
+    def detect(cascade_up: float, cascade_down: float,
+               energy_up: float, energy_down: float,
+               imbalance_ratio: float) -> Dict:
+        """
+        Prioritaskan cascade over energy jika difference signifikan
+        """
+        # Hitung rasio cascade (mana yang lebih cepat)
+        if cascade_up > 0 and cascade_down > 0:
+            cascade_ratio = max(cascade_up, cascade_down) / min(cascade_up, cascade_down)
+            
+            if cascade_ratio > CTP_CASCADE_RATIO_THRESHOLD:    # > 10x difference
+                if imbalance_ratio > CTP_IMBALANCE_MIN:        # Imbalance > 20x
+                    if cascade_up < cascade_down:              # Up faster
+                        return {
+                            "bias": "LONG",
+                            "confidence": "SUPREME",
+                            "priority_level": -1,
+                            "reason": f"CTP_CASCADE_PRIORITY: Cascade Up {cascade_up:.2f} vs "
+                                     f"Down {cascade_down:.2f} ({cascade_ratio:.1f}x faster UP)! "
+                                     f"Dengan Imbalance {imbalance_ratio:.1f}x, "
+                                     f"MM pilih KECEPATAN (CASCADE) bukan BIAYA (ENERGY)!",
+                            "phase": "CASCADE_SPEED_PRIORITY",
+                            "override_modules": ["ENERGY_PATH", "EGR", "LEP"]
+                        }
+                    elif cascade_down < cascade_up:            # Down faster
+                        return {
+                            "bias": "SHORT",
+                            "confidence": "SUPREME",
+                            "priority_level": -1,
+                            "reason": f"CTP_CASCADE_PRIORITY: Cascade Down {cascade_down:.2f} vs "
+                                     f"Up {cascade_up:.2f} ({cascade_ratio:.1f}x faster DOWN)! "
+                                     f"Dengan Imbalance {imbalance_ratio:.1f}x, "
+                                     f"MM pilih KECEPATAN (CASCADE) bukan BIAYA (ENERGY)!",
+                            "phase": "CASCADE_SPEED_PRIORITY",
+                            "override_modules": ["ENERGY_PATH", "EGR", "LEP"]
+                        }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V102-SAT: SAT MODULE PRIORITY UPGRADE =================
+class SATModulePriorityV102:
+    """
+    🔥 V102-SAT: SAT Module Priority Upgrade - ANTI-IRUSDT TRAP
+    SAT (Liquidity Saturation) harus prioritas atas WMI_LOCK!
+    
+    Kasus IRUSDT:
+    - SAT: ACTIVE - "Short overcrowded → SQUEEZE" (sudah detect!)
+    - WMI_LOCK: ACTIVE - WMI -99.7x (target bawah)
+    - Bot override SAT dengan WMI_LOCK ❌ (salah!)
+    - Harusnya: SAT > WMI_LOCK saat Imbalance ekstrem!
+    """
+    
+    @staticmethod
+    def detect(sat_active: bool, imbalance_ratio: float,
+               wmi_ratio: float, wmi_lock_active: bool) -> Dict:
+        """
+        Prioritaskan SAT over WMI_LOCK saat imbalance ekstrem
+        """
+        if sat_active:                                          # SAT module active
+            if imbalance_ratio > SAT_IMBALANCE_EXTREME:        # Imbalance > 50x
+                if wmi_lock_active and wmi_ratio < SAT_WMI_NEGATIVE_IGNORE:  # WMI sangat negatif
+                    return {
+                        "bias": "LONG",  # SAT says squeeze
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -1,
+                        "reason": f"SAT_PRIORITY_OVERRIDE: SAT detect Imbalance {imbalance_ratio:.1f}x "
+                                 f"(Short overcrowded → SQUEEZE)! "
+                                 f"WMI_LOCK dengan WMI {wmi_ratio:.1f}x harus IGNORE "
+                                 f"saat Imbalance ekstrem! SQUEEZE IMMINENT!",
+                        "phase": "SAT_OVERRIDE_WMI",
+                        "override_modules": ["WMI_LOCK", "WMI_VETO", "WMI_DIRECTIONAL_LOCK"]
+                    }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V102-LDR: LIQUIDATION DISTANCE RATIO =================
+class LiquidationDistanceRatioV102:
+    """
+    🔥 V102-LDR: Liquidation Distance Ratio - ANTI-IRUSDT TRAP
+    Jika Long Liq < 2% dan Short Liq > 10%, WAJIB LONG!
+    
+    Kasus IRUSDT:
+    - Long Liq: -1.32% (< 2%)
+    - Short Liq: +11.5% (> 10%)
+    - Imbalance: 76.0x (>50x)
+    - Bot pilih SHORT (ikut WMI) ❌
+    - Realita: MM akan squeeze 2% dulu, bukan dump 10%!
+    """
+    
+    @staticmethod
+    def detect(long_dist: float, short_dist: float,
+               imbalance_ratio: float, wmi_ratio: float) -> Dict:
+        """
+        Deteksi berdasarkan jarak likuidasi
+        """
+        if abs(long_dist) < LDR_LONG_DIST_CLOSE_MAX:            # Long liq < 2%
+            if abs(short_dist) > LDR_SHORT_DIST_FAR_MIN:        # Short liq > 10%
+                if imbalance_ratio > LDR_IMBALANCE_MIN:         # Imbalance > 50x
+                    return {
+                        "bias": "LONG",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -1,
+                        "reason": f"LDR_DISTANCE_RATIO: Long Liq {long_dist:.2f}% (SANGAT DEKAT!) vs "
+                                 f"Short Liq {short_dist:.2f}% (SANGAT JAUH!) + "
+                                 f"Imbalance {imbalance_ratio:.1f}x (EKSTREM)! "
+                                 f"MM TIDAK AKAN DUMP 10% untuk hit short liq! "
+                                 f"Mereka akan SQUEEZE 2% untuk hit long liq + liquidate crowded shorts! "
+                                 f"Override WMI {wmi_ratio:.1f}x!",
+                        "phase": "DISTANCE_RATIO_SQUEEZE",
+                        "override_modules": ["WMI_LOCK", "WMI_VETO", "LPC_PAYOUT"]
+                    }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
 # ================= V101-FINAL: CONFLICT RESOLVER FINAL VERSION (UPDATED) =================
 class ConflictResolverV101_FINAL:
     """
@@ -9384,24 +9623,36 @@ class ConflictResolverV102_FINAL:
 # ================= V102-FINAL-ENHANCED: CONFLICT RESOLVER DENGAN ANTI-VANRY & ANTI-SIREN =================
 class ConflictResolverV102_FINAL_ENHANCED:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V102-ENHANCED:
+    🔥 URUTAN PRIORITAS MUTLAK V102-ENHANCED + ANTI-BDXN + ANTI-IRUSDT:
     
-    PRIORITY -2 (ABSOLUTE OVERRIDE - VANRY & SIREN FIX):
+    PRIORITY -2 (TERTINGGI - IRUSDT PATCH):
     ┌─────────────────────────────────────────────────────────┐
-    │ -2a. V102-SCXE: Short Crowd Extremization Enhanced     │ ← SIREN FIX!
-    │ -2b. V102-AFDE: Aggression-Flow Divergence Enhanced    │ ← VANRY FIX!
+    │ -2a. V102-EIO: Extreme Imbalance Override               │ ← IRUSDT FIX!
+    │ -2b. V102-MOD: Massive OI Drop Validator                │ ← IRUSDT FIX!
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -1 (ABSOLUTE VETO - EXISTING V101):
+    PRIORITY -1 (ABSOLUTE VETO):
     ┌─────────────────────────────────────────────────────────┐
-    │ -1a. V101-OI_FUEL_VS_LIQ_GRAVITY (Bensin vs Jurang)    │
-    │ -1b. V101-FLUSH_SEQUENCE_VETO (Prioritas Flush)        │
-    │ -1c. V101-DEAD_AGG_MAGNET (Agg 0 + WMI Extrem)         │
+    │ -1a. V102-CTP: Cascade Time Priority                    │ ← IRUSDT FIX!
+    │ -1b. V102-SAT: SAT Module Priority                      │ ← IRUSDT FIX!
+    │ -1c. V102-LDR: Liquidation Distance Ratio               │ ← IRUSDT FIX!
+    │ -1d. V100-VOD: Volume-OI Divergence (BDXN)              │
+    │ -1e. V99-OAI: OI Acceleration Phase (BDXN)              │
+    │ -1f. V97-SDD: Silent Distribution Detector (BDXN)       │
+    │ -1g. V102-SCXE: Short Crowd Extremization (SIREN)       │
+    │ -1h. V102-AFDE: Aggression-Flow Divergence (VANRY)      │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -1a (V101 ABSOLUTE VETO):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -1a. V101-OI_FUEL_VS_LIQ_GRAVITY                        │
+    │ -1b. V101-FLUSH_SEQUENCE_VETO                           │
+    │ -1c. V101-DEAD_AGG_MAGNET                               │
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY 0 (CONTEXT MATRIX & V102 MODULES):
     ┌─────────────────────────────────────────────────────────┐
-    │ 0a. V102-OIPM: OI-Price Context Matrix                  │ ← NEW!
+    │ 0a. V102-OIPM: OI-Price Context Matrix                  │
     │ 0b. V102-CCR: Cascade Conflict Resolver                 │
     │ 0c. V102-ORO: Oversold Reversal Override                │
     │ 0d. V102-WNTF: WMI Negative Trap Filter                 │
@@ -9437,9 +9688,101 @@ class ConflictResolverV102_FINAL_ENHANCED:
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
         
-        # ========== PRIORITY -2: VANRY & SIREN FIX (TERTINGGI!) ==========
+        # ========== PRIORITY -2: IRUSDT PATCH (TERTINGGI!) ==========
         
-        # -2a. SCXE: Short Crowd Extremization Enhanced (SIREN FIX)
+        # -2a. V102-EIO: Extreme Imbalance Override
+        eio_res = results.get('eio_v102', {})
+        if eio_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": eio_res['bias'],
+                "confidence": eio_res.get('confidence', 'ABSOLUTE'),
+                "reason": eio_res.get('reason', ''),
+                "phase": eio_res.get('phase', 'EXTREME_IMBALANCE_SQUEEZE'),
+                "priority_level": -2,
+                "override_modules": eio_res.get('override_modules', [])
+            }
+        
+        # -2b. V102-MOD: Massive OI Drop Validator
+        mod_res = results.get('mod_v102', {})
+        if mod_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": mod_res['bias'],
+                "confidence": mod_res.get('confidence', 'ABSOLUTE'),
+                "reason": mod_res.get('reason', ''),
+                "phase": mod_res.get('phase', 'MASSIVE_SHORT_COVERING'),
+                "priority_level": -2,
+                "override_modules": mod_res.get('override_modules', [])
+            }
+        
+        # ========== PRIORITY -1: IRUSDT FIX & EXISTING MODULES ==========
+        
+        # -1a. V102-CTP: Cascade Time Priority
+        ctp_res = results.get('ctp_v102', {})
+        if ctp_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": ctp_res['bias'],
+                "confidence": ctp_res.get('confidence', 'SUPREME'),
+                "reason": ctp_res.get('reason', ''),
+                "phase": ctp_res.get('phase', 'CASCADE_SPEED_PRIORITY'),
+                "priority_level": -1
+            }
+        
+        # -1b. V102-SAT: SAT Module Priority
+        sat_res = results.get('sat_priority_v102', {})
+        if sat_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": sat_res['bias'],
+                "confidence": sat_res.get('confidence', 'ABSOLUTE'),
+                "reason": sat_res.get('reason', ''),
+                "phase": sat_res.get('phase', 'SAT_OVERRIDE_WMI'),
+                "priority_level": -1
+            }
+        
+        # -1c. V102-LDR: Liquidation Distance Ratio
+        ldr_res = results.get('ldr_v102', {})
+        if ldr_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": ldr_res['bias'],
+                "confidence": ldr_res.get('confidence', 'ABSOLUTE'),
+                "reason": ldr_res.get('reason', ''),
+                "phase": ldr_res.get('phase', 'DISTANCE_RATIO_SQUEEZE'),
+                "priority_level": -1
+            }
+        
+        # -1d. V100-VOD: Volume-OI Divergence (BDXN)
+        vod_res = results.get('vod_v100', {})
+        if vod_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": vod_res['bias'],
+                "confidence": vod_res.get('confidence', 'ABSOLUTE'),
+                "reason": vod_res.get('reason', ''),
+                "phase": vod_res.get('phase', 'DISTRIBUTION_PHASE'),
+                "priority_level": -1
+            }
+        
+        # -1e. V99-OAI: OI Acceleration Phase (BDXN)
+        oai_res = results.get('oai_v99', {})
+        if oai_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": oai_res['bias'],
+                "confidence": oai_res.get('confidence', 'SUPREME'),
+                "reason": oai_res.get('reason', ''),
+                "phase": oai_res.get('phase_detail', 'MASS_EXIT'),
+                "priority_level": -1
+            }
+        
+        # -1f. V97-SDD: Silent Distribution Detector (BDXN)
+        sdd_res = results.get('sdd_v97', {})
+        if sdd_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": sdd_res['bias'],
+                "confidence": sdd_res.get('confidence', 'SUPREME'),
+                "reason": sdd_res.get('reason', ''),
+                "phase": sdd_res.get('phase', 'SILENT_DISTRIBUTION'),
+                "priority_level": -1
+            }
+        
+        # -1g. V102-SCXE: Short Crowd Extremization (SIREN)
         scxe_res = results.get('scxe_v102', {})
         if scxe_res.get('bias') != 'NEUTRAL':
             return {
@@ -9447,10 +9790,10 @@ class ConflictResolverV102_FINAL_ENHANCED:
                 "confidence": scxe_res.get('confidence', 'ABSOLUTE'),
                 "reason": scxe_res.get('reason', ''),
                 "phase": scxe_res.get('phase', 'CATASTROPHIC_SPRING'),
-                "priority_level": -2
+                "priority_level": -1
             }
         
-        # -2b. AFDE: Aggression-Flow Divergence Enhanced (VANRY FIX)
+        # -1h. V102-AFDE: Aggression-Flow Divergence (VANRY)
         afde_res = results.get('afde_v102', {})
         if afde_res.get('bias') != 'NEUTRAL':
             return {
@@ -9458,12 +9801,12 @@ class ConflictResolverV102_FINAL_ENHANCED:
                 "confidence": afde_res.get('confidence', 'ABSOLUTE'),
                 "reason": afde_res.get('reason', ''),
                 "phase": afde_res.get('phase', 'FAKE_MOMENTUM_TRAP'),
-                "priority_level": -2
+                "priority_level": -1
             }
         
-        # ========== PRIORITY -1: ABSOLUTE VETO (EXISTING V101) ==========
+        # ========== PRIORITY -1a: V101 ABSOLUTE VETO ==========
         
-        # -1a. OI Fuel vs Liquidity Gravity
+        # -1a. V101-OI_FUEL_VS_LIQ_GRAVITY
         fuel_gravity = results.get('oi_fuel_v101', {})
         if fuel_gravity.get('bias') != 'NEUTRAL':
             return {
@@ -9474,7 +9817,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
                 "priority_level": -1
             }
         
-        # -1b. Flush Sequence Veto
+        # -1b. V101-FLUSH_SEQUENCE_VETO
         flush_veto = results.get('flush_veto_v101', {})
         if flush_veto.get('bias') != 'NEUTRAL':
             return {
@@ -9485,7 +9828,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
                 "priority_level": -1
             }
         
-        # -1c. Dead Aggression Magnet
+        # -1c. V101-DEAD_AGG_MAGNET
         dead_magnet = results.get('dead_magnet_v101', {})
         if dead_magnet.get('bias') != 'NEUTRAL':
             return {
@@ -9496,7 +9839,7 @@ class ConflictResolverV102_FINAL_ENHANCED:
                 "priority_level": -1
             }
         
-        # ========== PRIORITY 0: CONTEXT MATRIX & V102 MODULES ==========
+        # ========== PRIORITY 0: CASCADE PRIORITY & CONTEXT ==========
         
         # 0a. OIPM: OI-Price Context Matrix
         oipm_res = results.get('oipm_v102', {})
@@ -20626,6 +20969,13 @@ class BinanceAnalyzerV87:
         self.oipm_v102 = OIPriceContextMatrixV102()                    # V102-OIPM
         self.final_resolver_v102_enhanced = ConflictResolverV102_FINAL_ENHANCED()  # V102 Enhanced Resolver
         
+        # ===== ANTI-IRUSDT MODULES =====
+        self.eio_v102 = ExtremeImbalanceOverrideV102()              # V102-EIO
+        self.mod_v102 = MassiveOIDropValidatorV102()                # V102-MOD
+        self.ctp_v102 = CascadeTimePriorityV102()                   # V102-CTP
+        self.sat_priority_v102 = SATModulePriorityV102()            # V102-SAT
+        self.ldr_v102 = LiquidationDistanceRatioV102()              # V102-LDR
+        
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
         self.sce_v99 = ShortCrowdExhaustionValidatorV99()            # V99-SCE (Short Crowd Exhaustion) ⭐ NEW!
@@ -22433,6 +22783,55 @@ class BinanceAnalyzerV87:
             scoring_data['scxe_v102'] = scxe_result
             scoring_data['oipm_v102'] = oipm_result
             
+            # ===== ANTI-IRUSDT MODULES =====
+            # V102-EIO: Extreme Imbalance Override
+            eio_result = self.eio_v102.detect(
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                wmi_ratio=wmi_ratio,
+                cascade_bias=cascade_result.get('bias', 'NEUTRAL') if 'cascade_result' in locals() else 'NEUTRAL',
+                energy_bias=energy_bias if 'energy_bias' in locals() else 'NEUTRAL'
+            )
+            
+            # V102-MOD: Massive OI Drop Validator
+            mod_result = self.mod_v102.detect(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                wmi_ratio=wmi_ratio
+            )
+            
+            # V102-CTP: Cascade Time Priority
+            ctp_result = self.ctp_v102.detect(
+                cascade_up=cascade_result.get('up_time', 0) if 'cascade_result' in locals() else 0,
+                cascade_down=cascade_result.get('down_time', 0) if 'cascade_result' in locals() else 0,
+                energy_up=up_energy if 'up_energy' in locals() else 0,
+                energy_down=down_energy if 'down_energy' in locals() else 0,
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0
+            )
+            
+            # V102-SAT: SAT Module Priority
+            sat_priority_result = self.sat_priority_v102.detect(
+                sat_active=sat_result.get('active', False) if 'sat_result' in locals() else False,
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                wmi_ratio=wmi_ratio,
+                wmi_lock_active=wmi_lock_result.get('bias', 'NEUTRAL') != 'NEUTRAL' if 'wmi_lock_result' in locals() else False
+            )
+            
+            # V102-LDR: Liquidation Distance Ratio
+            ldr_result = self.ldr_v102.detect(
+                long_dist=liq.get('long_dist', 999),
+                short_dist=liq.get('short_dist', 999),
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                wmi_ratio=wmi_ratio
+            )
+            
+            # Add Anti-IRUSDT results to scoring_data
+            scoring_data['eio_v102'] = eio_result
+            scoring_data['mod_v102'] = mod_result
+            scoring_data['ctp_v102'] = ctp_result
+            scoring_data['sat_priority_v102'] = sat_priority_result
+            scoring_data['ldr_v102'] = ldr_result
+            
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
@@ -23492,6 +23891,52 @@ class BinanceAnalyzerV87:
                 "confidence": oipm_result.get('confidence', 'LOW'),
                 "reason": oipm_result.get('reason', ''),
                 "priority_level": oipm_result.get('priority_level', 99)
+            }
+            
+            # ===== HASIL ANTI-IRUSDT MODULES =====
+            result["eio_v102"] = {
+                "bias": eio_result.get('bias', 'NEUTRAL'),
+                "confidence": eio_result.get('confidence', 'LOW'),
+                "reason": eio_result.get('reason', ''),
+                "phase": eio_result.get('phase', 'NONE'),
+                "priority_level": eio_result.get('priority_level', 99),
+                "override_modules": eio_result.get('override_modules', [])
+            }
+            
+            result["mod_v102"] = {
+                "bias": mod_result.get('bias', 'NEUTRAL'),
+                "confidence": mod_result.get('confidence', 'LOW'),
+                "reason": mod_result.get('reason', ''),
+                "phase": mod_result.get('phase', 'NONE'),
+                "priority_level": mod_result.get('priority_level', 99),
+                "override_modules": mod_result.get('override_modules', [])
+            }
+            
+            result["ctp_v102"] = {
+                "bias": ctp_result.get('bias', 'NEUTRAL'),
+                "confidence": ctp_result.get('confidence', 'LOW'),
+                "reason": ctp_result.get('reason', ''),
+                "phase": ctp_result.get('phase', 'NONE'),
+                "priority_level": ctp_result.get('priority_level', 99),
+                "override_modules": ctp_result.get('override_modules', [])
+            }
+            
+            result["sat_priority_v102"] = {
+                "bias": sat_priority_result.get('bias', 'NEUTRAL'),
+                "confidence": sat_priority_result.get('confidence', 'LOW'),
+                "reason": sat_priority_result.get('reason', ''),
+                "phase": sat_priority_result.get('phase', 'NONE'),
+                "priority_level": sat_priority_result.get('priority_level', 99),
+                "override_modules": sat_priority_result.get('override_modules', [])
+            }
+            
+            result["ldr_v102"] = {
+                "bias": ldr_result.get('bias', 'NEUTRAL'),
+                "confidence": ldr_result.get('confidence', 'LOW'),
+                "reason": ldr_result.get('reason', ''),
+                "phase": ldr_result.get('phase', 'NONE'),
+                "priority_level": ldr_result.get('priority_level', 99),
+                "override_modules": ldr_result.get('override_modules', [])
             }
             
             result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
