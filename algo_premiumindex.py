@@ -25399,6 +25399,14 @@ class BinanceAnalyzerV87:
                 "override_modules": oversold_downtrend_result.get('override_modules', [])
             }
             
+            # ===== V103: MARKET MODE & ABSORPTION MODULES =====
+            result["mmc_v103"] = mmc_result
+            result["ao_v103"] = ao_result
+            result["vel_v103"] = vel_result
+            result["lpf_v103"] = lpf_result
+            result["market_mode"] = mmc_result.get('market_mode', 'NEUTRAL')
+            result["v103_phase"] = v103_final.get('phase', 'NORMAL')
+            
             result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
             result["v102_enhanced_priority_level"] = v102_enhanced_final.get('priority_level', 99)
 
