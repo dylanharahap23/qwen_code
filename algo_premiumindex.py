@@ -358,6 +358,52 @@ LMP_DOUBLE_SWEEP_RATIO = 3.0          # Rasio jarak untuk double sweep zone
 ECS_ENERGY_RATIO_ABSOLUTE = 10.0       # Energy ratio > 10x = Absolute veto
 ECS_ENERGY_RATIO_STRONG = 5.0          # Energy ratio > 5x = Strong override
 
+# ================= V103-MMC: MARKET MODE CLASSIFIER CONFIG =================
+MMC_ABSORPTION_AGG_MIN = 5.0               # Agg > 5 untuk konfirmasi absorption
+MMC_VACUUM_OVD_CHECK = True                 # Cek OVD untuk vacuum
+MMC_VACUUM_ODD_CHECK = True                  # Cek ODD untuk vacuum
+MMC_LIQUIDATION_OI_MIN = 0.5                 # OI > 0.5% untuk liquidation mode
+MMC_LIQUIDATION_FLOW_MIN = 1.5               # Flow > 1.5 untuk liquidation mode
+
+# ================= V103-AO: ABSORPTION OVERRIDE CONFIG =================
+AO_AGG_ABSORPTION_MIN = 5.0                  # Agg > 5 = strong absorption
+AO_API_CONFIRM_REQUIRED = True                # Butuh konfirmasi API
+AO_ARC_CONFIRM_REQUIRED = True                # Butuh konfirmasi ARC
+AO_PRIORITY_LEVEL = -100                      # Absolute override (lebih rendah = lebih tinggi)
+
+# ================= V103-VEL: VACUUM ESCAPE LOGIC CONFIG =================
+VEL_BID_ZERO_THRESHOLD = 0.1                  # Bid volume < 0.1 = kosong
+VEL_ASK_ZERO_THRESHOLD = 0.1                  # Ask volume < 0.1 = kosong
+VEL_ODD_THIN_CONFIRM = True                    # Konfirmasi dari ODD
+
+# ================= V103-LPF: LIQUIDITY PARADOX FIX CONFIG =================
+LPF_LONG_LIQ_CLOSE_MAX = 0.2                   # Long liq < 0.2% = sangat dekat
+LPF_SHORT_LIQ_CLOSE_MAX = 0.2                  # Short liq < 0.2% = sangat dekat
+LPF_ABSORPTION_CONFIRM = True                   # Butuh konfirmasi absorption
+LPF_VACUUM_CONFIRM = True                       # Butuh konfirmasi vacuum
+
+# ================= V104: EXECUTION LAYER CONFIG =================
+EXECUTION_VOID_FLOW_MAX = 0.8          # Flow < 0.8 = market tipis
+EXECUTION_VOID_AGG_MAX = 0.3            # Agg < 0.3 = no resistance
+EXECUTION_VOID_PRIORITY = -5             # Priority tinggi
+
+NO_AGGRESSION_FLOW_MAX = 0.6            # Flow < 0.6
+NO_AGGRESSION_AGG_MAX = 0.2             # Agg < 0.2
+NO_AGGRESSION_PRIORITY = -4              # Priority sangat tinggi
+
+PATH_RESISTANCE_FLOW_WEIGHT = 1.0        # Weight untuk flow dalam resistance
+PATH_RESISTANCE_AGG_WEIGHT = 1.0         # Weight untuk agg dalam resistance
+PATH_RESISTANCE_PRIORITY = -3             # Priority
+
+MICRO_BREAK_LOOKBACK = 5                  # Candles untuk lookback
+MICRO_BREAK_VOLUME_MIN = 1.2              # Minimal volume ratio
+MICRO_BREAK_PRIORITY = -2                  # Priority
+
+TIME_LAG_WAIT_SECONDS = 60                 # 1 menit default wait
+TIME_LAG_TRIGGER_FLOW_MIN = 1.5            # Flow spike untuk trigger
+TIME_LAG_TRIGGER_AGG_MIN = 1.2             # Agg spike untuk trigger
+TIME_LAG_PRIORITY = -1                      # Priority terendah di layer eksekusi
+
 # ================= V101-AFD: AGGRESSION-FLOW DIVERGENCE CONFIG =================
 AFD_AGG_DEAD_MAX = 0.2                  # Agg < 0.2 = Dead aggression
 AFD_FLOW_MIN = 1.0                      # Flow > 1.0 = Volume masuk
@@ -5479,6 +5525,246 @@ class TimeLagEngineV104:
             del self.trigger_detected[signal_key]
 
 
+# ================= V103-MMC: MARKET MODE CLASSIFIER =================
+class MarketModeClassifierV103:
+    """
+    🔥 V103-MMC: MARKET MODE CLASSIFIER - MEMBEDAKAN 2 MODE MARKET
+    
+    MODE 1: EXPANSION MODE (SQUEEZE / ABSORPTION)
+    - Agg tinggi (>5)
+    - Absorption atau Vacuum terdeteksi
+    - Market akan EXPAND dulu sebelum hit liquidity
+    
+    MODE 2: LIQUIDATION MODE (HIT LIQUIDITY)
+    - OI naik atau Flow tinggi
+    - Market langsung target liquidity
+    
+    Kasus PIPPINUSDT:
+    - Agg: 19x (TINGGI!)
+    - API: ✅ ABSORPTION
+    - OVD: ✅ VACUUM UP
+    - Bot salah: pilih liquidation mode ❌
+    - Harusnya: expansion mode! ✅
+    """
+    
+    @staticmethod
+    def detect(agg_ratio: float, flow: float, oi_delta: float, 
+               absorption_active: bool, vacuum_active: bool,
+               ovd_result: Dict = None, odd_result: Dict = None) -> Dict:
+        """
+        Deteksi mode market: EXPANSION atau LIQUIDATION
+        """
+        mode = "NEUTRAL"
+        reason = ""
+        confidence = "LOW"
+        
+        # ===== MODE 1: EXPANSION MODE (SQUEEZE / ABSORPTION) =====
+        if absorption_active or vacuum_active:
+            if agg_ratio > MMC_ABSORPTION_AGG_MIN:  # Agg > 5
+                mode = "EXPANSION_MODE"
+                confidence = "ABSOLUTE"
+                reason = f"MMC_EXPANSION_MODE: Agg {agg_ratio:.1f}x + "
+                if absorption_active:
+                    reason += "ABSORPTION detected"
+                if vacuum_active:
+                    reason += "VACUUM detected"
+                reason += ". Market akan EXPAND dulu sebelum hit liquidity!"
+        
+        # ===== MODE 2: LIQUIDATION MODE =====
+        elif oi_delta > MMC_LIQUIDATION_OI_MIN or flow > MMC_LIQUIDATION_FLOW_MIN:
+            mode = "LIQUIDATION_MODE"
+            confidence = "HIGH"
+            reason = f"MMC_LIQUIDATION_MODE: OI {oi_delta:+.2f}% / Flow {flow:.2f}x. Market langsung target liquidity!"
+        
+        return {
+            "market_mode": mode,
+            "confidence": confidence,
+            "reason": reason,
+            "is_expansion": mode == "EXPANSION_MODE",
+            "is_liquidation": mode == "LIQUIDATION_MODE",
+            "priority_level": -50  # Sangat tinggi, sebelum modul lain
+        }
+
+
+# ================= V103-AO: ABSORPTION OVERRIDE =================
+class AbsorptionOverrideV103:
+    """
+    🔥 V103-AO: ABSORPTION OVERRIDE - PRIORITAS TERTINGGI
+    
+    Jika API (Absorption Pressure Index) mengkonfirmasi absorption
+    DAN Agg > 5, maka WAJIB LONG (override semua sinyal lain).
+    
+    Kasus PIPPINUSDT:
+    - API: ✅ ABSORPTION (CONFIRMED)
+    - Agg: 19x (>5)
+    - Bot: SHORT (ikut LPC) ❌
+    - Harusnya: ABSORPTION OVERRIDE → LONG! ✅
+    """
+    
+    @staticmethod
+    def detect(agg_ratio: float, api_result: Dict, arc_result: Dict = None) -> Dict:
+        """
+        Deteksi absorption override
+        """
+        # Cek API confirmation
+        api_absorbing = False
+        if api_result and isinstance(api_result, dict):
+            api_absorbing = api_result.get('is_absorbing', False) or api_result.get('is_absorption_trap', False)
+        
+        # Cek ARC confirmation (optional)
+        arc_absorbing = False
+        if arc_result and isinstance(arc_result, dict):
+            arc_absorbing = arc_result.get('is_real_absorption', False)
+        
+        # Kondisi: Agg tinggi + API confirm absorption
+        if agg_ratio > AO_AGG_ABSORPTION_MIN and api_absorbing:
+            # Kalau butuh ARC confirm, cek juga
+            if AO_ARC_CONFIRM_REQUIRED and not arc_absorbing:
+                return {"bias": "NEUTRAL", "priority_level": 99}
+            
+            return {
+                "bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "priority_level": AO_PRIORITY_LEVEL,  # -100 (TERTINGGI!)
+                "reason": f"AO_ABSORPTION_OVERRIDE: Agg {agg_ratio:.1f}x + API CONFIRM ABSORPTION! "
+                         f"Market dalam EXPANSION MODE - harga akan EXPAND dulu! "
+                         f"Abaikan LPC/WMI/ENERGY!",
+                "phase": "ABSORPTION_EXPANSION",
+                "override_modules": ["LPC_PAYOUT", "WMI_VETO", "ENERGY_PATH", "LEP", "EGR"]
+            }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V103-VEL: VACUUM ESCAPE LOGIC =================
+class VacuumEscapeLogicV103:
+    """
+    🔥 V103-VEL: VACUUM ESCAPE LOGIC
+    
+    Jika orderbook kosong di satu sisi (bid=0 atau ask=0),
+    price akan "escape" ke arah yang kosong.
+    
+    Kasus PIPPINUSDT:
+    - OVD: ✅ VACUUM UP (ask side tipis)
+    - Price akan lari ke atas karena tidak ada resistance!
+    """
+    
+    @staticmethod
+    def detect(bid_volume_near: float, ask_volume_near: float,
+               ovd_result: Dict = None, odd_result: Dict = None) -> Dict:
+        """
+        Deteksi vacuum escape
+        """
+        vacuum_detected = False
+        bias = "NEUTRAL"
+        reason = ""
+        
+        # Cek langsung dari orderbook
+        if bid_volume_near < VEL_BID_ZERO_THRESHOLD:  # Bid kosong
+            vacuum_detected = True
+            bias = "SHORT"
+            reason = f"VEL_BID_VACUUM: Bid volume {bid_volume_near:.1f} (KOSONG!) - Price akan jatuh bebas!"
+        
+        elif ask_volume_near < VEL_ASK_ZERO_THRESHOLD:  # Ask kosong
+            vacuum_detected = True
+            bias = "LONG"
+            reason = f"VEL_ASK_VACUUM: Ask volume {ask_volume_near:.1f} (KOSONG!) - Price akan melesat naik!"
+        
+        # Konfirmasi dari OVD/ODD jika ada
+        if VEL_ODD_THIN_CONFIRM and odd_result:
+            if odd_result.get('status') == "ASK_THINNING":
+                vacuum_detected = True
+                bias = "LONG"
+                reason = f"VEL_ODD_CONFIRM: {odd_result.get('reason', '')} - Vacuum UP confirmed!"
+            elif odd_result.get('status') == "BID_THINNING":
+                vacuum_detected = True
+                bias = "SHORT"
+                reason = f"VEL_ODD_CONFIRM: {odd_result.get('reason', '')} - Vacuum DOWN confirmed!"
+        
+        if vacuum_detected:
+            return {
+                "vacuum_detected": True,
+                "bias": bias,
+                "confidence": "ABSOLUTE",
+                "priority_level": -90,  # Sangat tinggi
+                "reason": reason,
+                "phase": "VACUUM_ESCAPE"
+            }
+        
+        return {"vacuum_detected": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V103-LPF: LIQUIDITY PARADOX FIX =================
+class LiquidityParadoxFixV103:
+    """
+    🔥 V103-LPF: LIQUIDITY PARADOX FIX
+    
+    Jika long liq sangat dekat (<0.2%):
+    - Jika ada ABSORPTION atau VACUUM → bias LONG (escape dulu baru sweep)
+    - Jika tidak → bias SHORT (sweep langsung)
+    
+    Kasus PIPPINUSDT:
+    - Long liq: 0.06% (SUPER DEKAT!)
+    - API: ✅ ABSORPTION
+    - OVD: ✅ VACUUM
+    - Bot pilih SHORT (sweep) ❌
+    - Harusnya: LONG (escape dulu) ✅
+    """
+    
+    @staticmethod
+    def detect(long_dist: float, short_dist: float,
+               absorption_active: bool, vacuum_active: bool,
+               market_mode: str = "NEUTRAL") -> Dict:
+        """
+        Deteksi liquidity paradox
+        """
+        # LONG LIQ SANGAT DEKAT
+        if abs(long_dist) < LPF_LONG_LIQ_CLOSE_MAX:
+            if absorption_active or vacuum_active or market_mode == "EXPANSION_MODE":
+                return {
+                    "bias": "LONG",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -80,
+                    "reason": f"LPF_PARADOX_LONG: Long liq {long_dist:.2f}% (SANGAT DEKAT!) + "
+                             f"ABSORPTION/VACUUM terdeteksi! "
+                             f"Market akan ESCAPE DULU (naik) baru sweep long liq!",
+                    "phase": "ESCAPE_BEFORE_SWEEP"
+                }
+            else:
+                return {
+                    "bias": "SHORT",
+                    "confidence": "HIGH",
+                    "priority_level": 0,
+                    "reason": f"LPF_NORMAL_LONG: Long liq {long_dist:.2f}% dekat, "
+                             f"tidak ada absorption/vacuum → SWEEP LANGSUNG!",
+                    "phase": "DIRECT_SWEEP"
+                }
+        
+        # SHORT LIQ SANGAT DEKAT
+        if abs(short_dist) < LPF_SHORT_LIQ_CLOSE_MAX:
+            if absorption_active or vacuum_active or market_mode == "EXPANSION_MODE":
+                return {
+                    "bias": "SHORT",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -80,
+                    "reason": f"LPF_PARADOX_SHORT: Short liq {short_dist:.2f}% (SANGAT DEKAT!) + "
+                             f"ABSORPTION/VACUUM terdeteksi! "
+                             f"Market akan ESCAPE DULU (turun) baru sweep short liq!",
+                    "phase": "ESCAPE_BEFORE_SWEEP"
+                }
+            else:
+                return {
+                    "bias": "LONG",
+                    "confidence": "HIGH",
+                    "priority_level": 0,
+                    "reason": f"LPF_NORMAL_SHORT: Short liq {short_dist:.2f}% dekat, "
+                             f"tidak ada absorption/vacuum → SWEEP LANGSUNG!",
+                    "phase": "DIRECT_SWEEP"
+                }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
 class OIBuildValidatorV99:
     """
     🔥 V99: OI BUILD VALIDATOR - NUCLEAR OI OVERRIDE
@@ -10371,6 +10657,40 @@ class ConflictResolverV102_FINAL_ENHANCED:
             if 'bias' not in res:
                 res['bias'] = default_bias
             return res
+        
+        # ========== PRIORITY -100: ABSORPTION OVERRIDE (TERTINGGI!) ==========
+        ao_res = results.get('ao_v103', {})
+        if ao_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": ao_res['bias'],
+                "confidence": ao_res.get('confidence', 'ABSOLUTE'),
+                "reason": ao_res.get('reason', ''),
+                "phase": ao_res.get('phase', 'ABSORPTION_EXPANSION'),
+                "priority_level": -100,
+                "override_modules": ao_res.get('override_modules', [])
+            }
+        
+        # ========== PRIORITY -90: VACUUM ESCAPE LOGIC ==========
+        vel_res = results.get('vel_v103', {})
+        if vel_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": vel_res['bias'],
+                "confidence": vel_res.get('confidence', 'ABSOLUTE'),
+                "reason": vel_res.get('reason', ''),
+                "phase": vel_res.get('phase', 'VACUUM_ESCAPE'),
+                "priority_level": -90
+            }
+        
+        # ========== PRIORITY -80: LIQUIDITY PARADOX FIX ==========
+        lpf_res = results.get('lpf_v103', {})
+        if lpf_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": lpf_res['bias'],
+                "confidence": lpf_res.get('confidence', 'ABSOLUTE'),
+                "reason": lpf_res.get('reason', ''),
+                "phase": lpf_res.get('phase', 'ESCAPE_BEFORE_SWEEP'),
+                "priority_level": -80
+            }
         
         # ========== PRIORITY -5: NO AGGRESSION OVERRIDE (TERTINGGI!) ==========
         no_agg = results.get('no_agg_override_v104', {})
@@ -21348,6 +21668,22 @@ class OutputFormatterV87:
             print(f"\n🛡️ WMI_VETO_VALIDATOR: ACTIVE")
             print(f"   📌 {result['wmi_veto_validator_v103']['reason']}")
         
+        # ===== V103 MARKET MODE & ABSORPTION MODULES =====
+        if result.get('market_mode') == "EXPANSION_MODE":
+            print(f"\n🌋 MARKET MODE: EXPANSION MODE - {result.get('mmc_v103', {}).get('reason', '')}")
+
+        if result.get('market_mode') == "LIQUIDATION_MODE":
+            print(f"\n🎯 MARKET MODE: LIQUIDATION MODE - {result.get('mmc_v103', {}).get('reason', '')}")
+
+        if result.get('ao_v103', {}).get('bias') != 'NEUTRAL':
+            print(f"\n🔥 V103-AO: ACTIVE - {result['ao_v103']['reason']}")
+
+        if result.get('vel_v103', {}).get('bias') != 'NEUTRAL':
+            print(f"\n🌪️ V103-VEL: ACTIVE - {result['vel_v103']['reason']}")
+
+        if result.get('lpf_v103', {}).get('bias') != 'NEUTRAL':
+            print(f"\n🔄 V103-LPF: ACTIVE - {result['lpf_v103']['reason']}")
+        
         # ===== V104: EXECUTION LAYER STATUS =====
         if result.get('no_agg_override_v104', {}).get('active'):
             print(f"\n💀 NO_PLAYER_MARKET: ACTIVE - {result['no_agg_override_v104']['reason']}")
@@ -21849,6 +22185,14 @@ class BinanceAnalyzerV87:
         self.path_resistance = PathResistanceModelV104()          # V104 baru! 🔥
         self.micro_break = MicrostructureBreakDetectorV104()      # V104 baru! 🔥
         self.time_lag = TimeLagEngineV104()                       # V104 baru! 🔥
+        
+        # ===== V103 MARKET MODE & ABSORPTION MODULES =====
+        self.mmc_v103 = MarketModeClassifierV103()              # V103-MMC
+        self.ao_v103 = AbsorptionOverrideV103()                 # V103-AO
+        self.vel_v103 = VacuumEscapeLogicV103()                 # V103-VEL
+        self.lpf_v103 = LiquidityParadoxFixV103()               # V103-LPF
+        # Gunakan resolver V103 yang baru
+        self.final_resolver_v103 = ConflictResolverV102_FINAL_ENHANCED()
         
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
@@ -23822,6 +24166,66 @@ class BinanceAnalyzerV87:
             scoring_data['time_lag_v104'] = time_lag_result
             scoring_data['signal_key'] = signal_key
             
+            # ===== V103 MARKET MODE & ABSORPTION MODULES =====
+            
+            # Dapatkan hasil dari module terkait
+            api_absorbing = False
+            if 'api_result' in locals() and api_result:
+                api_absorbing = api_result.get('is_absorbing', False) or api_result.get('is_absorption_trap', False)
+
+            arc_absorbing = False
+            if 'arc_result' in locals() and arc_result:
+                arc_absorbing = arc_result.get('is_real_absorption', False)
+
+            ovd_vacuum = False
+            if 'ovd_result' in locals() and ovd_result:
+                ovd_vacuum = ovd_result.get('is_trap', False) and ovd_result.get('trap_type') in ['VACUUM_TRAP_BULLISH', 'VACUUM_TRAP_BEARISH']
+
+            odd_thin = False
+            if 'odd_result' in locals() and odd_result:
+                odd_thin = odd_result.get('is_thin', False)
+
+            # Market Mode Classifier
+            mmc_result = self.mmc_v103.detect(
+                agg_ratio=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                oi_delta=oi_delta_5m,
+                absorption_active=api_absorbing or arc_absorbing,
+                vacuum_active=ovd_vacuum or odd_thin,
+                ovd_result=ovd_result if 'ovd_result' in locals() else None,
+                odd_result=odd_result if 'odd_result' in locals() else None
+            )
+
+            # Absorption Override
+            ao_result = self.ao_v103.detect(
+                agg_ratio=trades.get('aggressive_ratio', 1.0),
+                api_result=api_result if 'api_result' in locals() else {},
+                arc_result=arc_result if 'arc_result' in locals() else {}
+            )
+
+            # Vacuum Escape Logic
+            vel_result = self.vel_v103.detect(
+                bid_volume_near=odd_result.get('bid_volume_near', 0) if 'odd_result' in locals() else 0,
+                ask_volume_near=odd_result.get('ask_volume_near', 0) if 'odd_result' in locals() else 0,
+                ovd_result=ovd_result if 'ovd_result' in locals() else None,
+                odd_result=odd_result if 'odd_result' in locals() else None
+            )
+
+            # Liquidity Paradox Fix
+            lpf_result = self.lpf_v103.detect(
+                long_dist=liq.get('long_dist', 999),
+                short_dist=liq.get('short_dist', 999),
+                absorption_active=api_absorbing or arc_absorbing,
+                vacuum_active=ovd_vacuum or odd_thin,
+                market_mode=mmc_result.get('market_mode', 'NEUTRAL')
+            )
+            
+            # Update results dictionary dengan module V103
+            scoring_data['mmc_v103'] = mmc_result
+            scoring_data['ao_v103'] = ao_result
+            scoring_data['vel_v103'] = vel_result
+            scoring_data['lpf_v103'] = lpf_result
+            
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
@@ -23831,8 +24235,23 @@ class BinanceAnalyzerV87:
             # ===== V102 ENHANCED: FINAL RESOLVER (ANTI-VANRY & ANTI-SIREN - TERTINGGI!) =====
             v102_enhanced_final = self.final_resolver_v102_enhanced.resolve_all_signals(scoring_data)
             
+            # Gunakan V103 Final resolver (dengan priority -100 untuk AO, -90 VEL, -80 LPF)
+            v103_final = self.final_resolver_v103.resolve_all_signals(scoring_data)
+            
             # Gunakan V102 Enhanced resolver jika ada signal dengan priority_level <= -2 (VANRY/SIREN fix)
-            if v102_enhanced_final.get('priority_level', 99) <= -2:
+            if v103_final.get('priority_level', 99) <= -80:
+                # V103 override (ABSORPTION/VACUUM/PARADOX - TERTINGGI!)
+                final_decision = {
+                    'bias': v103_final['final_bias'],
+                    'final_bias': v103_final['final_bias'],
+                    'confidence': v103_final['confidence'],
+                    'reason': v103_final['reason'],
+                    'phase': v103_final['phase'],
+                    'priority_level': v103_final['priority_level'],
+                    'override_modules': v103_final.get('override_modules', []),
+                    'market_mode': mmc_result.get('market_mode', 'NEUTRAL')
+                }
+            elif v102_enhanced_final.get('priority_level', 99) <= -2:
                 final_decision = {
                     'bias': v102_enhanced_final['final_bias'],
                     'final_bias': v102_enhanced_final['final_bias'],
@@ -23873,7 +24292,8 @@ class BinanceAnalyzerV87:
                     'reason': v102_enhanced_final.get('reason', 'No strong signal detected'),
                     'phase': v102_enhanced_final.get('phase', 'NORMAL'),
                     'priority_level': v102_enhanced_final.get('priority_level', 99),
-                    'score': 0
+                    'score': 0,
+                    'market_mode': mmc_result.get('market_mode', 'NEUTRAL')
                 }
             # ================================================================================
 
