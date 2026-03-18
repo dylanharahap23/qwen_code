@@ -22708,6 +22708,13 @@ class BinanceAnalyzerV87:
         # Gunakan resolver V103 yang baru
         self.final_resolver_v103 = ConflictResolverV102_FINAL_ENHANCED()
         
+        # ===== V104 MACRO INTENTION ENGINE =====
+        self.mie_v104 = MacroIntentionDetectorV104()           # V104-MIE
+        self.tpe_v104 = TargetPriorityEngineV104()             # V104-TPE
+        self.vv_v104 = VELValidatorV104()                      # V104-VV
+        self.fmd_v104 = FakeMoveDetectorV104()                 # V104-FMD
+        self.final_resolver_v104 = ConflictResolverV104_FINAL()
+        
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
         self.sce_v99 = ShortCrowdExhaustionValidatorV99()            # V99-SCE (Short Crowd Exhaustion) ⭐ NEW!
@@ -24740,6 +24747,45 @@ class BinanceAnalyzerV87:
             scoring_data['vel_v103'] = vel_result
             scoring_data['lpf_v103'] = lpf_result
             
+            # ===== V104 MACRO INTENTION ENGINE =====
+            
+            # Macro Intention Detector
+            mie_result = self.mie_v104.detect(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                rsi=rsi6
+            )
+            
+            # Target Priority Engine (butuh LPC result)
+            tpe_result = self.tpe_v104.determine_target(
+                lpc_result=lpc_result if 'lpc_result' in locals() else {},
+                wmi_ratio=wmi_ratio,
+                intention_result=mie_result
+            )
+            
+            # VEL Validator - validasi apakah VEL boleh dipakai
+            vv_result = self.vv_v104.validate(
+                vel_result=vel_result if 'vel_result' in locals() else {},
+                target_bias=tpe_result.get('bias', 'NEUTRAL'),
+                intention_result=mie_result,
+                flow=trades.get('ratio', 1.0)
+            )
+            
+            # Fake Move Detector
+            fmd_result = self.fmd_v104.detect(
+                rsi=rsi6,
+                flow=trades.get('ratio', 1.0),
+                price_change=change_5m,
+                intention_bias=mie_result.get('bias', 'NEUTRAL'),
+                target_bias=tpe_result.get('bias', 'NEUTRAL')
+            )
+            
+            # Update results dictionary dengan module V104
+            scoring_data['mie_v104'] = mie_result
+            scoring_data['tpe_v104'] = tpe_result
+            scoring_data['vv_v104'] = vv_result
+            scoring_data['fmd_v104'] = fmd_result
+            
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
@@ -24752,8 +24798,23 @@ class BinanceAnalyzerV87:
             # Gunakan V103 Final resolver (dengan priority -100 untuk AO, -90 VEL, -80 LPF)
             v103_final = self.final_resolver_v103.resolve_all_signals(scoring_data)
             
-            # Gunakan V102 Enhanced resolver jika ada signal dengan priority_level <= -2 (VANRY/SIREN fix)
-            if v103_final.get('priority_level', 99) <= -80:
+            # ===== V104: FINAL RESOLVER (MACRO INTENTION ENGINE - TERTINGGI!) =====
+            v104_final = self.final_resolver_v104.resolve_all_signals(scoring_data)
+            
+            # Gunakan V104 resolver jika ada signal intention yang kuat
+            if v104_final.get('priority_level', 99) <= -5:
+                # V104 override (MACRO INTENTION - TERTINGGI!)
+                final_decision = {
+                    'bias': v104_final['final_bias'],
+                    'final_bias': v104_final['final_bias'],
+                    'confidence': v104_final['confidence'],
+                    'reason': v104_final['reason'],
+                    'phase': v104_final['phase'],
+                    'priority_level': v104_final['priority_level'],
+                    'intention': mie_result.get('intention', 'NEUTRAL'),
+                    'override_modules': v104_final.get('override_modules', [])
+                }
+            elif v103_final.get('priority_level', 99) <= -80:
                 # V103 override (ABSORPTION/VACUUM/PARADOX - TERTINGGI!)
                 final_decision = {
                     'bias': v103_final['final_bias'],
@@ -25915,6 +25976,14 @@ class BinanceAnalyzerV87:
             result["lpf_v103"] = lpf_result
             result["market_mode"] = mmc_result.get('market_mode', 'NEUTRAL')
             result["v103_phase"] = v103_final.get('phase', 'NORMAL')
+            
+            # ===== V104: MACRO INTENTION ENGINE =====
+            result["mie_v104"] = mie_result
+            result["tpe_v104"] = tpe_result
+            result["vv_v104"] = vv_result
+            result["fmd_v104"] = fmd_result
+            result["intention"] = mie_result.get('intention', 'NEUTRAL')
+            result["v104_phase"] = v104_final.get('phase', 'NORMAL')
             
             result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
             result["v102_enhanced_priority_level"] = v102_enhanced_final.get('priority_level', 99)
