@@ -619,6 +619,456 @@ class LiquidationGravityTrapDetectorV100:
         return {"is_liquidity_gravity_trap": False, "bias": "NEUTRAL"}
 
 
+# ================= V104-MIE: MACRO INTENTION DETECTOR =================
+class MacroIntentionDetectorV104:
+    """
+    🔥 V104-MIE: MACRO INTENTION DETECTOR - MEMBACA INTENSI PASAR
+    
+    Ini adalah jantung dari sistem baru! Bukan cuma baca indikator,
+    tapi baca APA YANG WHALE LAKUKAN.
+    
+    INTENTION MATRIX:
+    OI Δ  | Price Δ | RSI     | Intention        | Bias
+    ------|---------|---------|------------------|------
+    ↑     | Any     | >70     | DISTRIBUTION     | SHORT
+    ↑     | Any     | <40     | ACCUMULATION     | LONG
+    ↓     | ↑       | Any     | SHORT COVERING   | LONG
+    ↓     | ↓       | Any     | LONG LIQUIDATION | SHORT
+    
+    PRIORITY:
+    1. SHORT_COVERING / LONG_LIQUIDATION (tertinggi)
+    2. DISTRIBUTION / ACCUMULATION
+    3. NEUTRAL
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, price_change: float, rsi: float) -> Dict:
+        """
+        Deteksi intensi pasar berdasarkan OI, Price, dan RSI
+        """
+        intention = "NEUTRAL"
+        bias = "NEUTRAL"
+        confidence = "LOW"
+        priority = 99
+        reason = ""
+        
+        # ===== 1. SHORT COVERING (PRIORITAS TERTINGGI) =====
+        # OI turun + Price naik = Short seller forced to cover
+        if oi_delta < MIE_OI_DROP_MIN and price_change > MIE_PRICE_RISE_MIN:
+            intention = "SHORT_COVERING"
+            bias = "LONG"
+            confidence = "ABSOLUTE"
+            priority = MIE_SHORT_COVERING_PRIORITY  # -170
+            reason = f"MIE_SHORT_COVERING: OI ↓{oi_delta:.2f}% + Price ↑{price_change:+.2f}% = "
+            reason += "SHORT SELLER FORCED TO COVER! WAJIB LONG!"
+        
+        # ===== 2. LONG LIQUIDATION (PRIORITAS TERTINGGI) =====
+        # OI turun + Price turun = Long positions being liquidated
+        elif oi_delta < MIE_OI_DROP_MIN and price_change < MIE_PRICE_DROP_MIN:
+            intention = "LONG_LIQUIDATION"
+            bias = "SHORT"
+            confidence = "ABSOLUTE"
+            priority = MIE_LONG_LIQUIDATION_PRIORITY  # -170
+            reason = f"MIE_LONG_LIQUIDATION: OI ↓{oi_delta:.2f}% + Price ↓{price_change:.2f}% = "
+            reason += "LONG POSITIONS BEING LIQUIDATED! WAJIB SHORT!"
+        
+        # ===== 3. DISTRIBUTION (Whale jual) =====
+        # OI naik + RSI tinggi = Whale build short positions
+        elif oi_delta > MIE_OI_RISE_MIN and rsi > MIE_RSI_OVERBOUGHT_MIN:
+            intention = "DISTRIBUTION"
+            bias = "SHORT"
+            confidence = "SUPREME"
+            priority = MIE_DISTRIBUTION_PRIORITY  # -160
+            reason = f"MIE_DISTRIBUTION: OI ↑{oi_delta:+.2f}% + RSI {rsi:.1f} (>70) = "
+            reason += "WHALE BUILDING SHORTS! DILARANG LONG!"
+            
+            # Extreme overbought -> lebih yakin
+            if rsi > MIE_RSI_EXTREME_OVERBOUGHT:
+                confidence = "ABSOLUTE"
+                reason += " (EXTREME OVERBOUGHT!)"
+        
+        # ===== 4. ACCUMULATION (Whale beli) =====
+        # OI naik + RSI rendah = Whale build long positions
+        elif oi_delta > MIE_OI_RISE_MIN and rsi < MIE_RSI_OVERSOLD_MAX:
+            intention = "ACCUMULATION"
+            bias = "LONG"
+            confidence = "SUPREME"
+            priority = MIE_ACCUMULATION_PRIORITY  # -160
+            reason = f"MIE_ACCUMULATION: OI ↑{oi_delta:+.2f}% + RSI {rsi:.1f} (<40) = "
+            reason += "WHALE ACCUMULATING! DILARANG SHORT!"
+            
+            # Extreme oversold -> lebih yakin
+            if rsi < MIE_RSI_EXTREME_OVERSOLD:
+                confidence = "ABSOLUTE"
+                reason += " (EXTREME OVERSOLD!)"
+        
+        return {
+            "intention": intention,
+            "bias": bias,
+            "confidence": confidence,
+            "priority": priority,
+            "reason": reason,
+            "oi_delta": oi_delta,
+            "price_change": price_change,
+            "rsi": rsi
+        }
+
+
+# ================= V104-TPE: TARGET PRIORITY ENGINE =================
+class TargetPriorityEngineV104:
+    """
+    🔥 V104-TPE: TARGET PRIORITY ENGINE - MENENTUKAN TARGET UTAMA
+    
+    Bukan cuma lihat jarak terdekat, tapi LIQUIDITY TERBESAR.
+    HFT selalu pilih target dengan payout terbesar.
+    
+    Priority:
+    1. Payout Ratio (LPC)
+    2. WMI (Whale cluster)
+    3. Intention
+    """
+    
+    @staticmethod
+    def determine_target(lpc_result: Dict, wmi_ratio: float, 
+                         intention_result: Dict) -> Dict:
+        """
+        Tentukan target utama berdasarkan multiple faktor
+        """
+        target = "NEUTRAL"
+        bias = "NEUTRAL"
+        confidence = "LOW"
+        reason = ""
+        
+        # Extract LPC data
+        payout_long = lpc_result.get('payout_long', 0) if lpc_result else 0
+        payout_short = lpc_result.get('payout_short', 0) if lpc_result else 0
+        payout_ratio = lpc_result.get('payout_ratio', 1.0) if lpc_result else 1.0
+        lpc_bias = lpc_result.get('bias', 'NEUTRAL') if lpc_result else 'NEUTRAL'
+        
+        # ===== 1. Payout Ratio (CORE) =====
+        if payout_ratio > 2.0:  # Signifikan
+            if payout_long > payout_short:
+                target = "LONG_LIQ"
+                bias = "SHORT"  # Target long liq = price down
+                confidence = "HIGH"
+                reason = f"TPE_PAYOUT: Long payout {payout_long:.1f}x > Short {payout_short:.1f}x"
+            else:
+                target = "SHORT_LIQ"
+                bias = "LONG"   # Target short liq = price up
+                confidence = "HIGH"
+                reason = f"TPE_PAYOUT: Short payout {payout_short:.1f}x > Long {payout_long:.1f}x"
+        
+        # ===== 2. Validasi dengan WMI =====
+        wmi_direction = "LONG" if wmi_ratio > 0 else "SHORT" if wmi_ratio < 0 else "NEUTRAL"
+        
+        if bias != "NEUTRAL" and wmi_direction != "NEUTRAL":
+            if bias == wmi_direction:
+                confidence = "ABSOLUTE"
+                reason += f" + WMI {wmi_ratio:.1f}x (SEARAH!)"
+            else:
+                # WMI berlawanan dengan payout - perlu cek intention
+                reason += f" + WMI {wmi_ratio:.1f}x (BERLAWANAN!)"
+                confidence = "MEDIUM"
+        
+        # ===== 3. Validasi dengan Intention =====
+        intention_bias = intention_result.get('bias', 'NEUTRAL')
+        intention_priority = intention_result.get('priority', 99)
+        
+        if intention_bias != "NEUTRAL" and intention_priority < -150:
+            # Intention punya prioritas lebih tinggi
+            if intention_bias != bias:
+                # Intention bilang berbeda - override payout
+                bias = intention_bias
+                target = "SHORT_LIQ" if bias == "LONG" else "LONG_LIQ"
+                reason = f"TPE_INTENTION_OVERRIDE: {intention_result.get('reason', '')}"
+                confidence = "ABSOLUTE"
+        
+        return {
+            "target": target,
+            "bias": bias,
+            "confidence": confidence,
+            "reason": reason,
+            "payout_long": payout_long,
+            "payout_short": payout_short,
+            "payout_ratio": payout_ratio
+        }
+
+
+# ================= V104-VV: VEL VALIDATOR =================
+class VELValidatorV104:
+    """
+    🔥 V104-VV: VEL VALIDATOR - MEMASTIKAN VEL HANYA DIPAKAI JIKA SEARAH
+    
+    Selama ini VEL (Vacuum) terlalu dominan.
+    Sekarang VEL hanya valid jika SEARAH dengan TARGET INTENTION.
+    
+    Rule:
+    - VEL hanya untuk timing entry, BUKAN penentu arah
+    - VEL diabaikan jika berlawanan dengan target
+    """
+    
+    @staticmethod
+    def validate(vel_result: Dict, target_bias: str, 
+                 intention_result: Dict, flow: float) -> Dict:
+        """
+        Validasi apakah VEL boleh dipakai
+        """
+        if not vel_result or vel_result.get('bias') == 'NEUTRAL':
+            return {"valid": False, "bias": "NEUTRAL"}
+        
+        vel_bias = vel_result.get('bias', 'NEUTRAL')
+        
+        # ===== Cek apakah VEL searah dengan target =====
+        if vel_bias == target_bias:
+            return {
+                "valid": True,
+                "bias": vel_bias,
+                "confidence": "HIGH",
+                "reason": f"VV_VEL_VALID: VEL {vel_bias} searah dengan target {target_bias}",
+                "use_for_timing": True  # VEL boleh dipakai untuk timing
+            }
+        
+        # ===== VEL berlawanan dengan target =====
+        # Cek apakah ini fake move
+        if flow < MIE_FAKE_FLOW_MAX:
+            return {
+                "valid": False,
+                "bias": target_bias,  # Tetap ikut target
+                "confidence": "ABSOLUTE",
+                "reason": f"VV_FAKE_MOVE: VEL {vel_bias} berlawanan dengan target {target_bias} + "
+                         f"Flow {flow:.2f}x rendah = FAKE MOVE! IGNORE VEL!",
+                "use_for_timing": False
+            }
+        
+        # Default: VEL diabaikan, ikut target
+        return {
+            "valid": False,
+            "bias": target_bias,
+            "confidence": "HIGH",
+            "reason": f"VV_VEL_IGNORED: VEL {vel_bias} berlawanan dengan target {target_bias}",
+            "use_for_timing": False
+        }
+
+
+# ================= V104-FMD: FAKE MOVE DETECTOR =================
+class FakeMoveDetectorV104:
+    """
+    🔥 V104-FMD: FAKE MOVE DETECTOR - MENGENALI GERAKAN PALSU
+    
+    HFT sering bikin gerakan palsu (fake squeeze/fake dump)
+    untuk menjebak bot.
+    
+    Ciri-ciri fake move:
+    - Flow rendah (<1.0)
+    - RSI ekstrem (>80 atau <20)
+    - Berlawanan dengan intention
+    """
+    
+    @staticmethod
+    def detect(rsi: float, flow: float, price_change: float,
+               intention_bias: str, target_bias: str) -> Dict:
+        """
+        Deteksi apakah pergerakan saat ini adalah fake
+        """
+        fake_type = "NONE"
+        bias = "NEUTRAL"
+        confidence = "LOW"
+        reason = ""
+        
+        # ===== FAKE SQUEEZE (pump palsu) =====
+        if rsi > MIE_FAKE_RSI_OVERBOUGHT_MIN and flow < MIE_FAKE_FLOW_MAX:
+            if price_change > 0:  # Harga naik
+                fake_type = "FAKE_SQUEEZE"
+                bias = "SHORT"  # Fake squeeze = akan dump
+                confidence = "SUPREME"
+                reason = f"FMD_FAKE_SQUEEZE: RSI {rsi:.1f} >80 + Flow {flow:.2f}x <1.0 = "
+                reason += "PUMP PALSU! SIAP DUMP!"
+        
+        # ===== FAKE DUMP (jatuh palsu) =====
+        elif rsi < MIE_RSI_EXTREME_OVERSOLD and flow < MIE_FAKE_FLOW_MAX:
+            if price_change < 0:  # Harga turun
+                fake_type = "FAKE_DUMP"
+                bias = "LONG"  # Fake dump = akan rebound
+                confidence = "SUPREME"
+                reason = f"FMD_FAKE_DUMP: RSI {rsi:.1f} <15 + Flow {flow:.2f}x <1.0 = "
+                reason += "DUMP PALSU! SIAP REBOUND!"
+        
+        # ===== Cek apakah fake move ini berlawanan dengan intention =====
+        if fake_type != "NONE" and intention_bias != "NEUTRAL":
+            if bias == intention_bias:
+                # Fake move searah intention = real
+                fake_type = "NONE"
+                reason = "FMD_MOVE_REAL: Fake move ternyata searah intention"
+        
+        return {
+            "fake_type": fake_type,
+            "bias": bias,
+            "confidence": confidence,
+            "reason": reason,
+            "block_long": bias == "SHORT" and fake_type != "NONE",
+            "block_short": bias == "LONG" and fake_type != "NONE"
+        }
+
+
+# ================= V104-SPL: STRICT PRIORITY LOCK =================
+class StrictPriorityLockV104:
+    """
+    🔥 V104-SPL: STRICT PRIORITY LOCK - FINAL AUTHORITY
+    
+    Ini adalah "wasit" terakhir yang memastikan modul dengan
+    prioritas tertinggi tidak bisa di-override oleh modul lain.
+    
+    Urutan Prioritas Mutlak:
+    1. SHORT_COVERING / LONG_LIQUIDATION (intention)
+    2. DISTRIBUTION / ACCUMULATION (intention)
+    3. TARGET PRIORITY (payout + wmi)
+    4. ZAS (Zero Aggression)
+    5. ODF (Overbought Distribution)
+    6. VEL (hanya jika searah)
+    7. LPC (fallback)
+    """
+    
+    @staticmethod
+    def resolve(intention_result: Dict, target_result: Dict,
+                zas_result: Dict, odf_result: Dict,
+                vel_validated: Dict, fake_move: Dict) -> Dict:
+        """
+        Resolve final bias dengan strict priority
+        """
+        
+        # ===== PRIORITAS 1: SHORT COVERING / LONG LIQUIDATION =====
+        if intention_result.get('priority') <= -170:
+            return {
+                "final_bias": intention_result['bias'],
+                "confidence": intention_result['confidence'],
+                "reason": f"SPL_INTENTION_OVERRIDE: {intention_result['reason']}",
+                "phase": intention_result['intention'],
+                "priority": -170
+            }
+        
+        # ===== PRIORITAS 2: DISTRIBUTION / ACCUMULATION =====
+        if intention_result.get('priority') <= -160:
+            return {
+                "final_bias": intention_result['bias'],
+                "confidence": intention_result['confidence'],
+                "reason": f"SPL_INTENTION: {intention_result['reason']}",
+                "phase": intention_result['intention'],
+                "priority": -160
+            }
+        
+        # ===== PRIORITAS 3: TARGET PRIORITY =====
+        if target_result.get('confidence') in ['ABSOLUTE', 'SUPREME', 'HIGH']:
+            return {
+                "final_bias": target_result['bias'],
+                "confidence": target_result['confidence'],
+                "reason": f"SPL_TARGET: {target_result['reason']}",
+                "phase": "TARGET_PRIORITY",
+                "priority": -150
+            }
+        
+        # ===== PRIORITAS 4: ZAS (Zero Aggression) =====
+        if zas_result and zas_result.get('is_squeeze'):
+            return {
+                "final_bias": zas_result['bias'],
+                "confidence": zas_result.get('confidence', 'SUPREME'),
+                "reason": f"SPL_ZAS: {zas_result.get('reason', '')}",
+                "phase": "ZAS_ACTIVE",
+                "priority": -140
+            }
+        
+        # ===== PRIORITAS 5: ODF (Overbought Distribution) =====
+        if odf_result and odf_result.get('active'):
+            return {
+                "final_bias": odf_result['bias'],
+                "confidence": odf_result.get('confidence', 'ABSOLUTE'),
+                "reason": f"SPL_ODF: {odf_result.get('reason', '')}",
+                "phase": "ODF_ACTIVE",
+                "priority": -130
+            }
+        
+        # ===== PRIORITAS 6: VEL (hanya jika valid) =====
+        if vel_validated and vel_validated.get('valid'):
+            return {
+                "final_bias": vel_validated['bias'],
+                "confidence": vel_validated.get('confidence', 'HIGH'),
+                "reason": f"SPL_VEL: {vel_validated.get('reason', '')}",
+                "phase": "VEL_VALIDATED",
+                "priority": -120
+            }
+        
+        # ===== PRIORITAS 7: Fake Move Block =====
+        if fake_move and fake_move.get('fake_type') != 'NONE':
+            if fake_move.get('block_long'):
+                return {
+                    "final_bias": "SHORT",
+                    "confidence": fake_move.get('confidence', 'SUPREME'),
+                    "reason": f"SPL_FAKE_BLOCK: {fake_move.get('reason', '')}",
+                    "phase": "FAKE_MOVE_BLOCK",
+                    "priority": -110
+                }
+            if fake_move.get('block_short'):
+                return {
+                    "final_bias": "LONG",
+                    "confidence": fake_move.get('confidence', 'SUPREME'),
+                    "reason": f"SPL_FAKE_BLOCK: {fake_move.get('reason', '')}",
+                    "phase": "FAKE_MOVE_BLOCK",
+                    "priority": -110
+                }
+        
+        # ===== DEFAULT =====
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal",
+            "phase": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V104-FINAL: CONFLICT RESOLVER DENGAN STRICT PRIORITY =================
+class ConflictResolverV104_FINAL:
+    """
+    🔥 V104-FINAL: CONFLICT RESOLVER DENGAN STRICT PRIORITY
+    
+    PRIORITY -170: SHORT_COVERING / LONG_LIQUIDATION (TERTINGGI!)
+    PRIORITY -160: DISTRIBUTION / ACCUMULATION
+    PRIORITY -150: TARGET PRIORITY (PAYOUT + WMI)
+    PRIORITY -140: ZAS (Zero Aggression)
+    PRIORITY -130: ODF (Overbought Distribution)
+    PRIORITY -120: VEL (hanya jika searah target)
+    PRIORITY -110: FAKE MOVE BLOCK
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== AMBIL SEMUA HASIL MODULE =====
+        intention_result = results.get('mie_v104', {})
+        target_result = results.get('tpe_v104', {})
+        zas_result = results.get('zas_v87', {})
+        odf_result = results.get('odf', {})
+        vel_validated = results.get('vv_v104', {})
+        fake_move = results.get('fmd_v104', {})
+        
+        # ===== GUNAKAN STRICT PRIORITY LOCK =====
+        final = StrictPriorityLockV104.resolve(
+            intention_result=intention_result,
+            target_result=target_result,
+            zas_result=zas_result,
+            odf_result=odf_result,
+            vel_validated=vel_validated,
+            fake_move=fake_move
+        )
+        
+        return {
+            "final_bias": final.get('final_bias', 'NEUTRAL'),
+            "confidence": final.get('confidence', 'LOW'),
+            "reason": final.get('reason', ''),
+            "phase": final.get('phase', 'NEUTRAL'),
+            "priority_level": final.get('priority', 99)
+        }
+
+
 # ================= V100-DAV: DISTRIBUTION ABSORPTION VALIDATOR CONFIG =================
 DAV_AGG_FLOW_GAP_THRESHOLD = 5.0      # Agg/Flow > 5x = Suspicious
 DAV_OI_BUILD_DISTRIBUTION_MIN = 2.0   # OI Build > 2% = Possible Dist
@@ -728,6 +1178,33 @@ OIP_DIVERGENCE_PRIORITY = -8               # Priority -8
 
 # ================= V103: LONG LIQ HUNT CONFIG =================
 LONG_LIQ_HUNT_WMI_MIN = -90                # WMI < -90
+
+# ================= V104-MIE: MACRO INTENTION ENGINE CONFIG =================
+
+# Intention Detection Thresholds
+MIE_OI_RISE_MIN = 0.5                    # OI naik > 0.5%
+MIE_OI_DROP_MIN = -0.5                   # OI turun > 0.5%
+MIE_RSI_OVERBOUGHT_MIN = 70.0            # RSI > 70 = overbought
+MIE_RSI_OVERSOLD_MAX = 40.0              # RSI < 40 = oversold
+MIE_RSI_EXTREME_OVERBOUGHT = 85.0         # RSI > 85 = extreme overbought
+MIE_RSI_EXTREME_OVERSOLD = 15.0           # RSI < 15 = extreme oversold
+MIE_PRICE_RISE_MIN = 0.5                  # Price naik > 0.5%
+MIE_PRICE_DROP_MIN = -0.5                 # Price turun > 0.5%
+
+# Priority Levels
+MIE_INTENTION_PRIORITY = -150              # Intention priority (sangat tinggi)
+MIE_DISTRIBUTION_PRIORITY = -160           # Distribution lebih tinggi
+MIE_ACCUMULATION_PRIORITY = -160           # Accumulation juga tinggi
+MIE_SHORT_COVERING_PRIORITY = -170         # Short covering tertinggi!
+MIE_LONG_LIQUIDATION_PRIORITY = -170       # Long liquidation juga tertinggi
+
+# VEL Validation
+MIE_VEL_SEARAH_REQUIRED = True             # VEL harus searah dengan target
+MIE_VALIDATE_WITH_INTENTION = True         # Validasi VEL dengan intention
+
+# Fake Move Detection
+MIE_FAKE_FLOW_MAX = 1.0                    # Flow < 1.0 = fake
+MIE_FAKE_RSI_OVERBOUGHT_MIN = 80.0         # RSI > 80 untuk fake squeeze
 LONG_LIQ_HUNT_DIST_MAX = 2.0                # Long dist < 2%
 LONG_LIQ_HUNT_RATIO = 3.0                   # Long dist < Short dist / 3
 LONG_LIQ_HUNT_PRIORITY = -7                 # Priority -7
@@ -21710,6 +22187,38 @@ class OutputFormatterV87:
         time_lag_result = result.get('time_lag_v104', {})
         if time_lag_result and not time_lag_result.get('ready', True):
             print(f"⏳ TIME_LAG: {time_lag_result.get('reason', 'Waiting...')}")
+        
+        # ===== V104 MACRO INTENTION ENGINE =====
+        if result.get('intention') != 'NEUTRAL':
+            intention = result.get('intention')
+            reason = result.get('mie_v104', {}).get('reason', '')
+            
+            if intention == "SHORT_COVERING":
+                print(f"\n🏃‍♂️ V104-MIE: SHORT COVERING DETECTED! - {reason}")
+            elif intention == "LONG_LIQUIDATION":
+                print(f"\n💀 V104-MIE: LONG LIQUIDATION DETECTED! - {reason}")
+            elif intention == "DISTRIBUTION":
+                print(f"\n📉 V104-MIE: DISTRIBUTION DETECTED! - {reason}")
+            elif intention == "ACCUMULATION":
+                print(f"\n📈 V104-MIE: ACCUMULATION DETECTED! - {reason}")
+
+        # Target Priority
+        tpe_result = result.get('tpe_v104', {})
+        if tpe_result.get('bias') != 'NEUTRAL':
+            print(f"\n🎯 V104-TPE: TARGET = {tpe_result.get('target', 'UNKNOWN')} ({tpe_result.get('bias')})")
+            print(f"   📌 {tpe_result.get('reason', '')}")
+
+        # VEL Validator
+        vv_result = result.get('vv_v104', {})
+        if vv_result.get('valid'):
+            print(f"\n✅ V104-VV: VEL VALIDATED - {vv_result.get('reason', '')}")
+        elif vv_result.get('bias') != 'NEUTRAL':
+            print(f"\n⚠️ V104-VV: VEL IGNORED - {vv_result.get('reason', '')}")
+
+        # Fake Move Detector
+        fmd_result = result.get('fmd_v104', {})
+        if fmd_result.get('fake_type') != 'NONE':
+            print(f"\n🎭 V104-FMD: {fmd_result.get('fake_type')} - {fmd_result.get('reason', '')}")
 
         # DECISION
         print(f"\n{'='*40}")
