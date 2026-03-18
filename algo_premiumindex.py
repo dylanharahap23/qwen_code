@@ -21664,9 +21664,10 @@ class OutputFormatterV87:
             print(f"\n📋 SWEEP SEQUENCE: {result['sequence']}")
 
         # ===== V103: WMI VETO VALIDATOR =====
-        if result.get('wmi_veto_validator_v103', {}).get('allow_veto') == False:
+        wmi_validator_result = result.get('wmi_veto_validator_v103', {})
+        if wmi_validator_result.get('allow_veto') == False:
             print(f"\n🛡️ WMI_VETO_VALIDATOR: ACTIVE")
-            print(f"   📌 {result['wmi_veto_validator_v103']['reason']}")
+            print(f"   📌 {wmi_validator_result.get('reason', 'No reason')}")
         
         # ===== V103 MARKET MODE & ABSORPTION MODULES =====
         if result.get('market_mode') == "EXPANSION_MODE":
@@ -21675,36 +21676,40 @@ class OutputFormatterV87:
         if result.get('market_mode') == "LIQUIDATION_MODE":
             print(f"\n🎯 MARKET MODE: LIQUIDATION MODE - {result.get('mmc_v103', {}).get('reason', '')}")
 
-        if result.get('ao_v103', {}).get('bias') != 'NEUTRAL':
-            print(f"\n🔥 V103-AO: ACTIVE - {result['ao_v103']['reason']}")
+        # Gunakan .get() dengan default empty dict untuk menghindari KeyError
+        ao_result = result.get('ao_v103', {})
+        if ao_result.get('bias') != 'NEUTRAL':
+            print(f"\n🔥 V103-AO: ACTIVE - {ao_result.get('reason', 'No reason')}")
 
-        if result.get('vel_v103', {}).get('bias') != 'NEUTRAL':
-            print(f"\n🌪️ V103-VEL: ACTIVE - {result['vel_v103']['reason']}")
+        vel_result = result.get('vel_v103', {})
+        if vel_result.get('bias') != 'NEUTRAL':
+            print(f"\n🌪️ V103-VEL: ACTIVE - {vel_result.get('reason', 'No reason')}")
 
-        if result.get('lpf_v103', {}).get('bias') != 'NEUTRAL':
-            print(f"\n🔄 V103-LPF: ACTIVE - {result['lpf_v103']['reason']}")
+        lpf_result = result.get('lpf_v103', {})
+        if lpf_result.get('bias') != 'NEUTRAL':
+            print(f"\n🔄 V103-LPF: ACTIVE - {lpf_result.get('reason', 'No reason')}")
         
         # ===== V104: EXECUTION LAYER STATUS =====
-        if result.get('no_agg_override_v104', {}).get('active'):
-            print(f"\n💀 NO_PLAYER_MARKET: ACTIVE - {result['no_agg_override_v104']['reason']}")
+        no_agg_result = result.get('no_agg_override_v104', {})
+        if no_agg_result.get('active'):
+            print(f"\n💀 NO_PLAYER_MARKET: ACTIVE - {no_agg_result.get('reason', 'No reason')}")
         
-        if result.get('execution_void_v104', {}).get('active'):
-            void = result['execution_void_v104']
-            void_icon = "🚀" if void.get('void_direction') == 'UP' else "📉"
-            print(f"{void_icon} EXECUTION_VOID: {void['reason']}")
+        void_result = result.get('execution_void_v104', {})
+        if void_result.get('active'):
+            void_icon = "🚀" if void_result.get('void_direction') == 'UP' else "📉"
+            print(f"{void_icon} EXECUTION_VOID: {void_result.get('reason', 'No reason')}")
         
-        if result.get('path_resistance_v104', {}).get('active'):
-            path = result['path_resistance_v104']
-            print(f"🛣️ PATH_RESISTANCE: {path['reason']}")
+        path_result = result.get('path_resistance_v104', {})
+        if path_result.get('active'):
+            print(f"🛣️ PATH_RESISTANCE: {path_result.get('reason', 'No reason')}")
         
-        if result.get('micro_break_v104', {}).get('active'):
-            micro = result['micro_break_v104']
-            print(f"🔨 MICRO_BREAK: {micro['reason']}")
+        micro_result = result.get('micro_break_v104', {})
+        if micro_result.get('active'):
+            print(f"🔨 MICRO_BREAK: {micro_result.get('reason', 'No reason')}")
         
-        if result.get('time_lag_v104', {}):
-            time_lag = result['time_lag_v104']
-            if not time_lag.get('ready', True):
-                print(f"⏳ TIME_LAG: {time_lag.get('reason', 'Waiting...')}")
+        time_lag_result = result.get('time_lag_v104', {})
+        if time_lag_result and not time_lag_result.get('ready', True):
+            print(f"⏳ TIME_LAG: {time_lag_result.get('reason', 'Waiting...')}")
 
         # DECISION
         print(f"\n{'='*40}")
