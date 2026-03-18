@@ -619,32 +619,26 @@ class LiquidationGravityTrapDetectorV100:
         return {"is_liquidity_gravity_trap": False, "bias": "NEUTRAL"}
 
 
-# ================= V104-MIE: MACRO INTENTION DETECTOR =================
+# ================= V104-MIE UPDATED: MACRO INTENTION DETECTOR DENGAN PRICE CONTEXT =================
 class MacroIntentionDetectorV104:
     """
-    🔥 V104-MIE: MACRO INTENTION DETECTOR - MEMBACA INTENSI PASAR
+    🔥 V104-MIE UPDATED: MACRO INTENTION DETECTOR DENGAN PRICE CONTEXT
     
-    Ini adalah jantung dari sistem baru! Bukan cuma baca indikator,
-    tapi baca APA YANG WHALE LAKUKAN.
-    
-    INTENTION MATRIX:
-    OI Δ  | Price Δ | RSI     | Intention        | Bias
-    ------|---------|---------|------------------|------
-    ↑     | Any     | >70     | DISTRIBUTION     | SHORT
-    ↑     | Any     | <40     | ACCUMULATION     | LONG
-    ↓     | ↑       | Any     | SHORT COVERING   | LONG
-    ↓     | ↓       | Any     | LONG LIQUIDATION | SHORT
-    
-    PRIORITY:
-    1. SHORT_COVERING / LONG_LIQUIDATION (tertinggi)
-    2. DISTRIBUTION / ACCUMULATION
-    3. NEUTRAL
+    INTENTION MATRIX UPDATE:
+    OI Δ  | Price Δ | Flow  | RSI     | Intention        | Bias
+    ------|---------|-------|---------|------------------|------
+    ↑     | ↓       | >2.0  | Any     | SHORT BUILDING   | SHORT ← BARU!
+    ↑     | ↑       | Any   | >70     | DISTRIBUTION     | SHORT
+    ↑     | ↓       | <2.0  | <40     | ACCUMULATION     | LONG
+    ↑     | ↑       | Any   | <40     | ACCUMULATION     | LONG
+    ↓     | ↑       | Any   | Any     | SHORT COVERING   | LONG
+    ↓     | ↓       | Any   | Any     | LONG LIQUIDATION | SHORT
     """
     
     @staticmethod
-    def detect(oi_delta: float, price_change: float, rsi: float) -> Dict:
+    def detect(oi_delta: float, price_change: float, rsi: float, flow: float = 0) -> Dict:
         """
-        Deteksi intensi pasar berdasarkan OI, Price, dan RSI
+        Deteksi intensi pasar berdasarkan OI, Price, RSI, dan FLOW
         """
         intention = "NEUTRAL"
         bias = "NEUTRAL"
@@ -652,9 +646,38 @@ class MacroIntentionDetectorV104:
         priority = 99
         reason = ""
         
-        # ===== 1. SHORT COVERING (PRIORITAS TERTINGGI) =====
-        # OI turun + Price naik = Short seller forced to cover
-        if oi_delta < MIE_OI_DROP_MIN and price_change > MIE_PRICE_RISE_MIN:
+        # ===== PRIORITAS 1: SHORT BUILDING (BARU! - KASUS BARD) =====
+        # OI naik + Price turun + Flow tinggi = Whale building SHORT positions
+        if oi_delta > MIE_OI_RISE_MIN and price_change < MIE_PRICE_DOWN_MIN:
+            if flow > MIE_FLOW_HIGH_MIN:  # Flow tinggi konfirmasi aktivitas
+                intention = "SHORT_BUILDING"
+                bias = "SHORT"
+                confidence = "ABSOLUTE"
+                priority = MIE_SHORT_BUILDING_PRIORITY  # -165
+                reason = f"MIE_SHORT_BUILDING: OI ↑{oi_delta:+.2f}% + Price ↓{price_change:.2f}% + "
+                reason += f"Flow {flow:.2f}x = WHALE BUILDING SHORT POSITIONS! WAJIB SHORT!"
+            else:
+                # Flow rendah - mungkin akumulasi diam-diam
+                intention = "POSSIBLE_ACCUMULATION"
+                bias = "LONG"
+                confidence = "MEDIUM"
+                priority = -140
+                reason = f"MIE_POSSIBLE_ACCUM: OI ↑{oi_delta:+.2f}% + Price ↓{price_change:.2f}% "
+                reason += f"tapi Flow {flow:.2f}x rendah = mungkin akumulasi diam-diam"
+        
+        # ===== PRIORITAS 2: LONG BUILDING (BARU! - Kebalikan) =====
+        # OI naik + Price naik + Flow tinggi = Whale building LONG positions
+        elif oi_delta > MIE_OI_RISE_MIN and price_change > MIE_PRICE_UP_MIN:
+            if flow > MIE_FLOW_HIGH_MIN:
+                intention = "LONG_BUILDING"
+                bias = "LONG"
+                confidence = "ABSOLUTE"
+                priority = MIE_LONG_BUILDING_PRIORITY  # -165
+                reason = f"MIE_LONG_BUILDING: OI ↑{oi_delta:+.2f}% + Price ↑{price_change:+.2f}% + "
+                reason += f"Flow {flow:.2f}x = WHALE BUILDING LONG POSITIONS! WAJIB LONG!"
+        
+        # ===== PRIORITAS 3: SHORT COVERING =====
+        elif oi_delta < MIE_OI_DROP_MIN and price_change > MIE_PRICE_RISE_MIN:
             intention = "SHORT_COVERING"
             bias = "LONG"
             confidence = "ABSOLUTE"
@@ -662,8 +685,7 @@ class MacroIntentionDetectorV104:
             reason = f"MIE_SHORT_COVERING: OI ↓{oi_delta:.2f}% + Price ↑{price_change:+.2f}% = "
             reason += "SHORT SELLER FORCED TO COVER! WAJIB LONG!"
         
-        # ===== 2. LONG LIQUIDATION (PRIORITAS TERTINGGI) =====
-        # OI turun + Price turun = Long positions being liquidated
+        # ===== PRIORITAS 4: LONG LIQUIDATION =====
         elif oi_delta < MIE_OI_DROP_MIN and price_change < MIE_PRICE_DROP_MIN:
             intention = "LONG_LIQUIDATION"
             bias = "SHORT"
@@ -672,8 +694,7 @@ class MacroIntentionDetectorV104:
             reason = f"MIE_LONG_LIQUIDATION: OI ↓{oi_delta:.2f}% + Price ↓{price_change:.2f}% = "
             reason += "LONG POSITIONS BEING LIQUIDATED! WAJIB SHORT!"
         
-        # ===== 3. DISTRIBUTION (Whale jual) =====
-        # OI naik + RSI tinggi = Whale build short positions
+        # ===== PRIORITAS 5: DISTRIBUTION (OI naik + RSI tinggi) =====
         elif oi_delta > MIE_OI_RISE_MIN and rsi > MIE_RSI_OVERBOUGHT_MIN:
             intention = "DISTRIBUTION"
             bias = "SHORT"
@@ -682,13 +703,11 @@ class MacroIntentionDetectorV104:
             reason = f"MIE_DISTRIBUTION: OI ↑{oi_delta:+.2f}% + RSI {rsi:.1f} (>70) = "
             reason += "WHALE BUILDING SHORTS! DILARANG LONG!"
             
-            # Extreme overbought -> lebih yakin
             if rsi > MIE_RSI_EXTREME_OVERBOUGHT:
                 confidence = "ABSOLUTE"
                 reason += " (EXTREME OVERBOUGHT!)"
         
-        # ===== 4. ACCUMULATION (Whale beli) =====
-        # OI naik + RSI rendah = Whale build long positions
+        # ===== PRIORITAS 6: ACCUMULATION (OI naik + RSI rendah) =====
         elif oi_delta > MIE_OI_RISE_MIN and rsi < MIE_RSI_OVERSOLD_MAX:
             intention = "ACCUMULATION"
             bias = "LONG"
@@ -697,7 +716,6 @@ class MacroIntentionDetectorV104:
             reason = f"MIE_ACCUMULATION: OI ↑{oi_delta:+.2f}% + RSI {rsi:.1f} (<40) = "
             reason += "WHALE ACCUMULATING! DILARANG SHORT!"
             
-            # Extreme oversold -> lebih yakin
             if rsi < MIE_RSI_EXTREME_OVERSOLD:
                 confidence = "ABSOLUTE"
                 reason += " (EXTREME OVERSOLD!)"
@@ -710,7 +728,8 @@ class MacroIntentionDetectorV104:
             "reason": reason,
             "oi_delta": oi_delta,
             "price_change": price_change,
-            "rsi": rsi
+            "rsi": rsi,
+            "flow": flow
         }
 
 
@@ -918,14 +937,14 @@ class StrictPriorityLockV104:
     Ini adalah "wasit" terakhir yang memastikan modul dengan
     prioritas tertinggi tidak bisa di-override oleh modul lain.
     
-    Urutan Prioritas Mutlak:
-    1. SHORT_COVERING / LONG_LIQUIDATION (intention)
-    2. DISTRIBUTION / ACCUMULATION (intention)
-    3. TARGET PRIORITY (payout + wmi)
-    4. ZAS (Zero Aggression)
-    5. ODF (Overbought Distribution)
-    6. VEL (hanya jika searah)
-    7. LPC (fallback)
+    Urutan Prioritas Mutlak UPDATED:
+    1. SHORT_COVERING / LONG_LIQUIDATION (priority -170)
+    2. SHORT_BUILDING / LONG_BUILDING (priority -165) ← BARU!
+    3. DISTRIBUTION / ACCUMULATION (priority -160)
+    4. TARGET PRIORITY (payout + wmi) (priority -150)
+    5. ZAS (Zero Aggression) (priority -140)
+    6. ODF (Overbought Distribution) (priority -130)
+    7. VEL (hanya jika searah) (priority -120)
     """
     
     @staticmethod
@@ -946,7 +965,17 @@ class StrictPriorityLockV104:
                 "priority": -170
             }
         
-        # ===== PRIORITAS 2: DISTRIBUTION / ACCUMULATION =====
+        # ===== PRIORITAS 2: SHORT BUILDING / LONG BUILDING (BARU!) =====
+        if intention_result.get('priority') <= -165:
+            return {
+                "final_bias": intention_result['bias'],
+                "confidence": intention_result['confidence'],
+                "reason": f"SPL_BUILDING: {intention_result['reason']}",
+                "phase": intention_result['intention'],
+                "priority": -165
+            }
+        
+        # ===== PRIORITAS 3: DISTRIBUTION / ACCUMULATION =====
         if intention_result.get('priority') <= -160:
             return {
                 "final_bias": intention_result['bias'],
@@ -1191,12 +1220,19 @@ MIE_RSI_EXTREME_OVERSOLD = 15.0           # RSI < 15 = extreme oversold
 MIE_PRICE_RISE_MIN = 0.5                  # Price naik > 0.5%
 MIE_PRICE_DROP_MIN = -0.5                 # Price turun > 0.5%
 
+# ================= V104-MIE UPDATED: PRICE CONTEXT CONFIG =================
+MIE_FLOW_HIGH_MIN = 2.0                    # Flow > 2.0 = high volume
+MIE_PRICE_DOWN_MIN = -1.0                   # Price turun > 1%
+MIE_PRICE_UP_MIN = 1.0                      # Price naik > 1%
+
 # Priority Levels
 MIE_INTENTION_PRIORITY = -150              # Intention priority (sangat tinggi)
 MIE_DISTRIBUTION_PRIORITY = -160           # Distribution lebih tinggi
 MIE_ACCUMULATION_PRIORITY = -160           # Accumulation juga tinggi
 MIE_SHORT_COVERING_PRIORITY = -170         # Short covering tertinggi!
 MIE_LONG_LIQUIDATION_PRIORITY = -170       # Long liquidation juga tertinggi
+MIE_SHORT_BUILDING_PRIORITY = -165           # Antara -170 dan -160
+MIE_LONG_BUILDING_PRIORITY = -165            # Antara -170 dan -160
 
 # VEL Validation
 MIE_VEL_SEARAH_REQUIRED = True             # VEL harus searah dengan target
@@ -22191,16 +22227,23 @@ class OutputFormatterV87:
         # ===== V104 MACRO INTENTION ENGINE =====
         if result.get('intention') != 'NEUTRAL':
             intention = result.get('intention')
-            reason = result.get('mie_v104', {}).get('reason', '')
+            mie = result.get('mie_v104', {})
+            reason = mie.get('reason', '')
             
             if intention == "SHORT_COVERING":
                 print(f"\n🏃‍♂️ V104-MIE: SHORT COVERING DETECTED! - {reason}")
             elif intention == "LONG_LIQUIDATION":
                 print(f"\n💀 V104-MIE: LONG LIQUIDATION DETECTED! - {reason}")
+            elif intention == "SHORT_BUILDING":  # ← BARU!
+                print(f"\n🏗️ V104-MIE: SHORT BUILDING DETECTED! - {reason}")
+            elif intention == "LONG_BUILDING":   # ← BARU!
+                print(f"\n🏗️ V104-MIE: LONG BUILDING DETECTED! - {reason}")
             elif intention == "DISTRIBUTION":
                 print(f"\n📉 V104-MIE: DISTRIBUTION DETECTED! - {reason}")
             elif intention == "ACCUMULATION":
                 print(f"\n📈 V104-MIE: ACCUMULATION DETECTED! - {reason}")
+            elif intention == "POSSIBLE_ACCUMULATION":
+                print(f"\n🤔 V104-MIE: POSSIBLE ACCUMULATION - {reason}")
 
         # Target Priority
         tpe_result = result.get('tpe_v104', {})
@@ -24753,7 +24796,8 @@ class BinanceAnalyzerV87:
             mie_result = self.mie_v104.detect(
                 oi_delta=oi_delta_5m,
                 price_change=change_5m,
-                rsi=rsi6
+                rsi=rsi6,
+                flow=trades.get('ratio', 1.0)  # ← TAMBAHKAN INI!
             )
             
             # Target Priority Engine (butuh LPC result)
