@@ -1098,6 +1098,381 @@ class ConflictResolverV104_FINAL:
         }
 
 
+# ================= V105-RME: RESISTANCE MAP ENGINE =================
+class ResistanceMapEngineV105:
+    """
+    🔥 V105-RME: RESISTANCE MAP ENGINE - MENGHITUNG BIAYA PERGERAKAN
+    
+    HFT tidak hanya lihat target, tapi juga BIAYA untuk mencapai target.
+    Resistance = liquidity + aggression
+    
+    Formula:
+    resistance_up = ask_liquidity * weight + seller_aggression * weight
+    resistance_down = bid_liquidity * weight + buyer_aggression * weight
+    
+    Kasus DEGO:
+    - Ask tipis (low liquidity)
+    - Seller tidak ada (low aggression)
+    - Bid kosong (tapi ini untuk down, bukan up)
+    → resistance_up SANGAT RENDAH! Mudah pump!
+    """
+    
+    @staticmethod
+    def calculate(bid_volume: float, ask_volume: float,
+                  seller_agg: float, buyer_agg: float) -> Dict:
+        """
+        Hitung resistance ke atas dan ke bawah
+        """
+        # Resistance UP = butuh buy untuk nembus ask
+        resistance_up = (ask_volume * RME_ASK_LIQ_WEIGHT) + (seller_agg * RME_SELL_AGG_WEIGHT)
+        
+        # Resistance DOWN = butuh sell untuk nembus bid
+        resistance_down = (bid_volume * RME_BID_LIQ_WEIGHT) + (buyer_agg * RME_BUY_AGG_WEIGHT)
+        
+        # Hindari division by zero
+        resistance_up = max(resistance_up, 0.01)
+        resistance_down = max(resistance_down, 0.01)
+        
+        # Hitung rasio
+        if resistance_up > 0:
+            up_down_ratio = resistance_down / resistance_up
+        else:
+            up_down_ratio = 999
+            
+        if resistance_down > 0:
+            down_up_ratio = resistance_up / resistance_down
+        else:
+            down_up_ratio = 999
+        
+        # Tentukan jalur termudah
+        cheaper_path = "UP" if resistance_up < resistance_down else "DOWN"
+        cheaper_ratio = down_up_ratio if cheaper_path == "UP" else up_down_ratio
+        
+        confidence = "LOW"
+        if cheaper_ratio > RME_RESISTANCE_RATIO_EXTREME:
+            confidence = "ABSOLUTE"
+        elif cheaper_ratio > RME_RESISTANCE_RATIO_HIGH:
+            confidence = "HIGH"
+        
+        reason = f"RME: Resistance UP={resistance_up:.2f}, DOWN={resistance_down:.2f}. "
+        reason += f"Jalur {cheaper_path} {cheaper_ratio:.1f}x lebih murah!"
+        
+        return {
+            "resistance_up": round(resistance_up, 2),
+            "resistance_down": round(resistance_down, 2),
+            "up_down_ratio": round(up_down_ratio, 2),
+            "down_up_ratio": round(down_up_ratio, 2),
+            "cheaper_path": cheaper_path,
+            "cheaper_ratio": round(cheaper_ratio, 2),
+            "bias": "LONG" if cheaper_path == "UP" else "SHORT",
+            "confidence": confidence,
+            "reason": reason
+        }
+    
+    @staticmethod
+    def check_liquidity_void(bid_volume: float, ask_volume: float,
+                             seller_agg: float, buyer_agg: float) -> Dict:
+        """
+        Deteksi liquidity void dan interpretasi yang benar
+        
+        Kasus DEGO:
+        - Bid kosong → biasanya orang kira bearish (jatuh)
+        - Tapi jika no sellers, ini malah bullish!
+        """
+        bid_empty = bid_volume < RME_BID_EMPTY_THRESHOLD
+        ask_empty = ask_volume < RME_ASK_EMPTY_THRESHOLD
+        no_sellers = seller_agg < RME_NO_SELLER_AGG_MAX
+        no_buyers = buyer_agg < RME_NO_BUYER_AGG_MAX
+        
+        # LIQUIDITY VOID - Interpretasi yang benar
+        if bid_empty and no_sellers:
+            # Bid kosong + tidak ada seller = BULLISH!
+            return {
+                "void_type": "BULLISH_VOID",
+                "bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "reason": f"RME_VOID: Bid kosong ({bid_volume:.2f}) + No sellers ({seller_agg:.2f}) = "
+                         f"TIDAK BEARISH! Malah BULLISH! Price bisa pump tanpa resistance!",
+                "priority": -190  # Sangat tinggi
+            }
+        
+        if ask_empty and no_buyers:
+            # Ask kosong + tidak ada buyer = BEARISH!
+            return {
+                "void_type": "BEARISH_VOID",
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "reason": f"RME_VOID: Ask kosong ({ask_volume:.2f}) + No buyers ({buyer_agg:.2f}) = "
+                         f"TIDAK BULLISH! Malah BEARISH! Price bisa jatuh tanpa resistance!",
+                "priority": -190
+            }
+        
+        # VOID biasa (perlu konteks)
+        if bid_empty:
+            return {
+                "void_type": "BID_VOID",
+                "bias": "NEUTRAL",
+                "confidence": "MEDIUM",
+                "reason": f"RME_VOID: Bid kosong ({bid_volume:.2f}) - perlu cek seller aggression",
+                "priority": -150
+            }
+        
+        if ask_empty:
+            return {
+                "void_type": "ASK_VOID",
+                "bias": "NEUTRAL",
+                "confidence": "MEDIUM",
+                "reason": f"RME_VOID: Ask kosong ({ask_volume:.2f}) - perlu cek buyer aggression",
+                "priority": -150
+            }
+        
+        return {"void_type": "NONE", "bias": "NEUTRAL", "priority": 99}
+
+
+# ================= V105-ERF: EXECUTION REALITY FILTER =================
+class ExecutionRealityFilterV105:
+    """
+    🔥 V105-ERF: EXECUTION REALITY FILTER - MEMISAHKAN FAKTA DARI ILUSI
+    
+    Selama ini VEL (vacuum) dianggap sebagai arah.
+    Padahal VEL hanya LOCAL CONDITION, bukan GLOBAL INTENT.
+    
+    Filter ini akan:
+    1. Hard lock untuk SHORT COVERING dan LONG LIQUIDATION
+    2. Memvalidasi VEL dengan resistance map
+    3. Menentukan apakah VEL layak dipakai sebagai arah atau hanya timing
+    """
+    
+    @staticmethod
+    def filter(intention_result: Dict, resistance_result: Dict,
+               vel_result: Dict, vel_validated: Dict) -> Dict:
+        """
+        Filter reality berdasarkan intention dan resistance
+        """
+        
+        # ===== HARD LOCK 1: SHORT COVERING =====
+        if intention_result.get('intention') == "SHORT_COVERING":
+            return {
+                "final_bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "reason": f"ERF_HARD_LOCK: SHORT COVERING terdeteksi! WAJIB LONG! "
+                         f"{intention_result.get('reason', '')}",
+                "use_vel_for_timing": True,  # VEL boleh untuk timing entry
+                "vel_ignored_for_direction": True,
+                "priority": -200
+            }
+        
+        # ===== HARD LOCK 2: LONG LIQUIDATION =====
+        if intention_result.get('intention') == "LONG_LIQUIDATION":
+            return {
+                "final_bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "reason": f"ERF_HARD_LOCK: LONG LIQUIDATION terdeteksi! WAJIB SHORT! "
+                         f"{intention_result.get('reason', '')}",
+                "use_vel_for_timing": True,
+                "vel_ignored_for_direction": True,
+                "priority": -200
+            }
+        
+        # ===== RESISTANCE-DRIVEN DECISION =====
+        if resistance_result.get('confidence') in ['ABSOLUTE', 'HIGH']:
+            # Resistance lebih penting dari VEL
+            return {
+                "final_bias": resistance_result['bias'],
+                "confidence": resistance_result['confidence'],
+                "reason": f"ERF_RESISTANCE: {resistance_result['reason']}",
+                "use_vel_for_timing": True,  # VEL untuk timing doang
+                "vel_ignored_for_direction": True,
+                "priority": -180
+            }
+        
+        # ===== VALIDATE VEL =====
+        if vel_validated and vel_validated.get('valid'):
+            # VEL valid dan searah dengan target
+            return {
+                "final_bias": vel_validated['bias'],
+                "confidence": vel_validated.get('confidence', 'HIGH'),
+                "reason": f"ERF_VEL_VALID: {vel_validated.get('reason', '')}",
+                "use_vel_for_timing": True,
+                "vel_ignored_for_direction": False,
+                "priority": -120
+            }
+        
+        # ===== FALLBACK =====
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "ERF: No clear signal",
+            "use_vel_for_timing": False,
+            "vel_ignored_for_direction": False,
+            "priority": 99
+        }
+
+
+# ================= V105-SPL: STRICT PRIORITY LOCK UPDATED =================
+class StrictPriorityLockV105:
+    """
+    🔥 V105-SPL: STRICT PRIORITY LOCK DENGAN EXECUTION REALITY
+    
+    Urutan Prioritas Mutlak FINAL:
+    1. HARD LOCK: SHORT_COVERING / LONG_LIQUIDATION (priority -200)
+    2. RESISTANCE MAP (priority -190)
+    3. SHORT_BUILDING / LONG_BUILDING (priority -165)
+    4. DISTRIBUTION / ACCUMULATION (priority -160)
+    5. TARGET PRIORITY (payout + wmi) (priority -150)
+    6. ZAS (Zero Aggression) (priority -140)
+    7. ODF (Overbought Distribution) (priority -130)
+    8. VEL (hanya jika valid dan searah) (priority -120)
+    """
+    
+    @staticmethod
+    def resolve(intention_result: Dict, resistance_result: Dict,
+                target_result: Dict, zas_result: Dict, odf_result: Dict,
+                vel_validated: Dict, fake_move: Dict,
+                erf_result: Dict) -> Dict:
+        
+        # ===== PRIORITAS 1: EXECUTION REALITY FILTER =====
+        if erf_result.get('priority') <= -200:
+            return {
+                "final_bias": erf_result['final_bias'],
+                "confidence": erf_result['confidence'],
+                "reason": erf_result['reason'],
+                "phase": "EXECUTION_HARD_LOCK",
+                "priority": -200,
+                "use_vel_for_timing": erf_result.get('use_vel_for_timing', False)
+            }
+        
+        # ===== PRIORITAS 2: RESISTANCE MAP =====
+        if resistance_result.get('confidence') in ['ABSOLUTE', 'HIGH']:
+            return {
+                "final_bias": resistance_result['bias'],
+                "confidence": resistance_result['confidence'],
+                "reason": f"SPL_RESISTANCE: {resistance_result['reason']}",
+                "phase": "RESISTANCE_MAP",
+                "priority": -190
+            }
+        
+        # ===== PRIORITAS 3: SHORT BUILDING / LONG BUILDING =====
+        intention_priority = intention_result.get('priority', 99)
+        if intention_priority <= -165:
+            return {
+                "final_bias": intention_result['bias'],
+                "confidence": intention_result['confidence'],
+                "reason": f"SPL_BUILDING: {intention_result['reason']}",
+                "phase": intention_result['intention'],
+                "priority": -165
+            }
+        
+        # ===== PRIORITAS 4: DISTRIBUTION / ACCUMULATION =====
+        if intention_priority <= -160:
+            return {
+                "final_bias": intention_result['bias'],
+                "confidence": intention_result['confidence'],
+                "reason": f"SPL_INTENTION: {intention_result['reason']}",
+                "phase": intention_result['intention'],
+                "priority": -160
+            }
+        
+        # ===== PRIORITAS 5: TARGET PRIORITY =====
+        if target_result.get('confidence') in ['ABSOLUTE', 'SUPREME', 'HIGH']:
+            return {
+                "final_bias": target_result['bias'],
+                "confidence": target_result['confidence'],
+                "reason": f"SPL_TARGET: {target_result['reason']}",
+                "phase": "TARGET_PRIORITY",
+                "priority": -150
+            }
+        
+        # ===== PRIORITAS 6: ZAS =====
+        if zas_result and zas_result.get('is_squeeze'):
+            return {
+                "final_bias": zas_result['bias'],
+                "confidence": zas_result.get('confidence', 'SUPREME'),
+                "reason": f"SPL_ZAS: {zas_result.get('reason', '')}",
+                "phase": "ZAS_ACTIVE",
+                "priority": -140
+            }
+        
+        # ===== PRIORITAS 7: ODF =====
+        if odf_result and odf_result.get('active'):
+            return {
+                "final_bias": odf_result['bias'],
+                "confidence": odf_result.get('confidence', 'ABSOLUTE'),
+                "reason": f"SPL_ODF: {odf_result.get('reason', '')}",
+                "phase": "ODF_ACTIVE",
+                "priority": -130
+            }
+        
+        # ===== PRIORITAS 8: VEL =====
+        if vel_validated and vel_validated.get('valid'):
+            return {
+                "final_bias": vel_validated['bias'],
+                "confidence": vel_validated.get('confidence', 'HIGH'),
+                "reason": f"SPL_VEL: {vel_validated.get('reason', '')}",
+                "phase": "VEL_VALIDATED",
+                "priority": -120
+            }
+        
+        # ===== DEFAULT =====
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal",
+            "phase": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V105-FINAL: CONFLICT RESOLVER DENGAN RESISTANCE MAP =================
+class ConflictResolverV105_FINAL:
+    """
+    🔥 V105-FINAL: CONFLICT RESOLVER DENGAN RESISTANCE MAP
+    
+    PRIORITY -200: EXECUTION HARD LOCK (SHORT COVERING / LONG LIQ)
+    PRIORITY -190: RESISTANCE MAP
+    PRIORITY -165: SHORT BUILDING / LONG BUILDING
+    PRIORITY -160: DISTRIBUTION / ACCUMULATION
+    PRIORITY -150: TARGET PRIORITY
+    PRIORITY -140: ZAS
+    PRIORITY -130: ODF
+    PRIORITY -120: VEL (hanya jika searah target)
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== AMBIL SEMUA HASIL MODULE =====
+        intention_result = results.get('mie_v104', {})
+        resistance_result = results.get('rme_v105', {})
+        target_result = results.get('tpe_v104', {})
+        zas_result = results.get('zas_v87', {})
+        odf_result = results.get('odf', {})
+        vel_validated = results.get('vv_v104', {})
+        fake_move = results.get('fmd_v104', {})
+        erf_result = results.get('erf_v105', {})
+        
+        # ===== GUNAKAN STRICT PRIORITY LOCK V105 =====
+        final = StrictPriorityLockV105.resolve(
+            intention_result=intention_result,
+            resistance_result=resistance_result,
+            target_result=target_result,
+            zas_result=zas_result,
+            odf_result=odf_result,
+            vel_validated=vel_validated,
+            fake_move=fake_move,
+            erf_result=erf_result
+        )
+        
+        return {
+            "final_bias": final.get('final_bias', 'NEUTRAL'),
+            "confidence": final.get('confidence', 'LOW'),
+            "reason": final.get('reason', ''),
+            "phase": final.get('phase', 'NEUTRAL'),
+            "priority_level": final.get('priority', 99),
+            "use_vel_for_timing": final.get('use_vel_for_timing', False)
+        }
+
+
 # ================= V100-DAV: DISTRIBUTION ABSORPTION VALIDATOR CONFIG =================
 DAV_AGG_FLOW_GAP_THRESHOLD = 5.0      # Agg/Flow > 5x = Suspicious
 DAV_OI_BUILD_DISTRIBUTION_MIN = 2.0   # OI Build > 2% = Possible Dist
@@ -1233,6 +1608,28 @@ MIE_SHORT_COVERING_PRIORITY = -170         # Short covering tertinggi!
 MIE_LONG_LIQUIDATION_PRIORITY = -170       # Long liquidation juga tertinggi
 MIE_SHORT_BUILDING_PRIORITY = -165           # Antara -170 dan -160
 MIE_LONG_BUILDING_PRIORITY = -165            # Antara -170 dan -160
+
+# ================= V105-RME: RESISTANCE MAP ENGINE CONFIG =================
+
+# Resistance Calculation
+RME_ASK_LIQ_WEIGHT = 1.0                   # Bobot ask liquidity
+RME_BID_LIQ_WEIGHT = 1.0                   # Bobot bid liquidity
+RME_SELL_AGG_WEIGHT = 2.0                  # Bobot seller aggression (lebih berat)
+RME_BUY_AGG_WEIGHT = 2.0                   # Bobot buyer aggression
+
+# Thresholds
+RME_RESISTANCE_RATIO_HIGH = 2.0             # Ratio > 2 = signifikan
+RME_RESISTANCE_RATIO_EXTREME = 5.0          # Ratio > 5 = ekstrem
+
+# Short Covering Hard Lock
+RME_SHORT_COVERING_PRIORITY = -200          # Tertinggi!
+RME_LONG_LIQUIDATION_PRIORITY = -200        # Tertinggi!
+
+# Void Rules
+RME_BID_EMPTY_THRESHOLD = 0.1               # Bid volume < 0.1 = kosong
+RME_ASK_EMPTY_THRESHOLD = 0.1               # Ask volume < 0.1 = kosong
+RME_NO_SELLER_AGG_MAX = 0.2                  # Agg < 0.2 = no sellers
+RME_NO_BUYER_AGG_MAX = 0.2                   # Agg < 0.2 = no buyers
 
 # VEL Validation
 MIE_VEL_SEARAH_REQUIRED = True             # VEL harus searah dengan target
@@ -22263,6 +22660,24 @@ class OutputFormatterV87:
         if fmd_result.get('fake_type') != 'NONE':
             print(f"\n🎭 V104-FMD: {fmd_result.get('fake_type')} - {fmd_result.get('reason', '')}")
 
+        # ===== V105 RESISTANCE MAP ENGINE =====
+        rme = result.get('rme_v105', {})
+        if rme.get('confidence') in ['ABSOLUTE', 'HIGH']:
+            print(f"\n🗺️ V105-RME: {rme.get('reason', '')}")
+            print(f"   📊 UP Resistance: {rme.get('resistance_up', 0)} | DOWN: {rme.get('resistance_down', 0)}")
+            print(f"   🎯 Cheaper Path: {rme.get('cheaper_path', 'UNKNOWN')} ({rme.get('cheaper_ratio', 1)}x)")
+
+        # Liquidity Void
+        void = result.get('void_v105', {})
+        if void.get('void_type') != 'NONE':
+            print(f"\n🕳️ V105-VOID: {void.get('reason', '')}")
+
+        # Execution Reality Filter
+        erf = result.get('erf_v105', {})
+        if erf.get('priority', 99) <= -180:
+            print(f"\n🔮 V105-ERF: {erf.get('reason', '')}")
+            if result.get('use_vel_for_timing'):
+                print(f"   ⏱️ VEL boleh dipakai untuk TIMING ENTRY saja")
         # DECISION
         print(f"\n{'='*40}")
         bias_color = "🟢" if result['bias'] == "LONG" else "🔴" if result['bias'] == "SHORT" else "⚪"
@@ -22757,6 +23172,11 @@ class BinanceAnalyzerV87:
         self.vv_v104 = VELValidatorV104()                      # V104-VV
         self.fmd_v104 = FakeMoveDetectorV104()                 # V104-FMD
         self.final_resolver_v104 = ConflictResolverV104_FINAL()
+        
+        # ===== V105 RESISTANCE MAP ENGINE =====
+        self.rme_v105 = ResistanceMapEngineV105()                 # V105-RME
+        self.erf_v105 = ExecutionRealityFilterV105()              # V105-ERF
+        self.final_resolver_v105 = ConflictResolverV105_FINAL()   # V105-FINAL
         
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
@@ -24830,6 +25250,43 @@ class BinanceAnalyzerV87:
             scoring_data['vv_v104'] = vv_result
             scoring_data['fmd_v104'] = fmd_result
             
+            # ===== V105 RESISTANCE MAP ENGINE =====
+            
+            # Dapatkan data untuk resistance map
+            bid_volume = odd_result.get('bid_volume_near', 0) if 'odd_result' in locals() else 0
+            ask_volume = odd_result.get('ask_volume_near', 0) if 'odd_result' in locals() else 0
+            seller_agg = trades.get('aggressive_ratio', 1.0) if price_change < 0 else 0  # Agg saat price turun = seller
+            buyer_agg = trades.get('aggressive_ratio', 1.0) if price_change > 0 else 0   # Agg saat price naik = buyer
+            
+            # Resistance Map Engine
+            rme_result = self.rme_v105.calculate(
+                bid_volume=bid_volume,
+                ask_volume=ask_volume,
+                seller_agg=seller_agg,
+                buyer_agg=buyer_agg
+            )
+            
+            # Liquidity Void Check
+            void_result = self.rme_v105.check_liquidity_void(
+                bid_volume=bid_volume,
+                ask_volume=ask_volume,
+                seller_agg=seller_agg,
+                buyer_agg=buyer_agg
+            )
+            
+            # Execution Reality Filter
+            erf_result = self.erf_v105.filter(
+                intention_result=mie_result if 'mie_result' in locals() else {},
+                resistance_result=rme_result,
+                vel_result=vel_result if 'vel_result' in locals() else {},
+                vel_validated=vv_result if 'vv_result' in locals() else {}
+            )
+            
+            # Update results dictionary dengan module V105
+            scoring_data['rme_v105'] = rme_result
+            scoring_data['void_v105'] = void_result
+            scoring_data['erf_v105'] = erf_result
+            
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
@@ -24845,8 +25302,24 @@ class BinanceAnalyzerV87:
             # ===== V104: FINAL RESOLVER (MACRO INTENTION ENGINE - TERTINGGI!) =====
             v104_final = self.final_resolver_v104.resolve_all_signals(scoring_data)
             
-            # Gunakan V104 resolver jika ada signal intention yang kuat
-            if v104_final.get('priority_level', 99) <= -5:
+            # ===== V105: FINAL RESOLVER (RESISTANCE MAP ENGINE - LEBIH TINGGI DARI V104!) =====
+            v105_final = self.final_resolver_v105.resolve_all_signals(scoring_data)
+            
+            # Gunakan V105 resolver jika ada signal yang sangat kuat (priority <= -120)
+            if v105_final.get('priority_level', 99) <= -120:
+                # V105 override (RESISTANCE MAP / EXECUTION HARD LOCK - TERTINGGI!)
+                final_decision = {
+                    'bias': v105_final['final_bias'],
+                    'final_bias': v105_final['final_bias'],
+                    'confidence': v105_final['confidence'],
+                    'reason': v105_final['reason'],
+                    'phase': v105_final['phase'],
+                    'priority_level': v105_final['priority_level'],
+                    'use_vel_for_timing': v105_final.get('use_vel_for_timing', False),
+                    'intention': mie_result.get('intention', 'NEUTRAL'),
+                    'override_modules': v105_final.get('override_modules', [])
+                }
+            elif v104_final.get('priority_level', 99) <= -5:
                 # V104 override (MACRO INTENTION - TERTINGGI!)
                 final_decision = {
                     'bias': v104_final['final_bias'],
@@ -26028,6 +26501,13 @@ class BinanceAnalyzerV87:
             result["fmd_v104"] = fmd_result
             result["intention"] = mie_result.get('intention', 'NEUTRAL')
             result["v104_phase"] = v104_final.get('phase', 'NORMAL')
+            
+            # ===== V105: RESISTANCE MAP ENGINE =====
+            result["rme_v105"] = rme_result
+            result["void_v105"] = void_result
+            result["erf_v105"] = erf_result
+            result["use_vel_for_timing"] = v105_final.get('use_vel_for_timing', False)
+            result["v105_phase"] = v105_final.get('phase', 'NORMAL')
             
             result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
             result["v102_enhanced_priority_level"] = v102_enhanced_final.get('priority_level', 99)
