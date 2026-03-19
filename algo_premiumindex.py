@@ -24364,6 +24364,40 @@ class OutputFormatterV87:
         if result.get('next_phase') != 'NONE':
             print(f"\n⏩ NEXT PHASE: {result.get('next_phase')}")
         
+        # ===== V111-V115 EXECUTION FEASIBILITY ENGINE =====
+        efe = result.get('efe_v111', {})
+        if efe.get('market_state') != 'NORMAL':
+            state_icon = {
+                'DEAD_MARKET': '💀',
+                'WMI_INVALID': '⚠️',
+                'PASSIVE_BUILD_TRAP': '🎣',
+                'EXECUTION_BLOCK': '🚫'
+            }.get(efe.get('market_state'), '🔍')
+            print(f"\n{state_icon} V111-EFE: {efe.get('market_state')}")
+            print(f"   📌 {efe.get('reason', '')}")
+
+        fsk = result.get('fsk_v113', {})
+        if fsk.get('is_false_squeeze'):
+            print(f"\n❌ V113-FSK: {fsk.get('reason', '')}")
+        elif fsk.get('warning'):
+            print(f"\n⚠️ V113-FSK: {fsk.get('reason', '')}")
+
+        dmt = result.get('dmt_v112', {})
+        if dmt.get('is_dead_market'):
+            print(f"\n💀 V112-DMT: {dmt.get('reason', '')}")
+            print(f"   🎯 Target: {dmt.get('target', '')} ({dmt.get('target_distance', 0):.1f}%)")
+
+        wvf = result.get('wvf_v114', {})
+        if not wvf.get('wmi_valid', True):
+            print(f"\n⚠️ V114-WVF: {wvf.get('reason', '')}")
+
+        tc = result.get('tc_v115', {})
+        if tc.get('trap_type') != 'NONE':
+            icon = '🎣' if 'PASSIVE' in tc.get('trap_type') else '🔥'
+            print(f"\n{icon} V115-TC: {tc.get('trap_type')}")
+            print(f"   📌 {tc.get('reason', '')}")
+            print(f"   🎯 Action: {tc.get('action', 'PROCEED')}")
+        
         # DECISION
         print(f"\n{'='*40}")
         bias_color = "🟢" if result['bias'] == "LONG" else "🔴" if result['bias'] == "SHORT" else "⚪"
