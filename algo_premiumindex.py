@@ -2088,6 +2088,493 @@ TIME_LAG_TRIGGER_FLOW_MIN = 1.5            # Flow spike untuk trigger
 TIME_LAG_TRIGGER_AGG_MIN = 1.2             # Agg spike untuk trigger
 TIME_LAG_PRIORITY = -1                      # Priority terendah di layer eksekusi
 
+# ================= V107-EXIT: EXIT ENGINE CONFIG =================
+
+# Short Covering Types
+EXIT_CLEAN_COVERING = "CLEAN"      # Lanjut pump
+EXIT_DIRTY_COVERING = "DIRTY"      # Pump sebentar lalu dump
+
+# Thresholds for Dirty Covering
+EXIT_RSI_NUCLEAR_MIN = 85.0         # RSI > 85 = nuclear zone
+EXIT_FLOW_WEAK_MAX = 1.0            # Flow < 1 = weak follow-through
+EXIT_OI_FLAT_MAX = 0.5               # OI delta < 0.5% = flat
+
+# Exit Conditions
+EXIT_IMMEDIATE_RSI = 85.0            # RSI > 85 = exit all
+EXIT_PARTIAL_FLOW = 1.0              # Flow < 1 = exit partial
+EXIT_PARTIAL_RATIO = 0.5              # Exit 50% posisi
+
+# Phase Detection
+EXIT_PHASE_1 = "SHORT_COVERING"
+EXIT_PHASE_2 = "DISTRIBUTION"
+EXIT_PHASE_3 = "DUMP"
+
+# Partial TP Levels
+EXIT_TP1_MULTIPLIER = 0.5             # TP1 = 50% dari target
+EXIT_TP2_MULTIPLIER = 0.8             # TP2 = 80% dari target
+EXIT_TP3_MULTIPLIER = 1.0             # TP3 = 100% dari target
+
+# Sweep Only Mode
+EXIT_SWEEP_RSI_MIN = 80.0
+EXIT_SWEEP_FLOW_MAX = 1.0
+
+# Distribution After Squeeze
+EXIT_DIST_RSI_MIN = 85.0
+EXIT_DIST_OI_DROP_MAX = 0.5
+EXIT_DIST_FLOW_MAX = 1.0
+
+# Time-Based Exit (menit)
+EXIT_MAX_HOLD_MINUTES = 15
+EXIT_NO_CONTINUATION_MINUTES = 5
+
+
+# ================= V107-SCT: SHORT COVERING TYPE DETECTOR =================
+class ShortCoveringTypeDetectorV107:
+    """
+    🔥 V107-SCT: SHORT COVERING TYPE DETECTOR
+    
+    SHORT COVERING ada 2 TYPE:
+    1. CLEAN - lanjut pump (flow > 1, RSI normal)
+    2. DIRTY - pump sebentar lalu dump (RSI tinggi, flow rendah)
+    
+    Kasus DEGO:
+    - RSI: 90.2 (NUCLEAR!) → DIRTY
+    - Flow: 0.89 (LEMAH!) → DIRTY
+    """
+    
+    @staticmethod
+    def detect(rsi: float, flow: float, oi_delta: float,
+               short_dist: float, long_dist: float) -> Dict:
+        """
+        Deteksi tipe short covering
+        """
+        covering_type = "UNKNOWN"
+        confidence = "LOW"
+        reason = ""
+        
+        # ===== DIRTY SHORT COVERING =====
+        dirty_conditions = []
+        
+        if rsi > EXIT_RSI_NUCLEAR_MIN:
+            dirty_conditions.append(f"RSI {rsi:.1f} > {EXIT_RSI_NUCLEAR_MIN}")
+        
+        if flow < EXIT_FLOW_WEAK_MAX:
+            dirty_conditions.append(f"Flow {flow:.2f} < {EXIT_FLOW_WEAK_MAX}")
+        
+        if abs(oi_delta) < EXIT_OI_FLAT_MAX:
+            dirty_conditions.append(f"OI {oi_delta:+.2f}% flat")
+        
+        # Upside kecil, downside besar
+        if abs(short_dist) < abs(long_dist) * 0.3:
+            dirty_conditions.append(f"Upside {short_dist:.1f}% << Downside {abs(long_dist):.1f}%")
+        
+        if len(dirty_conditions) >= 2:
+            covering_type = EXIT_DIRTY_COVERING
+            confidence = "ABSOLUTE"
+            reason = f"SCT_DIRTY: " + " | ".join(dirty_conditions)
+            reason += " → Pump sebentar, lalu dump brutal!"
+        
+        # ===== CLEAN SHORT COVERING =====
+        elif flow > EXIT_FLOW_WEAK_MAX and rsi < EXIT_RSI_NUCLEAR_MIN:
+            covering_type = EXIT_CLEAN_COVERING
+            confidence = "HIGH"
+            reason = f"SCT_CLEAN: Flow {flow:.2f}x sehat, RSI {rsi:.1f} normal → Lanjut pump!"
+        
+        return {
+            "covering_type": covering_type,
+            "confidence": confidence,
+            "reason": reason,
+            "is_dirty": covering_type == EXIT_DIRTY_COVERING,
+            "is_clean": covering_type == EXIT_CLEAN_COVERING,
+            "dirty_factors": dirty_conditions
+        }
+
+
+# ================= V107-EXIT: EXIT ENGINE =================
+class ExitEngineV107:
+    """
+    🔥 V107-EXIT: EXIT ENGINE - KAPAN KELUAR DARI POSISI
+    
+    Masalah utama: LU GAK PUNYA EXIT PHASE DETECTOR
+    Solusi: Deteksi kapan harus exit berdasarkan kondisi
+    
+    Exit Conditions:
+    1. IMMEDIATE EXIT (exit all) - RSI > 85
+    2. PARTIAL EXIT (exit 50%) - Flow < 1
+    3. NO CONTINUATION - Hold > 5 menit tanpa progress
+    """
+    
+    @staticmethod
+    def should_exit(rsi: float, flow: float, oi_delta: float,
+                    price_change: float, entry_price: float,
+                    entry_time: float, current_time: float,
+                    short_dist: float, long_dist: float) -> Dict:
+        """
+        Deteksi apakah harus exit dari posisi
+        """
+        exit_signal = False
+        exit_type = "NONE"
+        exit_percentage = 0
+        reason = ""
+        confidence = "LOW"
+        
+        # ===== IMMEDIATE EXIT (exit all) =====
+        if rsi > EXIT_IMMEDIATE_RSI:
+            exit_signal = True
+            exit_type = "IMMEDIATE_EXIT"
+            exit_percentage = 100
+            confidence = "ABSOLUTE"
+            reason = f"EXIT_IMMEDIATE: RSI {rsi:.1f} > {EXIT_IMMEDIATE_RSI} (NUCLEAR ZONE)! Exit ALL now!"
+        
+        # ===== PARTIAL EXIT (exit 50%) =====
+        elif flow < EXIT_PARTIAL_FLOW:
+            exit_signal = True
+            exit_type = "PARTIAL_EXIT"
+            exit_percentage = EXIT_PARTIAL_RATIO * 100  # 50%
+            confidence = "SUPREME"
+            reason = f"EXIT_PARTIAL: Flow {flow:.2f}x < {EXIT_PARTIAL_FLOW} (weak follow-through). Exit {exit_percentage:.0f}% posisi!"
+        
+        # ===== TIME-BASED EXIT =====
+        elif entry_time > 0 and current_time > 0:
+            hold_minutes = (current_time - entry_time) / 60
+            if hold_minutes > EXIT_MAX_HOLD_MINUTES:
+                exit_signal = True
+                exit_type = "TIME_EXIT"
+                exit_percentage = 100
+                confidence = "HIGH"
+                reason = f"EXIT_TIME: Hold {hold_minutes:.1f} menit > {EXIT_MAX_HOLD_MINUTES} menit. Exit ALL!"
+            
+            elif hold_minutes > EXIT_NO_CONTINUATION_MINUTES:
+                # Cek apakah ada continuation
+                if abs(price_change) < 1.0:  # No significant move
+                    exit_signal = True
+                    exit_type = "NO_CONTINUATION"
+                    exit_percentage = 100
+                    confidence = "HIGH"
+                    reason = f"EXIT_NO_CONTINUATION: Hold {hold_minutes:.1f} menit tanpa progress. Exit ALL!"
+        
+        # ===== LIQUIDITY STRUCTURE EXIT =====
+        if not exit_signal:
+            # Jika upside kecil dan sudah tercapai
+            if price_change > 0 and price_change > abs(short_dist) * 0.8:
+                exit_signal = True
+                exit_type = "TARGET_REACHED"
+                exit_percentage = 100
+                confidence = "SUPREME"
+                reason = f"EXIT_TARGET: Price {price_change:+.2f}% mendekati short liq {short_dist:.2f}%. Take profit!"
+        
+        return {
+            "exit_signal": exit_signal,
+            "exit_type": exit_type,
+            "exit_percentage": exit_percentage,
+            "confidence": confidence,
+            "reason": reason,
+            "hold_minutes": round((current_time - entry_time) / 60, 1) if entry_time > 0 else 0
+        }
+
+
+# ================= V107-TP: PARTIAL TP SYSTEM =================
+class PartialTPSystemV107:
+    """
+    🔥 V107-TP: PARTIAL TAKE PROFIT SYSTEM
+    
+    Masalah: LU GREEDY TP (target 6% terus)
+    Solusi: TP bertahap berdasarkan struktur likuiditas
+    
+    Level TP:
+    - TP1: nearest_short_liq (50% posisi)
+    - TP2: mid_level (80% posisi)
+    - TP3: full_target (100% posisi) - jarang kena
+    """
+    
+    @staticmethod
+    def calculate_tp_levels(short_dist: float, long_dist: float,
+                            entry_price: float, current_price: float,
+                            covering_type: str) -> Dict:
+        """
+        Hitung level TP berdasarkan struktur likuiditas
+        """
+        # TP1 = nearest short liq (50% target)
+        tp1_price = entry_price * (1 + abs(short_dist) * EXIT_TP1_MULTIPLIER / 100)
+        tp1_pct = abs(short_dist) * EXIT_TP1_MULTIPLIER
+        
+        # TP2 = mid level (80% target)
+        tp2_price = entry_price * (1 + abs(short_dist) * EXIT_TP2_MULTIPLIER / 100)
+        tp2_pct = abs(short_dist) * EXIT_TP2_MULTIPLIER
+        
+        # TP3 = full target (100%)
+        tp3_price = entry_price * (1 + abs(short_dist) / 100)
+        tp3_pct = abs(short_dist)
+        
+        # Hitung current P&L
+        if entry_price > 0:
+            current_pnl = ((current_price - entry_price) / entry_price) * 100
+        else:
+            current_pnl = 0
+        
+        # Tentukan TP yang sudah tercapai
+        tp_reached = "NONE"
+        if current_pnl >= tp3_pct:
+            tp_reached = "TP3"
+            recommended_action = "EXIT_ALL"
+            remaining_position = 0
+        elif current_pnl >= tp2_pct:
+            tp_reached = "TP2"
+            recommended_action = "EXIT_80%"
+            remaining_position = 20
+        elif current_pnl >= tp1_pct:
+            tp_reached = "TP1"
+            recommended_action = "EXIT_50%"
+            remaining_position = 50
+        else:
+            tp_reached = "NONE"
+            recommended_action = "HOLD"
+            remaining_position = 100
+        
+        # Khusus DIRTY covering, lebih agresif ambil profit
+        if covering_type == EXIT_DIRTY_COVERING:
+            if current_pnl >= tp1_pct * 0.7:  # Exit lebih awal
+                recommended_action = "EXIT_ALL"
+                remaining_position = 0
+                tp_reached = "EARLY_EXIT"
+        
+        return {
+            "tp1_price": round(tp1_price, 4),
+            "tp1_percent": round(tp1_pct, 2),
+            "tp2_price": round(tp2_price, 4),
+            "tp2_percent": round(tp2_pct, 2),
+            "tp3_price": round(tp3_price, 4),
+            "tp3_percent": round(tp3_pct, 2),
+            "current_pnl": round(current_pnl, 2),
+            "tp_reached": tp_reached,
+            "recommended_action": recommended_action,
+            "remaining_position": remaining_position
+        }
+    
+    @staticmethod
+    def get_tp_recommendation(tp_result: Dict, covering_type: str) -> str:
+        """
+        Dapatkan rekomendasi TP dalam bahasa manusia
+        """
+        if tp_result['tp_reached'] == "TP3":
+            return f"✅ TP3 TERCAPAI! Exit ALL posisi. Profit {tp_result['current_pnl']:.2f}%"
+        elif tp_result['tp_reached'] == "TP2":
+            return f"⚠️ TP2 TERCAPAI! Exit 80% posisi. Sisa 20% untuk runner. Profit {tp_result['current_pnl']:.2f}%"
+        elif tp_result['tp_reached'] == "TP1":
+            return f"📊 TP1 TERCAPAI! Exit 50% posisi. Sisa 50% untuk TP2 ({tp_result['tp2_percent']:.2f}%). Profit {tp_result['current_pnl']:.2f}%"
+        elif tp_result['tp_reached'] == "EARLY_EXIT":
+            return f"🚨 DIRTY COVERING! Exit ALL early di {tp_result['current_pnl']:.2f}%"
+        else:
+            return f"⏳ Hold. Target TP1: {tp_result['tp1_percent']:.2f}% (exit 50%)"
+
+
+# ================= V107-SWEEP: SWEEP ONLY MODE DETECTOR =================
+class SweepOnlyModeDetectorV107:
+    """
+    🔥 V107-SWEEP: SWEEP ONLY MODE DETECTOR
+    
+    Mode dimana market hanya melakukan SWEEP (ambil likuiditas)
+    tapi TIDAK LANJUT (no continuation).
+    
+    Ciri-ciri:
+    - Short covering
+    - RSI > 80
+    - Flow < 1
+    - Upside kecil
+    
+    Action: SCALP CEPAT, jangan hold!
+    """
+    
+    @staticmethod
+    def detect(short_covering: bool, rsi: float, flow: float,
+               short_dist: float, long_dist: float) -> Dict:
+        """
+        Deteksi apakah ini SWEEP ONLY mode
+        """
+        sweep_mode = False
+        reason = ""
+        
+        if short_covering:
+            if rsi > EXIT_SWEEP_RSI_MIN:
+                if flow < EXIT_SWEEP_FLOW_MAX:
+                    if abs(short_dist) < abs(long_dist) * 0.5:  # Upside kecil
+                        sweep_mode = True
+                        reason = f"SWEEP_MODE: Short covering + RSI {rsi:.1f} > 80 + Flow {flow:.2f}x < 1 + "
+                        reason += f"Upside {short_dist:.1f}% kecil. SCALP CEPAT! JANGAN HOLD!"
+        
+        return {
+            "sweep_mode": sweep_mode,
+            "reason": reason,
+            "action": "SCALP_FAST_EXIT" if sweep_mode else "NORMAL_HOLD"
+        }
+
+
+# ================= V107-DAS: DISTRIBUTION AFTER SQUEEZE DETECTOR =================
+class DistributionAfterSqueezeDetectorV107:
+    """
+    🔥 V107-DAS: DISTRIBUTION AFTER SQUEEZE DETECTOR
+    
+    Setelah squeeze (short covering), market sering masuk fase DISTRIBUTION
+    sebelum dump besar.
+    
+    Ciri-ciri:
+    - RSI > 85 (nuclear)
+    - OI flat atau drop
+    - Flow < 1
+    - Harga mulai stagnan
+    """
+    
+    @staticmethod
+    def detect(rsi: float, oi_delta: float, flow: float,
+               price_change: float, prev_price_change: float = 0) -> Dict:
+        """
+        Deteksi fase distribution setelah squeeze
+        """
+        distribution = False
+        reason = ""
+        
+        if rsi > EXIT_DIST_RSI_MIN:
+            if abs(oi_delta) < EXIT_DIST_OI_DROP_MAX or oi_delta < 0:
+                if flow < EXIT_DIST_FLOW_MAX:
+                    # Harga mulai melambat atau turun
+                    if price_change < prev_price_change:
+                        distribution = True
+                        reason = f"DISTRIBUTION_AFTER_SQUEEZE: RSI {rsi:.1f} + OI {oi_delta:+.2f}% flat + "
+                        reason += f"Flow {flow:.2f}x lemah. SIAP SHORT!"
+        
+        return {
+            "distribution_detected": distribution,
+            "reason": reason,
+            "action": "ENTER_SHORT" if distribution else "WAIT"
+        }
+
+
+# ================= V107-PHASE: PHASE DETECTOR =================
+class PhaseDetectorV107:
+    """
+    🔥 V107-PHASE: PHASE DETECTOR - MULTI-STEP EXECUTION
+    
+    Market bergerak dalam PHASE:
+    PHASE 1: SHORT COVERING (pump ambil short liq)
+    PHASE 2: DISTRIBUTION (trap long)
+    PHASE 3: DUMP (ambil long liq besar)
+    """
+    
+    @staticmethod
+    def detect_phase(short_covering: bool, rsi: float, flow: float,
+                     oi_delta: float, price_change: float,
+                     short_dist: float, long_dist: float,
+                     prev_phase: str = "UNKNOWN") -> Dict:
+        """
+        Deteksi phase saat ini
+        """
+        phase = "UNKNOWN"
+        next_phase = "UNKNOWN"
+        action = "WAIT"
+        reason = ""
+        
+        # ===== PHASE 1: SHORT COVERING =====
+        if short_covering:
+            phase = EXIT_PHASE_1
+            next_phase = EXIT_PHASE_2
+            
+            if rsi > EXIT_RSI_NUCLEAR_MIN or flow < EXIT_FLOW_WEAK_MAX:
+                action = "EXIT_PARTIAL"
+                reason = f"PHASE_1: Short covering, tapi RSI {rsi:.1f}/Flow {flow:.2f}x lemah. Exit partial!"
+            else:
+                action = "HOLD"
+                reason = f"PHASE_1: Short covering sehat. Hold untuk lanjutan."
+        
+        # ===== PHASE 2: DISTRIBUTION =====
+        elif rsi > EXIT_DIST_RSI_MIN and abs(oi_delta) < EXIT_DIST_OI_DROP_MAX:
+            phase = EXIT_PHASE_2
+            next_phase = EXIT_PHASE_3
+            action = "PREPARE_SHORT"
+            reason = f"PHASE_2: Distribution detected. Siap-siap SHORT!"
+        
+        # ===== PHASE 3: DUMP =====
+        elif price_change < 0 and abs(price_change) > 2.0:
+            phase = EXIT_PHASE_3
+            next_phase = "DONE"
+            action = "ENTER_SHORT"
+            reason = f"PHASE_3: DUMP phase! Entry SHORT!"
+        
+        return {
+            "current_phase": phase,
+            "next_phase": next_phase,
+            "action": action,
+            "reason": reason
+        }
+
+
+# ================= V107-FINAL: CONFLICT RESOLVER DENGAN EXIT ENGINE =================
+class ConflictResolverV107_FINAL:
+    """
+    🔥 V107-FINAL: CONFLICT RESOLVER DENGAN EXIT ENGINE
+    
+    PRIORITY -230: SWEEP ONLY MODE
+    PRIORITY -225: DIRTY SHORT COVERING
+    PRIORITY -220: MANIPULATION (double move)
+    PRIORITY -215: CROWD PARADOX
+    PRIORITY -210: REVERSE PHASE
+    PRIORITY -200: EXECUTION HARD LOCK
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== AMBIL SEMUA HASIL MODULE =====
+        sct_result = results.get('sct_v107', {})
+        sweep_result = results.get('sweep_v107', {})
+        das_result = results.get('das_v107', {})
+        phase_result = results.get('phase_v107', {})
+        exit_result = results.get('exit_v107', {})
+        tp_result = results.get('tp_v107', {})
+        
+        # ===== PRIORITAS 1: SWEEP ONLY MODE =====
+        if sweep_result.get('sweep_mode'):
+            return {
+                "final_bias": "LONG",
+                "action": "SCALP_FAST_EXIT",
+                "confidence": "ABSOLUTE",
+                "reason": sweep_result.get('reason', ''),
+                "phase": "SWEEP_ONLY",
+                "priority_level": -230,
+                "tp_recommendation": "EXIT_AT_2%"
+            }
+        
+        # ===== PRIORITAS 2: DIRTY SHORT COVERING =====
+        if sct_result.get('is_dirty'):
+            return {
+                "final_bias": "LONG",
+                "action": "EXIT_PARTIAL",
+                "confidence": sct_result.get('confidence', 'ABSOLUTE'),
+                "reason": sct_result.get('reason', ''),
+                "phase": "DIRTY_COVERING",
+                "priority_level": -225,
+                "tp_recommendation": tp_result.get('recommended_action', 'EXIT_EARLY')
+            }
+        
+        # ===== PRIORITAS 3: DISTRIBUTION AFTER SQUEEZE =====
+        if das_result.get('distribution_detected'):
+            return {
+                "final_bias": "SHORT",
+                "action": das_result.get('action', 'ENTER_SHORT'),
+                "confidence": "ABSOLUTE",
+                "reason": das_result.get('reason', ''),
+                "phase": "DISTRIBUTION_PHASE",
+                "priority_level": -210
+            }
+        
+        # ===== DEFAULT =====
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal",
+            "phase": "NEUTRAL",
+            "priority_level": 99
+        }
+
 
 # ================= V100-CHINA-ALGO: CHINA ALGO TRADING LOGIC =================
 class ChinaAlgoTradingLogicV100:
@@ -23621,6 +24108,15 @@ class BinanceAnalyzerV87:
         self.tde_v106 = TimeDelayEngineV106()                # V106-TDE
         self.final_resolver_v106 = ConflictResolverV106_FINAL()  # V106-FINAL
         
+        # ===== V107 EXIT ENGINE =====
+        self.sct_v107 = ShortCoveringTypeDetectorV107()        # V107-SCT
+        self.exit_v107 = ExitEngineV107()                      # V107-EXIT
+        self.tp_v107 = PartialTPSystemV107()                   # V107-TP
+        self.sweep_v107 = SweepOnlyModeDetectorV107()          # V107-SWEEP
+        self.das_v107 = DistributionAfterSqueezeDetectorV107() # V107-DAS
+        self.phase_v107 = PhaseDetectorV107()                  # V107-PHASE
+        self.final_resolver_v107 = ConflictResolverV107_FINAL() # V107-FINAL
+        
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
         self.sce_v99 = ShortCrowdExhaustionValidatorV99()            # V99-SCE (Short Crowd Exhaustion) ⭐ NEW!
@@ -25778,6 +26274,78 @@ class BinanceAnalyzerV87:
             scoring_data['void_v105'] = void_result
             scoring_data['erf_v105'] = erf_result
             
+            # ===== V107 EXIT ENGINE =====
+            
+            # Short Covering Type
+            sct_result = self.sct_v107.detect(
+                rsi=rsi6,
+                flow=trades.get('ratio', 1.0),
+                oi_delta=oi_delta_5m,
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999)
+            )
+            
+            # Sweep Only Mode
+            sweep_result = self.sweep_v107.detect(
+                short_covering=(mie_result.get('intention') == "SHORT_COVERING"),
+                rsi=rsi6,
+                flow=trades.get('ratio', 1.0),
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999)
+            )
+            
+            # Distribution After Squeeze
+            das_result = self.das_v107.detect(
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 1.0),
+                price_change=change_5m,
+                prev_price_change=prev_change_5m if 'prev_change_5m' in locals() else 0
+            )
+            
+            # Phase Detector
+            phase_result = self.phase_v107.detect_phase(
+                short_covering=(mie_result.get('intention') == "SHORT_COVERING"),
+                rsi=rsi6,
+                flow=trades.get('ratio', 1.0),
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999),
+                prev_phase=scoring_data.get('current_phase', 'UNKNOWN') if 'scoring_data' in locals() else 'UNKNOWN'
+            )
+            
+            # Exit Engine (butuh entry data)
+            exit_result = self.exit_v107.should_exit(
+                rsi=rsi6,
+                flow=trades.get('ratio', 1.0),
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                entry_price=self.state_mgr.last_entry_price if hasattr(self.state_mgr, 'last_entry_price') else 0,
+                entry_time=self.state_mgr.last_entry_time if hasattr(self.state_mgr, 'last_entry_time') else 0,
+                current_time=time.time(),
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999)
+            )
+            
+            # Partial TP System
+            tp_result = self.tp_v107.calculate_tp_levels(
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999),
+                entry_price=self.state_mgr.last_entry_price if hasattr(self.state_mgr, 'last_entry_price') else 0,
+                current_price=price,
+                covering_type=sct_result.get('covering_type', 'UNKNOWN')
+            )
+            
+            # Update results dictionary dengan module V107
+            scoring_data['sct_v107'] = sct_result
+            scoring_data['sweep_v107'] = sweep_result
+            scoring_data['das_v107'] = das_result
+            scoring_data['phase_v107'] = phase_result
+            scoring_data['exit_v107'] = exit_result
+            scoring_data['tp_v107'] = tp_result
+            scoring_data['current_phase'] = phase_result.get('current_phase', 'UNKNOWN')
+            
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
@@ -25799,8 +26367,29 @@ class BinanceAnalyzerV87:
             # ===== V106: FINAL RESOLVER (SEQUENCE ENGINE - TERTINGGI!) =====
             v106_final = self.final_resolver_v106.resolve_all_signals(scoring_data)
             
-            # Gunakan V106 resolver jika ada signal manipulation/crowd paradox (priority <= -210)
-            if v106_final.get('priority_level', 99) <= -210:
+            # ===== V107: FINAL RESOLVER (EXIT ENGINE - PALING TERTINGGI!) =====
+            v107_final = self.final_resolver_v107.resolve_all_signals(scoring_data)
+            
+            # Gunakan V107 resolver jika ada signal sweep/dirty covering (priority <= -225)
+            if v107_final.get('priority_level', 99) <= -225:
+                # V107 override (EXIT ENGINE - SLEEP/DIRTY COVERING - PALING TERTINGGI!)
+                final_decision = {
+                    'bias': v107_final['final_bias'],
+                    'final_bias': v107_final['final_bias'],
+                    'confidence': v107_final['confidence'],
+                    'reason': v107_final['reason'],
+                    'phase': v107_final['phase'],
+                    'next_phase': phase_result.get('next_phase', 'NONE'),
+                    'priority_level': v107_final['priority_level'],
+                    'intention': mie_result.get('intention', 'NEUTRAL'),
+                    'override_modules': ['V107_EXIT_ENGINE'],
+                    'action': v107_final.get('action', 'WAIT'),
+                    'tp_recommendation': v107_final.get('tp_recommendation', 'HOLD'),
+                    'exit_signal': exit_result.get('exit_signal', False),
+                    'exit_type': exit_result.get('exit_type', 'NONE'),
+                    'exit_percentage': exit_result.get('exit_percentage', 0),
+                }
+            elif v106_final.get('priority_level', 99) <= -210:
                 # V106 override (SEQUENCE ENGINE / CROWD PARADOX - TERTINGGI!)
                 final_decision = {
                     'bias': v106_final['final_bias'],
