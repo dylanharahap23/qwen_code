@@ -1473,6 +1473,395 @@ class ConflictResolverV105_FINAL:
         }
 
 
+# ================= V106-SEQ: SEQUENCE ENGINE =================
+class SequenceEngineV106:
+    """
+    🔥 V106-SEQ: SEQUENCE ENGINE - MEMBACA POLA 2 LANGKAH HFT
+    
+    HFT tidak bergerak langsung ke target utama.
+    Mereka melakukan:
+    1. FAKE MOVE (ambil bait)
+    2. REAL MOVE (ambil target utama)
+    
+    Contoh DEGO:
+    - Step 1: Dump ke long liq kecil (bait)
+    - Step 2: Pump ke short liq besar (target)
+    """
+    
+    @staticmethod
+    def detect_sequence(short_dist: float, long_dist: float,
+                        imbalance: float, wmi: float, rsi: float,
+                        oi_delta: float, flow: float) -> Dict:
+        """
+        Deteksi apakah market akan melakukan 2 langkah
+        """
+        # ===== DETEKSI EXTREME CONDITION =====
+        is_extreme_imbalance = imbalance > SEQ_IMBALANCE_EXTREME
+        is_extreme_wmi = abs(wmi) > SEQ_WMI_EXTREME
+        is_extreme_oversold = rsi < SEQ_RSI_EXTREME_OVERSOLD
+        is_extreme_overbought = rsi > SEQ_RSI_EXTREME_OVERBOUGHT
+        
+        # ===== IDENTIFIKASI BAIT vs REAL TARGET =====
+        bait_side = "NONE"
+        real_target_side = "NONE"
+        bait_dist = 999
+        real_dist = 999
+        
+        # Cek LONG LIQ sebagai bait
+        if abs(long_dist) < SEQ_BAIT_DIST_MAX and abs(short_dist) > SEQ_REAL_TARGET_DIST_MIN:
+            bait_side = "LONG"
+            real_target_side = "SHORT"
+            bait_dist = abs(long_dist)
+            real_dist = abs(short_dist)
+        
+        # Cek SHORT LIQ sebagai bait
+        if abs(short_dist) < SEQ_BAIT_DIST_MAX and abs(long_dist) > SEQ_REAL_TARGET_DIST_MIN:
+            bait_side = "SHORT"
+            real_target_side = "LONG"
+            bait_dist = abs(short_dist)
+            real_dist = abs(long_dist)
+        
+        # ===== DETEKSI TRAP BUILDING =====
+        trap_building = False
+        if flow < SEQ_FLOW_FAKE_MAX and oi_delta > SEQ_OI_RISE_BAIT_MIN:
+            trap_building = True
+        
+        # ===== DETEKSI DOUBLE MOVE =====
+        double_move = False
+        first_move = "NONE"
+        second_move = "NONE"
+        reason = ""
+        
+        if is_extreme_imbalance and is_extreme_wmi:
+            if bait_side != "NONE" and real_target_side != "NONE":
+                double_move = True
+                
+                # Tentukan urutan
+                if bait_side == "LONG":
+                    first_move = "SHORT"  # Dump ke long liq dulu
+                    second_move = "LONG"  # Baru pump ke short liq
+                else:
+                    first_move = "LONG"   # Pump ke short liq dulu
+                    second_move = "SHORT" # Baru dump ke long liq
+                
+                reason = f"SEQ_DOUBLE_MOVE: Ambil bait {bait_side} liq ({bait_dist:.2f}%) dulu, "
+                reason += f"baru target utama {real_target_side} liq ({real_dist:.2f}%)"
+        
+        # ===== DETEKSI PHASE =====
+        phase = "NORMAL"
+        phase_priority = 99
+        
+        if double_move:
+            phase = "MANIPULATION"
+            phase_priority = SEQ_MANIPULATION_PRIORITY
+        elif is_extreme_imbalance and is_extreme_wmi:
+            phase = "PREPARE"
+            phase_priority = SEQ_PREPARE_PRIORITY
+        elif trap_building:
+            phase = "TRAP_BUILDING"
+            phase_priority = SEQ_PREPARE_PRIORITY
+        
+        return {
+            "double_move": double_move,
+            "first_move": first_move,
+            "second_move": second_move,
+            "bait_side": bait_side,
+            "bait_distance": bait_dist,
+            "real_target_side": real_target_side,
+            "real_target_distance": real_dist,
+            "trap_building": trap_building,
+            "phase": phase,
+            "phase_priority": phase_priority,
+            "reason": reason,
+            "extreme_conditions": {
+                "imbalance": is_extreme_imbalance,
+                "wmi": is_extreme_wmi,
+                "oversold": is_extreme_oversold,
+                "overbought": is_extreme_overbought
+            }
+        }
+    
+    @staticmethod
+    def get_bias_for_phase(seq_result: Dict, current_step: str = "first") -> Dict:
+        """
+        Dapatkan bias berdasarkan phase dan step
+        """
+        if not seq_result.get('double_move'):
+            return {"bias": "NEUTRAL", "confidence": "LOW"}
+        
+        if current_step == "first":
+            return {
+                "bias": seq_result['first_move'],
+                "confidence": "ABSOLUTE",
+                "reason": f"SEQ_FIRST_MOVE: {seq_result['reason']}",
+                "phase": "FIRST_MOVE"
+            }
+        else:
+            return {
+                "bias": seq_result['second_move'],
+                "confidence": "ABSOLUTE",
+                "reason": f"SEQ_SECOND_MOVE: Setelah bait, target utama {seq_result['real_target_side']}",
+                "phase": "SECOND_MOVE"
+            }
+
+
+# ================= V106-CPD: CROWD PARADOX DETECTOR =================
+class CrowdParadoxDetectorV106:
+    """
+    🔥 V106-CPD: CROWD PARADOX DETECTOR
+    
+    Jika crowd terlalu yakin di satu sisi (imbalance > 1000x),
+    market akan LAWAAN arah untuk menyapu mereka.
+    
+    Kasus DEGO:
+    - Imbalance 2400x (semua orang yakin SHORT)
+    - Market: DUMP DULU (ikut crowd) → lalu PUMP (lawan arah)
+    """
+    
+    @staticmethod
+    def detect(imbalance: float, wmi: float, rsi: float,
+               crowd_bias: str, target_bias: str) -> Dict:
+        """
+        Deteksi paradox crowd
+        """
+        if imbalance > SEQ_IMBALANCE_EXTREME:
+            # Extreme crowd terdeteksi
+            
+            # Market akan lawan arah setelah mengambil bait
+            inverted_bias = "LONG" if crowd_bias == "SHORT" else "SHORT"
+            
+            return {
+                "paradox_active": True,
+                "crowd_bias": crowd_bias,
+                "inverted_bias": inverted_bias,
+                "confidence": "ABSOLUTE",
+                "reason": f"CPD_CROWD_PARADOX: Imbalance {imbalance:.0f}x crowd {crowd_bias}! "
+                         f"Market akan LAWAAN arah ({inverted_bias}) setelah mengambil bait!",
+                "priority": -215  # Antara -210 dan -220
+            }
+        
+        return {"paradox_active": False, "priority": 99}
+
+
+# ================= V106-TDE: TIME DELAY ENGINE =================
+class TimeDelayEngineV106:
+    """
+    🔥 V106-TDE: TIME DELAY ENGINE - MEMBACA PHASE EKSEKUSI
+    
+    HFT tidak langsung eksekusi. Mereka:
+    1. PREPARE (build posisi, create trap)
+    2. EXECUTE (ambil bait)
+    3. REVERSE (ambil target utama)
+    """
+    
+    @staticmethod
+    def detect_phase(seq_result: Dict, price_change: float,
+                     oi_delta: float, flow: float) -> Dict:
+        """
+        Deteksi phase saat ini
+        """
+        phase = "UNKNOWN"
+        priority = 99
+        reason = ""
+        
+        # ===== PREPARE PHASE =====
+        if seq_result.get('trap_building'):
+            phase = "PREPARE"
+            priority = -190
+            reason = "TDE_PREPARE: Trap sedang dibangun"
+        
+        # ===== EXECUTE PHASE (ambil bait) =====
+        elif seq_result.get('double_move'):
+            # Cek apakah bait sudah diambil
+            bait_side = seq_result.get('bait_side')
+            if bait_side == "LONG" and price_change < -1.0:
+                phase = "EXECUTE_BAIT"
+                priority = -200
+                reason = f"TDE_EXECUTE: Bait LONG liq sedang diambil (dump {price_change:.1f}%)"
+            elif bait_side == "SHORT" and price_change > 1.0:
+                phase = "EXECUTE_BAIT"
+                priority = -200
+                reason = f"TDE_EXECUTE: Bait SHORT liq sedang diambil (pump {price_change:+.1f}%)"
+        
+        # ===== REVERSE PHASE (ambil target utama) =====
+        elif seq_result.get('double_move') and abs(price_change) > 2.0:
+            # Setelah bait diambil, siap reversal
+            phase = "REVERSE_READY"
+            priority = -210
+            reason = "TDE_REVERSE_READY: Bait sudah diambil, siap reversal ke target utama"
+        
+        return {
+            "phase": phase,
+            "priority": priority,
+            "reason": reason,
+            "bait_taken": phase == "EXECUTE_BAIT",
+            "reverse_ready": phase == "REVERSE_READY"
+        }
+
+
+# ================= V106-SPL: STRICT PRIORITY LOCK DENGAN SEQUENCE =================
+class StrictPriorityLockV106:
+    """
+    🔥 V106-SPL: STRICT PRIORITY LOCK DENGAN SEQUENCE
+    
+    PRIORITY -220: MANIPULATION (double move detected)
+    PRIORITY -215: CROWD PARADOX
+    PRIORITY -210: REVERSE PHASE
+    PRIORITY -200: EXECUTION HARD LOCK
+    PRIORITY -190: RESISTANCE MAP / PREPARE PHASE
+    PRIORITY -165: SHORT BUILDING / LONG BUILDING
+    PRIORITY -160: DISTRIBUTION / ACCUMULATION
+    PRIORITY -150: TARGET PRIORITY
+    """
+    
+    @staticmethod
+    def resolve(intention_result: Dict, resistance_result: Dict,
+                target_result: Dict, seq_result: Dict,
+                crowd_result: Dict, time_result: Dict,
+                erf_result: Dict, vel_validated: Dict) -> Dict:
+        
+        # ===== PRIORITAS 1: MANIPULATION (double move) =====
+        if seq_result.get('phase_priority') <= -220:
+            return {
+                "final_bias": seq_result['first_move'],  # Ambil bait dulu
+                "confidence": "ABSOLUTE",
+                "reason": f"SPL_MANIPULATION: {seq_result['reason']}",
+                "phase": "MANIPULATION",
+                "next_phase": seq_result['second_move'],  # Target berikutnya
+                "priority": -220
+            }
+        
+        # ===== PRIORITAS 2: CROWD PARADOX =====
+        if crowd_result.get('priority') <= -215:
+            return {
+                "final_bias": crowd_result['inverted_bias'],
+                "confidence": crowd_result['confidence'],
+                "reason": crowd_result['reason'],
+                "phase": "CROWD_PARADOX",
+                "priority": -215
+            }
+        
+        # ===== PRIORITAS 3: REVERSE PHASE =====
+        if time_result.get('priority') <= -210:
+            return {
+                "final_bias": seq_result['second_move'] if seq_result.get('double_move') else "NEUTRAL",
+                "confidence": "ABSOLUTE",
+                "reason": time_result['reason'],
+                "phase": "REVERSE_PHASE",
+                "priority": -210
+            }
+        
+        # ===== PRIORITAS 4: EXECUTION HARD LOCK =====
+        if erf_result.get('priority') <= -200:
+            return {
+                "final_bias": erf_result['final_bias'],
+                "confidence": erf_result['confidence'],
+                "reason": erf_result['reason'],
+                "phase": "EXECUTION_HARD_LOCK",
+                "priority": -200
+            }
+        
+        # ===== PRIORITAS 5: RESISTANCE MAP =====
+        if resistance_result.get('confidence') in ['ABSOLUTE', 'HIGH']:
+            return {
+                "final_bias": resistance_result['bias'],
+                "confidence": resistance_result['confidence'],
+                "reason": f"SPL_RESISTANCE: {resistance_result['reason']}",
+                "phase": "RESISTANCE_MAP",
+                "priority": -190
+            }
+        
+        # ===== PRIORITAS 6: SHORT BUILDING / LONG BUILDING =====
+        intention_priority = intention_result.get('priority', 99)
+        if intention_priority <= -165:
+            return {
+                "final_bias": intention_result['bias'],
+                "confidence": intention_result['confidence'],
+                "reason": f"SPL_BUILDING: {intention_result['reason']}",
+                "phase": intention_result['intention'],
+                "priority": -165
+            }
+        
+        # ===== PRIORITAS 7: DISTRIBUTION / ACCUMULATION =====
+        if intention_priority <= -160:
+            return {
+                "final_bias": intention_result['bias'],
+                "confidence": intention_result['confidence'],
+                "reason": f"SPL_INTENTION: {intention_result['reason']}",
+                "phase": intention_result['intention'],
+                "priority": -160
+            }
+        
+        # ===== PRIORITAS 8: TARGET PRIORITY =====
+        if target_result.get('confidence') in ['ABSOLUTE', 'SUPREME', 'HIGH']:
+            return {
+                "final_bias": target_result['bias'],
+                "confidence": target_result['confidence'],
+                "reason": f"SPL_TARGET: {target_result['reason']}",
+                "phase": "TARGET_PRIORITY",
+                "priority": -150
+            }
+        
+        # ===== DEFAULT =====
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal",
+            "phase": "NEUTRAL",
+            "priority": 99
+        }
+
+
+# ================= V106-FINAL: CONFLICT RESOLVER DENGAN SEQUENCE ENGINE =================
+class ConflictResolverV106_FINAL:
+    """
+    🔥 V106-FINAL: CONFLICT RESOLVER DENGAN SEQUENCE ENGINE
+    
+    PRIORITY -220: MANIPULATION (double move)
+    PRIORITY -215: CROWD PARADOX
+    PRIORITY -210: REVERSE PHASE
+    PRIORITY -200: EXECUTION HARD LOCK
+    PRIORITY -190: RESISTANCE MAP
+    PRIORITY -165: SHORT BUILDING / LONG BUILDING
+    PRIORITY -160: DISTRIBUTION / ACCUMULATION
+    PRIORITY -150: TARGET PRIORITY
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== AMBIL SEMUA HASIL MODULE =====
+        intention_result = results.get('mie_v104', {})
+        resistance_result = results.get('rme_v105', {})
+        target_result = results.get('tpe_v104', {})
+        seq_result = results.get('seq_v106', {})
+        crowd_result = results.get('cpd_v106', {})
+        time_result = results.get('tde_v106', {})
+        erf_result = results.get('erf_v105', {})
+        vel_validated = results.get('vv_v104', {})
+        
+        # ===== GUNAKAN STRICT PRIORITY LOCK V106 =====
+        final = StrictPriorityLockV106.resolve(
+            intention_result=intention_result,
+            resistance_result=resistance_result,
+            target_result=target_result,
+            seq_result=seq_result,
+            crowd_result=crowd_result,
+            time_result=time_result,
+            erf_result=erf_result,
+            vel_validated=vel_validated
+        )
+        
+        return {
+            "final_bias": final.get('final_bias', 'NEUTRAL'),
+            "confidence": final.get('confidence', 'LOW'),
+            "reason": final.get('reason', ''),
+            "phase": final.get('phase', 'NEUTRAL'),
+            "next_phase": final.get('next_phase', 'NONE'),
+            "priority_level": final.get('priority', 99)
+        }
+
+
 # ================= V100-DAV: DISTRIBUTION ABSORPTION VALIDATOR CONFIG =================
 DAV_AGG_FLOW_GAP_THRESHOLD = 5.0      # Agg/Flow > 5x = Suspicious
 DAV_OI_BUILD_DISTRIBUTION_MIN = 2.0   # OI Build > 2% = Possible Dist
@@ -1638,6 +2027,30 @@ MIE_VALIDATE_WITH_INTENTION = True         # Validasi VEL dengan intention
 # Fake Move Detection
 MIE_FAKE_FLOW_MAX = 1.0                    # Flow < 1.0 = fake
 MIE_FAKE_RSI_OVERBOUGHT_MIN = 80.0         # RSI > 80 untuk fake squeeze
+
+# ================= V106-SEQ: SEQUENCE ENGINE CONFIG =================
+
+# Extreme thresholds
+SEQ_IMBALANCE_EXTREME = 1000.0               # Imbalance > 1000x = extreme crowd
+SEQ_WMI_EXTREME = 95.0                        # WMI > 95 atau < -95 = extreme
+SEQ_RSI_EXTREME_OVERSOLD = 10.0               # RSI < 10 = extreme oversold
+SEQ_RSI_EXTREME_OVERBOUGHT = 90.0             # RSI > 90 = extreme overbought
+SEQ_OI_RISE_MIN = 1.0                          # OI naik > 1%
+
+# Bait thresholds
+SEQ_BAIT_DIST_MAX = 0.5                        # Jarak < 0.5% = bait
+SEQ_REAL_TARGET_DIST_MIN = 5.0                  # Jarak > 5% = real target
+SEQ_FLOW_FAKE_MAX = 1.0                         # Flow < 1.0 = fake move
+SEQ_OI_RISE_BAIT_MIN = 0.5                      # OI naik saat bait = trap building
+
+# Phase priorities
+SEQ_PREPARE_PRIORITY = -190
+SEQ_EXECUTE_PRIORITY = -200
+SEQ_REVERSE_PRIORITY = -210
+SEQ_MANIPULATION_PRIORITY = -220                # Tertinggi!
+
+# Double move detection
+SEQ_BOTH_SIDES_LIQ_MIN = 1.0                    # Kedua sisi harus ada likuiditas
 LONG_LIQ_HUNT_DIST_MAX = 2.0                # Long dist < 2%
 LONG_LIQ_HUNT_RATIO = 3.0                   # Long dist < Short dist / 3
 LONG_LIQ_HUNT_PRIORITY = -7                 # Priority -7
@@ -22678,6 +23091,30 @@ class OutputFormatterV87:
             print(f"\n🔮 V105-ERF: {erf.get('reason', '')}")
             if result.get('use_vel_for_timing'):
                 print(f"   ⏱️ VEL boleh dipakai untuk TIMING ENTRY saja")
+        
+        # ===== V106 SEQUENCE ENGINE =====
+        seq = result.get('seq_v106', {})
+        if seq.get('double_move'):
+            print(f"\n🔄 V106-SEQ: DOUBLE MOVE DETECTED!")
+            print(f"   🎯 First: {seq.get('first_move')} (bait {seq.get('bait_distance', 0):.2f}%)")
+            print(f"   🎯 Second: {seq.get('second_move')} (target {seq.get('real_target_distance', 0):.2f}%)")
+            print(f"   📌 {seq.get('reason', '')}")
+        
+        # Crowd Paradox
+        cpd = result.get('cpd_v106', {})
+        if cpd.get('paradox_active'):
+            print(f"\n👥 V106-CPD: {cpd.get('reason', '')}")
+        
+        # Time Delay
+        tde = result.get('tde_v106', {})
+        if tde.get('phase') != 'UNKNOWN':
+            print(f"\n⏱️ V106-TDE: PHASE = {tde.get('phase')}")
+            print(f"   📌 {tde.get('reason', '')}")
+        
+        # Next phase info
+        if result.get('next_phase') != 'NONE':
+            print(f"\n⏩ NEXT PHASE: {result.get('next_phase')}")
+        
         # DECISION
         print(f"\n{'='*40}")
         bias_color = "🟢" if result['bias'] == "LONG" else "🔴" if result['bias'] == "SHORT" else "⚪"
@@ -23177,6 +23614,12 @@ class BinanceAnalyzerV87:
         self.rme_v105 = ResistanceMapEngineV105()                 # V105-RME
         self.erf_v105 = ExecutionRealityFilterV105()              # V105-ERF
         self.final_resolver_v105 = ConflictResolverV105_FINAL()   # V105-FINAL
+        
+        # ===== V106 SEQUENCE ENGINE =====
+        self.seq_v106 = SequenceEngineV106()                 # V106-SEQ
+        self.cpd_v106 = CrowdParadoxDetectorV106()           # V106-CPD
+        self.tde_v106 = TimeDelayEngineV106()                # V106-TDE
+        self.final_resolver_v106 = ConflictResolverV106_FINAL()  # V106-FINAL
         
         # ===== BTRUSDT CRIMINAL PATTERN MODULES (V98/V99/V100) =====
         self.evr_v98 = ExtremeVacuumReversalModuleV98()              # V98-EVR (Extreme Vacuum Reversal) ⭐ NEW!
@@ -25284,6 +25727,52 @@ class BinanceAnalyzerV87:
                 vel_validated=vv_result if 'vv_result' in locals() else {}
             )
             
+            # ===== V106 SEQUENCE ENGINE =====
+            
+            # Dapatkan data yang diperlukan
+            short_dist = liq.get('short_dist', 999)
+            long_dist = liq.get('long_dist', 999)
+            imbalance = lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0
+            wmi = wmi_ratio
+            rsi = rsi6
+            oi = oi_delta_5m
+            flow = trades.get('ratio', 1.0)
+            crowd_bias = "SHORT" if imbalance > 1 else "LONG"  # Sederhana, bisa diperbaiki
+            target_bias = tpe_result.get('bias', 'NEUTRAL') if 'tpe_result' in locals() else 'NEUTRAL'
+            
+            # Sequence Engine
+            seq_result = self.seq_v106.detect_sequence(
+                short_dist=short_dist,
+                long_dist=long_dist,
+                imbalance=imbalance,
+                wmi=wmi,
+                rsi=rsi,
+                oi_delta=oi,
+                flow=flow
+            )
+            
+            # Crowd Paradox Detector
+            crowd_result = self.cpd_v106.detect(
+                imbalance=imbalance,
+                wmi=wmi,
+                rsi=rsi,
+                crowd_bias=crowd_bias,
+                target_bias=target_bias
+            )
+            
+            # Time Delay Engine
+            time_result = self.tde_v106.detect_phase(
+                seq_result=seq_result,
+                price_change=change_5m,
+                oi_delta=oi,
+                flow=flow
+            )
+            
+            # Update results dictionary dengan module V106
+            scoring_data['seq_v106'] = seq_result
+            scoring_data['cpd_v106'] = crowd_result
+            scoring_data['tde_v106'] = time_result
+            
             # Update results dictionary dengan module V105
             scoring_data['rme_v105'] = rme_result
             scoring_data['void_v105'] = void_result
@@ -25307,8 +25796,24 @@ class BinanceAnalyzerV87:
             # ===== V105: FINAL RESOLVER (RESISTANCE MAP ENGINE - LEBIH TINGGI DARI V104!) =====
             v105_final = self.final_resolver_v105.resolve_all_signals(scoring_data)
             
-            # Gunakan V105 resolver jika ada signal yang sangat kuat (priority <= -120)
-            if v105_final.get('priority_level', 99) <= -120:
+            # ===== V106: FINAL RESOLVER (SEQUENCE ENGINE - TERTINGGI!) =====
+            v106_final = self.final_resolver_v106.resolve_all_signals(scoring_data)
+            
+            # Gunakan V106 resolver jika ada signal manipulation/crowd paradox (priority <= -210)
+            if v106_final.get('priority_level', 99) <= -210:
+                # V106 override (SEQUENCE ENGINE / CROWD PARADOX - TERTINGGI!)
+                final_decision = {
+                    'bias': v106_final['final_bias'],
+                    'final_bias': v106_final['final_bias'],
+                    'confidence': v106_final['confidence'],
+                    'reason': v106_final['reason'],
+                    'phase': v106_final['phase'],
+                    'next_phase': v106_final.get('next_phase', 'NONE'),
+                    'priority_level': v106_final['priority_level'],
+                    'intention': mie_result.get('intention', 'NEUTRAL'),
+                    'override_modules': v106_final.get('override_modules', [])
+                }
+            elif v105_final.get('priority_level', 99) <= -120:
                 # V105 override (RESISTANCE MAP / EXECUTION HARD LOCK - TERTINGGI!)
                 final_decision = {
                     'bias': v105_final['final_bias'],
@@ -26510,6 +27015,13 @@ class BinanceAnalyzerV87:
             result["erf_v105"] = erf_result
             result["use_vel_for_timing"] = v105_final.get('use_vel_for_timing', False)
             result["v105_phase"] = v105_final.get('phase', 'NORMAL')
+            
+            # ===== V106: SEQUENCE ENGINE =====
+            result["seq_v106"] = seq_result
+            result["cpd_v106"] = crowd_result
+            result["tde_v106"] = time_result
+            result["next_phase"] = v106_final.get('next_phase', 'NONE')
+            result["v106_phase"] = v106_final.get('phase', 'NORMAL')
             
             result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
             result["v102_enhanced_priority_level"] = v102_enhanced_final.get('priority_level', 99)
