@@ -25255,8 +25255,10 @@ class BinanceAnalyzerV87:
             # Dapatkan data untuk resistance map
             bid_volume = odd_result.get('bid_volume_near', 0) if 'odd_result' in locals() else 0
             ask_volume = odd_result.get('ask_volume_near', 0) if 'odd_result' in locals() else 0
-            seller_agg = trades.get('aggressive_ratio', 1.0) if price_change < 0 else 0  # Agg saat price turun = seller
-            buyer_agg = trades.get('aggressive_ratio', 1.0) if price_change > 0 else 0   # Agg saat price naik = buyer
+            
+            # PERBAIKI: ganti price_change dengan change_5m
+            seller_agg = trades.get('aggressive_ratio', 1.0) if change_5m < 0 else 0  # Agg saat price turun = seller
+            buyer_agg = trades.get('aggressive_ratio', 1.0) if change_5m > 0 else 0   # Agg saat price naik = buyer
             
             # Resistance Map Engine
             rme_result = self.rme_v105.calculate(
