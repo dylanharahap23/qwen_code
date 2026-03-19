@@ -569,6 +569,22 @@ FVC_ENHANCED_HIGH_FLOW_MIN = 20.0           # Flow > 20x = Whale Action
 FVC_ENHANCED_RSI_REVERSAL_ZONE_MAX = 25     # RSI < 25 = Squeeze Possible
 FVC_ENHANCED_LOW_FLOW_DIST_THRESHOLD = 1.0  # Flow < 1.0 + Oversold = Fake Squeeze
 
+# ================= V105-DSD: DOUBLE SWEEP DETECTOR CONFIG =================
+# Double Sweep Thresholds
+DSD_LONG_LIQ_CLOSE_MAX = 3.0           # Long liq < 3% = dekat (bait)
+DSD_SHORT_LIQ_FAR_MIN = 10.0           # Short liq > 10% = jauh (target)
+DSD_IMBALANCE_MIN = 50.0                # Imbalance > 50x = extreme crowd
+DSD_OI_BUILD_MIN = 5.0                  # OI > 5% = fuel build
+DSD_RSI_OVERSOLD_MAX = 25.0             # RSI < 25 = oversold
+DSD_CASCADE_RATIO_MIN = 10.0            # Cascade ratio > 10x = signifikan
+
+# Sequence
+DSD_FIRST_MOVE_COMPLETE_RATIO = 0.7     # First move 70% selesai
+
+# Priority
+DSD_PRIORITY = -220                      # Tertinggi!
+DSD_WAIT_PRIORITY = -219
+
 # ================= V100-LGT: LIQUIDATION GRAVITY TRAP DETECTOR =================
 class LiquidationGravityTrapDetectorV100:
     """🔥 V100-LGT: LIQUIDATION GRAVITY TRAP - ANTI-COSUSDT TRAP
@@ -617,6 +633,282 @@ class LiquidationGravityTrapDetectorV100:
                         }
         
         return {"is_liquidity_gravity_trap": False, "bias": "NEUTRAL"}
+
+
+# ================= V105-DSD: DOUBLE SWEEP DETECTOR =================
+class DoubleSweepDetectorV105:
+    """
+    🔥 V105-DSD: DOUBLE SWEEP DETECTOR - ANTI-DEGO TRAP
+    
+    Deteksi apakah MM akan lakukan 2 langkah sebelum target utama:
+    1. SQUEEZE crowded side dulu (ambil short liq)
+    2. DUMP ke long liq (target utama)
+    
+    Kasus DEGOUSDT:
+    - Long Liq: -2.42% (DEKAT!)
+    - Short Liq: +19.58% (JAUH!)
+    - Imbalance: 65.61x (SHORT CROWDED!)
+    - OI: +8.72% (FUEL BUILD!)
+    - RSI: 19.4 (OVERSOLD!)
+    - Cascade Up 191x lebih cepat!
+    """
+    
+    @staticmethod
+    def detect(long_dist: float, short_dist: float,
+               imbalance_ratio: float, oi_delta: float,
+               rsi: float, cascade_up: float, cascade_down: float) -> Dict:
+        """
+        Deteksi apakah market akan melakukan double sweep
+        """
+        # ===== CEK KONDISI DOUBLE SWEEP =====
+        long_close = abs(long_dist) < DSD_LONG_LIQ_CLOSE_MAX          # Long liq dekat
+        short_far = abs(short_dist) > DSD_SHORT_LIQ_FAR_MIN          # Short liq jauh
+        crowd_short = imbalance_ratio > DSD_IMBALANCE_MIN            # Short crowded
+        fuel_build = oi_delta > DSD_OI_BUILD_MIN                     # Fuel build
+        oversold = rsi < DSD_RSI_OVERSOLD_MAX                        # Oversold
+        
+        # Cascade check (mana yang lebih cepat)
+        cascade_up_faster = cascade_up < cascade_down
+        if cascade_up_faster:
+            cascade_ratio = cascade_down / max(cascade_up, 0.01)
+            faster_side = "UP"
+        else:
+            cascade_ratio = cascade_up / max(cascade_down, 0.01)
+            faster_side = "DOWN"
+        
+        # ===== DETEKSI DOUBLE SWEEP =====
+        if long_close and short_far and crowd_short and fuel_build and oversold:
+            if cascade_up_faster and cascade_ratio > DSD_CASCADE_RATIO_MIN:
+                # Sequence: LONG dulu (squeeze), baru SHORT (dump)
+                return {
+                    "is_double_sweep": True,
+                    "sequence": "FIRST_LONG_THEN_SHORT",
+                    "first_move": "LONG",
+                    "first_move_pct": abs(short_dist) * 0.5,  # Estimasi first move 50% dari target
+                    "second_move": "SHORT",
+                    "second_move_pct": abs(long_dist),
+                    "bias": "LONG",  # Ikuti first move!
+                    "confidence": "ABSOLUTE",
+                    "priority_level": DSD_PRIORITY,
+                    "reason": f"DSD_DOUBLE_SWEEP: Long Liq {long_dist:.1f}% (DEKAT!) + "
+                             f"Short Liq {short_dist:.1f}% (JAUH!) + "
+                             f"Imbalance {imbalance_ratio:.1f}x (SHORT CROWDED!) + "
+                             f"OI +{oi_delta:.1f}% (FUEL!) + "
+                             f"Cascade UP {cascade_ratio:.0f}x lebih cepat! "
+                             f"MM akan SQUEEZE DULU (+{abs(short_dist)*0.5:.1f}%) sebelum dump ke {abs(long_dist):.1f}%!",
+                    "override_modules": ["WMI_LOCK", "LPC_PAYOUT", "ENERGY_PATH", "EGR"],
+                    "warning": f"⚠️ FIRST MOVE +{abs(short_dist)*0.5:.1f}% AKAN TERJADI! JANGAN SHORT DULU!"
+                }
+            
+            elif not cascade_up_faster and cascade_ratio > DSD_CASCADE_RATIO_MIN:
+                # Sequence: SHORT dulu, baru LONG (jarang)
+                return {
+                    "is_double_sweep": True,
+                    "sequence": "FIRST_SHORT_THEN_LONG",
+                    "first_move": "SHORT",
+                    "first_move_pct": abs(long_dist) * 0.5,
+                    "second_move": "LONG",
+                    "second_move_pct": abs(short_dist),
+                    "bias": "SHORT",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": DSD_PRIORITY,
+                    "reason": f"DSD_DOUBLE_SWEEP: Long Liq {long_dist:.1f}% + Short Liq {short_dist:.1f}% + "
+                             f"Imbalance {imbalance_ratio:.1f}x + Cascade DOWN {cascade_ratio:.0f}x lebih cepat! "
+                             f"MM akan DUMP DULU sebelum pump!",
+                    "override_modules": ["WMI_LOCK", "LPC_PAYOUT", "ENERGY_PATH", "EGR"]
+                }
+        
+        return {
+            "is_double_sweep": False,
+            "bias": "NEUTRAL",
+            "priority_level": 99
+        }
+
+
+# ================= V105-SSD: SEQUENCE SIZE DETECTOR =================
+class SequenceSizeDetectorV105:
+    """
+    🔥 V105-SSD: SEQUENCE SIZE DETECTOR
+    
+    Hitung apakah first move akan hit stop loss sebelum target tercapai.
+    Ini penting agar bot tidak kena stop loss di first move!
+    
+    Kasus DEGO:
+    - First move: +9% (squeeze)
+    - Stop loss: 5-6%
+    - RESULT: STOP LOSS HIT! Bot keluar sebelum target utama!
+    """
+    
+    @staticmethod
+    def detect(first_move_pct: float, stop_loss_pct: float = 6.0,
+               take_profit_pct: float = 12.0) -> Dict:
+        """
+        Deteksi apakah first move akan hit stop loss
+        """
+        if first_move_pct > stop_loss_pct:
+            return {
+                "will_hit_sl": True,
+                "warning": "CRITICAL",
+                "reason": f"SSD_SEQUENCE_RISK: First move {first_move_pct:.1f}% > "
+                         f"Stop Loss {stop_loss_pct:.1f}%! "
+                         f"Akan TERLIQUIDASI sebelum target utama tercapai!",
+                "recommendation": "WAIT_FOR_FIRST_MOVE_COMPLETION",
+                "priority_level": -1
+            }
+        elif first_move_pct > stop_loss_pct * 0.8:
+            return {
+                "will_hit_sl": False,
+                "warning": "HIGH",
+                "reason": f"SSD_SEQUENCE_WARNING: First move {first_move_pct:.1f}% mendekati "
+                         f"stop loss {stop_loss_pct:.1f}%! Hati-hati!",
+                "recommendation": "REDUCE_POSITION_SIZE",
+                "priority_level": 0
+            }
+        
+        return {
+            "will_hit_sl": False,
+            "warning": "SAFE",
+            "reason": f"SSD_SAFE: First move {first_move_pct:.1f}% < stop loss {stop_loss_pct:.1f}%",
+            "recommendation": "PROCEED",
+            "priority_level": 1
+        }
+
+
+# ================= V105-IMC: IMBALANCE MOMENTUM CHECK =================
+class ImbalanceMomentumCheckV105:
+    """
+    🔥 V105-IMC: IMBALANCE MOMENTUM CHECK
+    
+    Imbalance > 50x HARUS squeeze dulu, apapun kata energy/wmi!
+    
+    Kasus DEGO:
+    - Imbalance 65.6x → shorts terlalu crowded
+    - Energy bilang SHORT (karena energy down lebih murah)
+    - Cascade bilang LONG (191x lebih cepat!)
+    - Harusnya: ikut CASCADE, bukan ENERGY!
+    """
+    
+    @staticmethod
+    def detect(imbalance_ratio: float, cascade_bias: str,
+               energy_bias: str, oi_delta: float) -> Dict:
+        """
+        Deteksi apakah imbalance > 50x harus override energy
+        """
+        if imbalance_ratio > DSD_IMBALANCE_MIN:
+            # Jika cascade dan energy conflict
+            if cascade_bias != energy_bias:
+                # Prioritaskan cascade
+                return {
+                    "bias": cascade_bias,
+                    "confidence": "SUPREME",
+                    "priority_level": -1,
+                    "reason": f"IMC_IMBALANCE_PRIORITY: Imbalance {imbalance_ratio:.1f}x > 50x! "
+                             f"Shorts terlalu crowded! Cascade Time {cascade_bias} harus prioritas "
+                             f"atas Energy {energy_bias}!",
+                    "override_modules": ["ENERGY_PATH", "EGR", "LEP"]
+                }
+            
+            # Jika searah, tetap konfirmasi
+            return {
+                "bias": cascade_bias,
+                "confidence": "HIGH",
+                "priority_level": 0,
+                "reason": f"IMC_IMBALANCE_CONFIRM: Imbalance {imbalance_ratio:.1f}x konfirmasi arah {cascade_bias}",
+                "override_modules": []
+            }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V105-RSF: REBOUND SQUEEZE FUEL =================
+class ReboundSqueezeFuelV105:
+    """
+    🔥 V105-RSF: REBOUND SQUEEZE FUEL
+    
+    RSI < 25 + OI > 5% = REBOUND FUEL!
+    Ini BUKAN distribution - ini FUEL untuk squeeze dulu!
+    
+    Kasus DEGO:
+    - RSI: 19.4 (OVERSOLD!)
+    - OI: +8.72% (FUEL BUILD!)
+    - WMI: -99.6x (tapi ini TRAP!)
+    """
+    
+    @staticmethod
+    def detect(rsi: float, oi_delta: float, wmi_ratio: float) -> Dict:
+        """
+        Deteksi apakah kondisi ini adalah rebound fuel
+        """
+        if rsi < DSD_RSI_OVERSOLD_MAX and oi_delta > DSD_OI_BUILD_MIN:
+            return {
+                "is_rebound_fuel": True,
+                "bias": "LONG",
+                "confidence": "SUPREME",
+                "priority_level": -1,
+                "reason": f"RSF_REBOUND_FUEL: RSI {rsi:.1f} (OVERSOLD!) + "
+                         f"OI +{oi_delta:.1f}% (FUEL BUILD!) = "
+                         f"Whale accumulation untuk REBOUND! "
+                         f"WMI {wmi_ratio:.1f}x mungkin TRAP!",
+                "override_modules": ["WMI_LOCK", "PBD", "LPC_PAYOUT"]
+            }
+        
+        return {"is_rebound_fuel": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V105-ENT: ENTRY TIMING VALIDATOR =================
+class EntryTimingValidatorV105:
+    """
+    🔥 V105-ENT: ENTRY TIMING VALIDATOR
+    
+    Jangan entry sebelum first move selesai!
+    Kalau first move > stop loss, WAIT!
+    
+    Kasus DEGO:
+    - First move: +9% (squeeze)
+    - Current price change: 0% (belum mulai)
+    - Harusnya: WAIT!
+    """
+    
+    @staticmethod
+    def detect(is_double_sweep: bool, first_move_pct: float,
+               current_price_change: float) -> Dict:
+        """
+        Deteksi apakah aman untuk entry sekarang
+        """
+        if is_double_sweep:
+            # Hitung progress first move
+            first_move_progress = abs(current_price_change) / first_move_pct if first_move_pct > 0 else 0
+            first_move_complete = first_move_progress > DSD_FIRST_MOVE_COMPLETE_RATIO
+            
+            if not first_move_complete:
+                return {
+                    "should_wait": True,
+                    "bias": "NEUTRAL",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -2,
+                    "reason": f"ENT_SEQUENCE_WAIT: Double sweep terdeteksi! "
+                             f"First move {first_move_pct:.1f}% baru {first_move_progress:.0%} selesai "
+                             f"(current: {current_price_change:.1f}%). "
+                             f"JANGAN ENTRY SEBELUM FIRST MOVE SELESAI!",
+                    "action": "WAIT_FOR_FIRST_MOVE_COMPLETION",
+                    "wait_for": f"price to move {first_move_pct*(1-first_move_progress):.1f}% more"
+                }
+            else:
+                return {
+                    "should_wait": False,
+                    "bias": "NEUTRAL",
+                    "confidence": "HIGH",
+                    "priority_level": 0,
+                    "reason": f"ENT_SEQUENCE_READY: First move {first_move_progress:.0%} selesai. "
+                             f"Siap untuk second move!",
+                    "action": "READY_FOR_SECOND_MOVE"
+                }
+        
+        return {
+            "should_wait": False,
+            "bias": "NEUTRAL",
+            "priority_level": 99
+        }
 
 
 # ================= V104-MIE UPDATED: MACRO INTENTION DETECTOR DENGAN PRICE CONTEXT =================
@@ -1423,53 +1715,96 @@ class StrictPriorityLockV105:
         }
 
 
-# ================= V105-FINAL: CONFLICT RESOLVER DENGAN RESISTANCE MAP =================
+# ================= V105-FINAL: CONFLICT RESOLVER DENGAN DOUBLE SWEEP =================
 class ConflictResolverV105_FINAL:
     """
-    🔥 V105-FINAL: CONFLICT RESOLVER DENGAN RESISTANCE MAP
+    🔥 V105-FINAL: CONFLICT RESOLVER DENGAN DOUBLE SWEEP
     
-    PRIORITY -200: EXECUTION HARD LOCK (SHORT COVERING / LONG LIQ)
-    PRIORITY -190: RESISTANCE MAP
-    PRIORITY -165: SHORT BUILDING / LONG BUILDING
-    PRIORITY -160: DISTRIBUTION / ACCUMULATION
-    PRIORITY -150: TARGET PRIORITY
-    PRIORITY -140: ZAS
-    PRIORITY -130: ODF
-    PRIORITY -120: VEL (hanya jika searah target)
+    PRIORITY -220: DOUBLE SWEEP DETECTOR (TERTINGGI!)
+    PRIORITY -219: ENTRY TIMING WAIT
+    PRIORITY -215: CROWD PARADOX
+    PRIORITY -210: REVERSE PHASE
+    PRIORITY -200: EXECUTION HARD LOCK
     """
     
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
         
         # ===== AMBIL SEMUA HASIL MODULE =====
-        intention_result = results.get('mie_v104', {})
-        resistance_result = results.get('rme_v105', {})
-        target_result = results.get('tpe_v104', {})
-        zas_result = results.get('zas_v87', {})
-        odf_result = results.get('odf', {})
-        vel_validated = results.get('vv_v104', {})
-        fake_move = results.get('fmd_v104', {})
-        erf_result = results.get('erf_v105', {})
+        dsd_result = results.get('dsd_v105', {})
+        ssd_result = results.get('ssd_v105', {})
+        imc_result = results.get('imc_v105', {})
+        rsf_result = results.get('rsf_v105', {})
+        ent_result = results.get('ent_v105', {})
         
-        # ===== GUNAKAN STRICT PRIORITY LOCK V105 =====
-        final = StrictPriorityLockV105.resolve(
-            intention_result=intention_result,
-            resistance_result=resistance_result,
-            target_result=target_result,
-            zas_result=zas_result,
-            odf_result=odf_result,
-            vel_validated=vel_validated,
-            fake_move=fake_move,
-            erf_result=erf_result
-        )
+        # ===== PRIORITAS 1: DOUBLE SWEEP DETECTOR =====
+        if dsd_result.get('is_double_sweep'):
+            
+            # Cek entry timing
+            if ent_result.get('should_wait'):
+                return {
+                    "final_bias": "NEUTRAL",
+                    "confidence": ent_result.get('confidence', 'ABSOLUTE'),
+                    "reason": ent_result.get('reason', ''),
+                    "phase": "DOUBLE_SWEEP_WAIT",
+                    "action": ent_result.get('action', 'WAIT'),
+                    "priority_level": -219,
+                    "warning": dsd_result.get('warning', '')
+                }
+            
+            # Cek sequence size (stop loss warning)
+            if ssd_result.get('will_hit_sl'):
+                return {
+                    "final_bias": dsd_result['bias'],
+                    "confidence": dsd_result['confidence'],
+                    "reason": f"{dsd_result['reason']}\n{ssd_result['reason']}",
+                    "phase": "DOUBLE_SWEEP_RISK",
+                    "warning": ssd_result.get('warning', 'CRITICAL'),
+                    "recommendation": ssd_result.get('recommendation', 'WAIT'),
+                    "priority_level": -218
+                }
+            
+            # Siap untuk first move
+            return {
+                "final_bias": dsd_result['bias'],
+                "confidence": dsd_result['confidence'],
+                "reason": dsd_result['reason'],
+                "phase": "DOUBLE_SWEEP_FIRST_MOVE",
+                "first_move": dsd_result.get('first_move', 'UNKNOWN'),
+                "first_move_pct": dsd_result.get('first_move_pct', 0),
+                "second_move": dsd_result.get('second_move', 'UNKNOWN'),
+                "second_move_pct": dsd_result.get('second_move_pct', 0),
+                "priority_level": -220,
+                "override_modules": dsd_result.get('override_modules', [])
+            }
         
+        # ===== PRIORITAS 2: IMBALANCE MOMENTUM CHECK =====
+        if imc_result.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": imc_result['bias'],
+                "confidence": imc_result['confidence'],
+                "reason": imc_result['reason'],
+                "phase": "IMBALANCE_PRIORITY",
+                "priority_level": -215
+            }
+        
+        # ===== PRIORITAS 3: REBOUND SQUEEZE FUEL =====
+        if rsf_result.get('is_rebound_fuel'):
+            return {
+                "final_bias": rsf_result['bias'],
+                "confidence": rsf_result['confidence'],
+                "reason": rsf_result['reason'],
+                "phase": "REBOUND_FUEL",
+                "priority_level": -210
+            }
+        
+        # ===== DEFAULT =====
         return {
-            "final_bias": final.get('final_bias', 'NEUTRAL'),
-            "confidence": final.get('confidence', 'LOW'),
-            "reason": final.get('reason', ''),
-            "phase": final.get('phase', 'NEUTRAL'),
-            "priority_level": final.get('priority', 99),
-            "use_vel_for_timing": final.get('use_vel_for_timing', False)
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal",
+            "phase": "NEUTRAL",
+            "priority_level": 99
         }
 
 
@@ -24100,6 +24435,14 @@ class BinanceAnalyzerV87:
         # ===== V105 RESISTANCE MAP ENGINE =====
         self.rme_v105 = ResistanceMapEngineV105()                 # V105-RME
         self.erf_v105 = ExecutionRealityFilterV105()              # V105-ERF
+        
+        # ===== V105 DOUBLE SWEEP MODULES =====
+        self.dsd_v105 = DoubleSweepDetectorV105()           # V105-DSD
+        self.ssd_v105 = SequenceSizeDetectorV105()          # V105-SSD
+        self.imc_v105 = ImbalanceMomentumCheckV105()        # V105-IMC
+        self.rsf_v105 = ReboundSqueezeFuelV105()            # V105-RSF
+        self.ent_v105 = EntryTimingValidatorV105()          # V105-ENT
+        
         self.final_resolver_v105 = ConflictResolverV105_FINAL()   # V105-FINAL
         
         # ===== V106 SEQUENCE ENGINE =====
@@ -26269,7 +26612,55 @@ class BinanceAnalyzerV87:
             scoring_data['cpd_v106'] = crowd_result
             scoring_data['tde_v106'] = time_result
             
+            # ===== V105 DOUBLE SWEEP MODULES =====
+            
+            # Double Sweep Detector
+            dsd_result = self.dsd_v105.detect(
+                long_dist=liq.get('long_dist', 999),
+                short_dist=liq.get('short_dist', 999),
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                oi_delta=oi_delta_5m,
+                rsi=rsi6,
+                cascade_up=cascade_result.get('up_time', 999) if 'cascade_result' in locals() else 999,
+                cascade_down=cascade_result.get('down_time', 999) if 'cascade_result' in locals() else 999
+            )
+            
+            # Sequence Size Detector
+            first_move_pct = dsd_result.get('first_move_pct', 0)
+            ssd_result = self.ssd_v105.detect(
+                first_move_pct=first_move_pct,
+                stop_loss_pct=6.0,
+                take_profit_pct=12.0
+            )
+            
+            # Imbalance Momentum Check
+            imc_result = self.imc_v105.detect(
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                cascade_bias=cascade_result.get('bias', 'NEUTRAL') if 'cascade_result' in locals() else 'NEUTRAL',
+                energy_bias=energy_bias if 'energy_bias' in locals() else 'NEUTRAL',
+                oi_delta=oi_delta_5m
+            )
+            
+            # Rebound Squeeze Fuel
+            rsf_result = self.rsf_v105.detect(
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                wmi_ratio=wmi_ratio
+            )
+            
+            # Entry Timing Validator
+            ent_result = self.ent_v105.detect(
+                is_double_sweep=dsd_result.get('is_double_sweep', False),
+                first_move_pct=first_move_pct,
+                current_price_change=change_5m
+            )
+            
             # Update results dictionary dengan module V105
+            scoring_data['dsd_v105'] = dsd_result
+            scoring_data['ssd_v105'] = ssd_result
+            scoring_data['imc_v105'] = imc_result
+            scoring_data['rsf_v105'] = rsf_result
+            scoring_data['ent_v105'] = ent_result
             scoring_data['rme_v105'] = rme_result
             scoring_data['void_v105'] = void_result
             scoring_data['erf_v105'] = erf_result
@@ -27598,10 +27989,21 @@ class BinanceAnalyzerV87:
             result["intention"] = mie_result.get('intention', 'NEUTRAL')
             result["v104_phase"] = v104_final.get('phase', 'NORMAL')
             
-            # ===== V105: RESISTANCE MAP ENGINE =====
+            # ===== V105: RESISTANCE MAP ENGINE & DOUBLE SWEEP =====
+            result["dsd_v105"] = dsd_result
+            result["ssd_v105"] = ssd_result
+            result["imc_v105"] = imc_result
+            result["rsf_v105"] = rsf_result
+            result["ent_v105"] = ent_result
             result["rme_v105"] = rme_result
             result["void_v105"] = void_result
             result["erf_v105"] = erf_result
+            result["first_move"] = v105_final.get('first_move', 'NONE')
+            result["first_move_pct"] = v105_final.get('first_move_pct', 0)
+            result["second_move"] = v105_final.get('second_move', 'NONE')
+            result["second_move_pct"] = v105_final.get('second_move_pct', 0)
+            result["v105_warning"] = v105_final.get('warning', '')
+            result["v105_recommendation"] = v105_final.get('recommendation', '')
             result["use_vel_for_timing"] = v105_final.get('use_vel_for_timing', False)
             result["v105_phase"] = v105_final.get('phase', 'NORMAL')
             
