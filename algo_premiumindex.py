@@ -585,6 +585,36 @@ DSD_FIRST_MOVE_COMPLETE_RATIO = 0.7     # First move 70% selesai
 DSD_PRIORITY = -220                      # Tertinggi!
 DSD_WAIT_PRIORITY = -219
 
+# ================= V111-EFE: EXECUTION FEASIBILITY ENGINE CONFIG =================
+
+# Flow thresholds
+EFE_FLOW_VERY_LOW_MAX = 0.5           # Flow < 0.5 = sangat lemah
+EFE_FLOW_LOW_MAX = 1.0                 # Flow < 1.0 = lemah
+EFE_FLOW_MODERATE_MIN = 1.5            # Flow > 1.5 = moderate
+EFE_FLOW_HIGH_MIN = 2.0                 # Flow > 2.0 = tinggi
+
+# Agg thresholds
+EFE_AGG_DEAD_MAX = 0.1                  # Agg < 0.1 = dead market
+EFE_AGG_LOW_MAX = 0.5                    # Agg < 0.5 = low aggression
+
+# Dead market
+EFE_DEAD_MARKET_FLOW_MAX = 0.5           # Flow < 0.5
+EFE_DEAD_MARKET_AGG_MAX = 0.1            # Agg < 0.1
+
+# WMI validation
+EFE_WMI_EXTREME_MIN = 90.0                # WMI > 90 atau < -90 = extreme
+EFE_WMI_VALID_FLOW_MIN = 0.5               # Butuh flow > 0.5 untuk valid
+
+# Trap detection
+EFE_TRAP_OI_MIN = 0.5                      # OI > 0.5%
+EFE_TRAP_FLOW_MAX = 0.5                    # Flow < 0.5
+
+# Priority levels
+EFE_EXECUTION_BLOCK_PRIORITY = -230        # Tertinggi!
+EFE_DEAD_MARKET_PRIORITY = -225
+EFE_WMI_INVALID_PRIORITY = -220
+EFE_TRAP_PRIORITY = -215
+
 # ================= V100-LGT: LIQUIDATION GRAVITY TRAP DETECTOR =================
 class LiquidationGravityTrapDetectorV100:
     """🔥 V100-LGT: LIQUIDATION GRAVITY TRAP - ANTI-COSUSDT TRAP
@@ -908,6 +938,311 @@ class EntryTimingValidatorV105:
             "should_wait": False,
             "bias": "NEUTRAL",
             "priority_level": 99
+        }
+
+
+# ================= V111-EFE: EXECUTION FEASIBILITY ENGINE =================
+class ExecutionFeasibilityEngineV111:
+    """
+    🔥 V111-EFE: EXECUTION FEASIBILITY ENGINE
+    
+    Memvalidasi apakah sinyal BISA DIEKSEKUSI atau tidak.
+    Sinyal bisa benar secara teori, tapi GAK BISA JALAN karena gaada tenaga.
+    
+    Rule Utama:
+    - Flow < 0.5 = NO SQUEEZE, ONLY DUMP OR SIDEWAYS
+    - Flow < 0.5 + target SHORT_LIQ = BLOCK LONG
+    - Flow < 0.5 + target LONG_LIQ = ALLOW SHORT
+    """
+    
+    @staticmethod
+    def validate(target_bias: str, flow: float, agg: float,
+                 oi_delta: float, wmi: float) -> Dict:
+        """
+        Validasi apakah sinyal feasible untuk dieksekusi
+        """
+        block_long = False
+        block_short = False
+        confidence = "LOW"
+        reason = ""
+        priority = 99
+        
+        # ===== FLOW SANGAT LEMAH (< 0.5) =====
+        if flow < EFE_FLOW_VERY_LOW_MAX:
+            # NO SQUEEZE, ONLY DUMP OR SIDEWAYS
+            if target_bias == "LONG":  # Mau pump
+                block_long = True
+                confidence = "ABSOLUTE"
+                priority = EFE_EXECUTION_BLOCK_PRIORITY
+                reason = f"EFE_EXECUTION_BLOCK: Flow {flow:.2f}x < 0.5! "
+                reason += "SQUEEZE TIDAK MUNGKIN! Market hanya bisa DUMP atau SIDEWAYS. BLOCK LONG!"
+            
+            elif target_bias == "SHORT":  # Mau dump
+                # Flow rendah mendukung dump
+                block_short = False
+                confidence = "SUPREME"
+                priority = EFE_EXECUTION_BLOCK_PRIORITY
+                reason = f"EFE_DUMP_FEASIBLE: Flow {flow:.2f}x < 0.5 mendukung DUMP. SHORT ALLOWED!"
+        
+        # ===== FLOW LEMAH (0.5 - 1.0) =====
+        elif flow < EFE_FLOW_LOW_MAX:
+            if target_bias == "LONG":
+                # Masih bisa squeeze tapi hati-hati
+                block_long = False
+                confidence = "MEDIUM"
+                priority = 0
+                reason = f"EFE_LONG_CAUTION: Flow {flow:.2f}x rendah. Squeeze mungkin TAPI berat."
+        
+        # ===== DEAD MARKET DETECTION =====
+        if agg < EFE_AGG_DEAD_MAX and flow < EFE_FLOW_VERY_LOW_MAX:
+            # Dead market - price akan jatuh ke liquidity terdekat
+            return {
+                "market_state": "DEAD_MARKET",
+                "bias": "SHORT",  # Default jatuh
+                "confidence": "ABSOLUTE",
+                "priority": EFE_DEAD_MARKET_PRIORITY,
+                "reason": f"EFE_DEAD_MARKET: Agg {agg:.2f}x (DEAD!) + Flow {flow:.2f}x (LEMAH!) = "
+                         f"MARKET MATI TOTAL! Price akan JATUH ke liquidity terdekat tanpa defense!",
+                "block_long": True,
+                "block_short": False
+            }
+        
+        # ===== WMI VALIDATION =====
+        if abs(wmi) > EFE_WMI_EXTREME_MIN:
+            if flow < EFE_WMI_VALID_FLOW_MIN:
+                # WMI ekstrem tapi flow rendah = INVALID
+                return {
+                    "market_state": "WMI_INVALID",
+                    "bias": target_bias,
+                    "confidence": "SUPREME",
+                    "priority": EFE_WMI_INVALID_PRIORITY,
+                    "reason": f"EFE_WMI_INVALID: WMI {wmi:.1f}x (EXTREME!) TAPI Flow {flow:.2f}x < 0.5! "
+                             f"WMI hanyalah 'potensi', bukan aksi nyata. Jangan terlalu percaya!",
+                    "block_long": block_long,
+                    "block_short": block_short
+                }
+        
+        # ===== TRAP DETECTION =====
+        if oi_delta > EFE_TRAP_OI_MIN and flow < EFE_TRAP_FLOW_MAX:
+            return {
+                "market_state": "PASSIVE_BUILD_TRAP",
+                "bias": "NEUTRAL",
+                "confidence": "HIGH",
+                "priority": EFE_TRAP_PRIORITY,
+                "reason": f"EFE_PASSIVE_TRAP: OI +{oi_delta:.2f}% (BUILD!) TAPI Flow {flow:.2f}x (LEMAH!) = "
+                         f"Whale build posisi DIAM-DIAM (limit order). BUKAN untuk langsung move!",
+                "block_long": True,
+                "block_short": True,
+                "action": "WAIT_FOR_VOLUME"
+            }
+        
+        return {
+            "market_state": "NORMAL",
+            "bias": target_bias,
+            "confidence": confidence,
+            "priority": priority,
+            "reason": reason,
+            "block_long": block_long,
+            "block_short": block_short
+        }
+
+
+# ================= V113-FSK: FALSE SQUEEZE KILLER =================
+class FalseSqueezeKillerV113:
+    """
+    🔥 V113-FSK: FALSE SQUEEZE KILLER
+    
+    Jika expected move adalah SQUEEZE tapi flow < 0.5,
+    MAKA SINYAL HARUS DIBATALKAN!
+    
+    Ini override semua modul: ZAS, ENERGY, WMI, TPE!
+    """
+    
+    @staticmethod
+    def validate(expected_move: str, flow: float, agg: float) -> Dict:
+        """
+        Validasi apakah squeeze benar-benar bisa terjadi
+        """
+        if expected_move == "SQUEEZE" or expected_move == "LONG":
+            if flow < EFE_FLOW_VERY_LOW_MAX:
+                return {
+                    "is_false_squeeze": True,
+                    "action": "CANCEL_SIGNAL",
+                    "confidence": "ABSOLUTE",
+                    "priority": -230,  # Tertinggi!
+                    "reason": f"FSK_FALSE_SQUEEZE: Expected SQUEEZE TAPI Flow {flow:.2f}x < 0.5! "
+                             f"TIDAK ADA TENAGA untuk eksekusi! SIGNAL DIBATALKAN!",
+                    "override_modules": ["ZAS", "ENERGY", "WMI", "TPE", "LPC", "EGR"]
+                }
+            elif flow < EFE_FLOW_LOW_MAX:
+                return {
+                    "is_false_squeeze": False,
+                    "warning": True,
+                    "confidence": "HIGH",
+                    "priority": 0,
+                    "reason": f"FSK_SQUEEZE_WARNING: Flow {flow:.2f}x rendah. Squeeze mungkin TAPI berat!"
+                }
+        
+        return {"is_false_squeeze": False, "priority": 99}
+
+
+# ================= V112-DMT: DEAD MARKET TRAP =================
+class DeadMarketTrapV112:
+    """
+    🔥 V112-DMT: DEAD MARKET TRAP
+    
+    Jika Agg == 0 dan Flow < 0.5, market dalam kondisi DEAD.
+    Tidak ada defense → price akan jatuh ke liquidity terdekat.
+    
+    Kasus DEGO 14:53:
+    - Agg: 0.0x (DEAD!)
+    - Flow: 0.37x (LEMAH!)
+    - WMI: +95.5x (target atas)
+    - TAPI market DUMP -8%!
+    """
+    
+    @staticmethod
+    def detect(agg: float, flow: float, short_dist: float, long_dist: float) -> Dict:
+        """
+        Deteksi dead market trap
+        """
+        if agg < EFE_AGG_DEAD_MAX and flow < EFE_FLOW_VERY_LOW_MAX:
+            # Dead market - cari liquidity terdekat
+            if abs(long_dist) < abs(short_dist):
+                # Long liq lebih dekat → akan dump
+                return {
+                    "is_dead_market": True,
+                    "bias": "SHORT",
+                    "target": "LONG_LIQ",
+                    "target_distance": abs(long_dist),
+                    "confidence": "ABSOLUTE",
+                    "priority": -225,
+                    "reason": f"DMT_DEAD_MARKET: Agg {agg:.2f}x (DEAD!) + Flow {flow:.2f}x (LEMAH!) = "
+                             f"MARKET MATI! Tidak ada defense! Price akan JATUH ke long liq terdekat "
+                             f"({abs(long_dist):.1f}%)! ABORT ALL LONG SIGNALS!",
+                    "action": "FOLLOW_LIQUIDATION"
+                }
+            else:
+                # Short liq lebih dekat → akan pump
+                return {
+                    "is_dead_market": True,
+                    "bias": "LONG",
+                    "target": "SHORT_LIQ",
+                    "target_distance": abs(short_dist),
+                    "confidence": "ABSOLUTE",
+                    "priority": -225,
+                    "reason": f"DMT_DEAD_MARKET: Agg {agg:.2f}x (DEAD!) + Flow {flow:.2f}x (LEMAH!) = "
+                             f"MARKET MATI! Price akan NAIK ke short liq terdekat ({abs(short_dist):.1f}%)!",
+                    "action": "FOLLOW_LIQUIDATION"
+                }
+        
+        return {"is_dead_market": False, "priority": 99}
+
+
+# ================= V114-WVF: WMI VALIDATION FIX =================
+class WMIValidationFixV114:
+    """
+    🔥 V114-WVF: WMI VALIDATION FIX
+    
+    WMI butuh VOLUME untuk valid.
+    WMI > 90 tanpa flow = hanya POTENSI, bukan AKSI.
+    
+    Kasus DEGO 14:53:
+    - WMI: +95.5x (EXTREME!)
+    - Flow: 0.37x (LEMAH!)
+    - WMI INVALID! Market dump instead of pump!
+    """
+    
+    @staticmethod
+    def validate(wmi: float, flow: float, wmi_bias: str) -> Dict:
+        """
+        Validasi apakah WMI valid untuk dieksekusi
+        """
+        if abs(wmi) > EFE_WMI_EXTREME_MIN:
+            if flow < EFE_WMI_VALID_FLOW_MIN:
+                # WMI ekstrem tapi flow rendah = INVALID
+                return {
+                    "wmi_valid": False,
+                    "correct_bias": "SHORT" if wmi_bias == "LONG" else "LONG",  # Biasnya kebalikan
+                    "confidence": "SUPREME",
+                    "priority": -220,
+                    "reason": f"WVF_WMI_INVALID: WMI {wmi:.1f}x (EXTREME!) TAPI Flow {flow:.2f}x < 0.5! "
+                             f"WMI hanyalah 'POTENSI', bukan AKSI. Tanpa volume, harga akan LAWAAN arah! "
+                             f"Expected {wmi_bias} TAPI kemungkinan {(wmi_bias == 'LONG' and 'SHORT' or 'LONG')}!",
+                    "override_modules": ["WMI_LOCK", "WMI_VETO"]
+                }
+            else:
+                return {
+                    "wmi_valid": True,
+                    "correct_bias": wmi_bias,
+                    "confidence": "HIGH",
+                    "priority": 0,
+                    "reason": f"WVF_WMI_VALID: WMI {wmi:.1f}x + Flow {flow:.2f}x > 0.5 = VALID!"
+                }
+        
+        return {"wmi_valid": True, "correct_bias": wmi_bias, "priority": 99}
+
+
+# ================= V115-TC: TRAP CLASSIFIER =================
+class TrapClassifierV115:
+    """
+    🔥 V115-TC: TRAP CLASSIFIER
+    
+    Klasifikasi jenis trap berdasarkan flow dan OI.
+    
+    PASSIVE BUILD TRAP:
+    - OI naik (>0.5%)
+    - Flow rendah (<0.5)
+    - Whale build posisi DIAM-DIAM (limit order)
+    - BUKAN untuk langsung move!
+    """
+    
+    @staticmethod
+    def classify(oi_delta: float, flow: float, agg: float,
+                 target_bias: str, expected_move: str) -> Dict:
+        """
+        Klasifikasi jenis trap
+        """
+        trap_type = "NONE"
+        confidence = "LOW"
+        reason = ""
+        action = "PROCEED"
+        priority = 99
+        
+        # ===== PASSIVE BUILD TRAP =====
+        if oi_delta > EFE_TRAP_OI_MIN and flow < EFE_TRAP_FLOW_MAX:
+            trap_type = "PASSIVE_BUILD_TRAP"
+            confidence = "ABSOLUTE"
+            priority = -215
+            action = "WAIT_FOR_VOLUME"
+            reason = f"TC_PASSIVE_BUILD: OI +{oi_delta:.2f}% (BUILD!) + Flow {flow:.2f}x (LEMAH!) = "
+            reason += "Whale build posisi DIAM-DIAM via LIMIT ORDER. BUKAN untuk langsung move! "
+            reason += "JANGAN ENTRY sebelum volume muncul!"
+        
+        # ===== AGGRESSIVE BUILD =====
+        elif oi_delta > EFE_TRAP_OI_MIN and flow > EFE_FLOW_MODERATE_MIN:
+            trap_type = "AGGRESSIVE_BUILD"
+            confidence = "HIGH"
+            priority = 0
+            action = "FOLLOW_DIRECTION"
+            reason = f"TC_AGGRESSIVE: OI +{oi_delta:.2f}% + Flow {flow:.2f}x = "
+            reason += "Whale build AGGRESIF. Siap untuk move!"
+        
+        # ===== DISTRIBUTION TRAP =====
+        elif oi_delta < -EFE_TRAP_OI_MIN and flow > EFE_FLOW_MODERATE_MIN:
+            trap_type = "DISTRIBUTION_TRAP"
+            confidence = "HIGH"
+            priority = -200
+            action = "FOLLOW_OPPOSITE"
+            reason = f"TC_DISTRIBUTION: OI {oi_delta:.2f}% (DROP!) + Flow {flow:.2f}x = "
+            reason += "Whale DISTRIBUSI! Lawan arah ekspektasi!"
+        
+        return {
+            "trap_type": trap_type,
+            "confidence": confidence,
+            "priority": priority,
+            "reason": reason,
+            "action": action
         }
 
 
@@ -1797,6 +2132,98 @@ class ConflictResolverV105_FINAL:
                 "phase": "REBOUND_FUEL",
                 "priority_level": -210
             }
+        
+        # ===== DEFAULT =====
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal",
+            "phase": "NEUTRAL",
+            "priority_level": 99
+        }
+
+
+# ================= V115-FINAL: CONFLICT RESOLVER DENGAN EXECUTION FEASIBILITY =================
+class ConflictResolverV115_FINAL:
+    """
+    🔥 V115-FINAL: CONFLICT RESOLVER DENGAN EXECUTION FEASIBILITY
+    
+    PRIORITY -230: FALSE SQUEEZE KILLER / EXECUTION BLOCK (TERTINGGI!)
+    PRIORITY -225: DEAD MARKET TRAP
+    PRIORITY -220: WMI VALIDATION FIX
+    PRIORITY -215: TRAP CLASSIFIER
+    PRIORITY -210: DOUBLE SWEEP
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== AMBIL SEMUA HASIL MODULE =====
+        efe_result = results.get('efe_v111', {})
+        fsk_result = results.get('fsk_v113', {})
+        dmt_result = results.get('dmt_v112', {})
+        wvf_result = results.get('wvf_v114', {})
+        tc_result = results.get('tc_v115', {})
+        
+        # ===== PRIORITAS 1: FALSE SQUEEZE KILLER =====
+        if fsk_result.get('is_false_squeeze'):
+            return {
+                "final_bias": "NEUTRAL",
+                "confidence": fsk_result['confidence'],
+                "reason": fsk_result['reason'],
+                "phase": "FALSE_SQUEEZE",
+                "action": "CANCEL_SIGNAL",
+                "priority_level": -230
+            }
+        
+        # ===== PRIORITAS 2: EXECUTION FEASIBILITY BLOCK =====
+        if efe_result.get('block_long') or efe_result.get('block_short'):
+            bias = "SHORT" if efe_result.get('block_long') else "LONG" if efe_result.get('block_short') else "NEUTRAL"
+            return {
+                "final_bias": bias,
+                "confidence": efe_result.get('confidence', 'ABSOLUTE'),
+                "reason": efe_result.get('reason', ''),
+                "phase": efe_result.get('market_state', 'EXECUTION_BLOCK'),
+                "priority_level": -230
+            }
+        
+        # ===== PRIORITAS 3: DEAD MARKET TRAP =====
+        if dmt_result.get('is_dead_market'):
+            return {
+                "final_bias": dmt_result['bias'],
+                "confidence": dmt_result['confidence'],
+                "reason": dmt_result['reason'],
+                "phase": "DEAD_MARKET",
+                "action": dmt_result.get('action', 'FOLLOW_LIQUIDATION'),
+                "target": dmt_result.get('target', ''),
+                "target_distance": dmt_result.get('target_distance', 0),
+                "priority_level": -225
+            }
+        
+        # ===== PRIORITAS 4: WMI VALIDATION FIX =====
+        if not wvf_result.get('wmi_valid', True):
+            return {
+                "final_bias": wvf_result['correct_bias'],
+                "confidence": wvf_result['confidence'],
+                "reason": wvf_result['reason'],
+                "phase": "WMI_INVALID",
+                "priority_level": -220
+            }
+        
+        # ===== PRIORITAS 5: TRAP CLASSIFIER =====
+        if tc_result.get('trap_type') != 'NONE':
+            if tc_result.get('action') == "WAIT_FOR_VOLUME":
+                return {
+                    "final_bias": "NEUTRAL",
+                    "confidence": tc_result['confidence'],
+                    "reason": tc_result['reason'],
+                    "phase": tc_result['trap_type'],
+                    "action": "WAIT",
+                    "priority_level": -215
+                }
+            elif tc_result.get('action') == "FOLLOW_OPPOSITE":
+                # Logic untuk opposite direction
+                pass
         
         # ===== DEFAULT =====
         return {
@@ -24443,6 +24870,14 @@ class BinanceAnalyzerV87:
         self.rsf_v105 = ReboundSqueezeFuelV105()            # V105-RSF
         self.ent_v105 = EntryTimingValidatorV105()          # V105-ENT
         
+        # ===== V111-V115 EXECUTION FEASIBILITY ENGINE =====
+        self.efe_v111 = ExecutionFeasibilityEngineV111()      # V111-EFE
+        self.dmt_v112 = DeadMarketTrapV112()                  # V112-DMT
+        self.fsk_v113 = FalseSqueezeKillerV113()              # V113-FSK
+        self.wvf_v114 = WMIValidationFixV114()                 # V114-WVF
+        self.tc_v115 = TrapClassifierV115()                    # V115-TC
+        self.final_resolver_v115 = ConflictResolverV115_FINAL()  # V115-FINAL
+        
         self.final_resolver_v105 = ConflictResolverV105_FINAL()   # V105-FINAL
         
         # ===== V106 SEQUENCE ENGINE =====
@@ -26655,12 +27090,63 @@ class BinanceAnalyzerV87:
                 current_price_change=change_5m
             )
             
+            # ===== V111-V115 EXECUTION FEASIBILITY ENGINE =====
+            
+            # Dapatkan expected move dan target bias
+            expected_move = "SQUEEZE" if dsd_result.get('bias') == "LONG" else "DUMP"
+            target_bias = dsd_result.get('bias', 'NEUTRAL')
+            
+            # Execution Feasibility Engine
+            efe_result = self.efe_v111.validate(
+                target_bias=target_bias,
+                flow=trades.get('ratio', 1.0),
+                agg=trades.get('aggressive_ratio', 1.0),
+                oi_delta=oi_delta_5m,
+                wmi=wmi_ratio
+            )
+            
+            # False Squeeze Killer
+            fsk_result = self.fsk_v113.validate(
+                expected_move=expected_move,
+                flow=trades.get('ratio', 1.0),
+                agg=trades.get('aggressive_ratio', 1.0)
+            )
+            
+            # Dead Market Trap
+            dmt_result = self.dmt_v112.detect(
+                agg=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999)
+            )
+            
+            # WMI Validation Fix
+            wvf_result = self.wvf_v114.validate(
+                wmi=wmi_ratio,
+                flow=trades.get('ratio', 1.0),
+                wmi_bias='LONG' if wmi_ratio > 0 else 'SHORT'
+            )
+            
+            # Trap Classifier
+            tc_result = self.tc_v115.classify(
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 1.0),
+                agg=trades.get('aggressive_ratio', 1.0),
+                target_bias=target_bias,
+                expected_move=expected_move
+            )
+            
             # Update results dictionary dengan module V105
             scoring_data['dsd_v105'] = dsd_result
             scoring_data['ssd_v105'] = ssd_result
             scoring_data['imc_v105'] = imc_result
             scoring_data['rsf_v105'] = rsf_result
             scoring_data['ent_v105'] = ent_result
+            scoring_data['efe_v111'] = efe_result
+            scoring_data['fsk_v113'] = fsk_result
+            scoring_data['dmt_v112'] = dmt_result
+            scoring_data['wvf_v114'] = wvf_result
+            scoring_data['tc_v115'] = tc_result
             scoring_data['rme_v105'] = rme_result
             scoring_data['void_v105'] = void_result
             scoring_data['erf_v105'] = erf_result
@@ -26754,6 +27240,9 @@ class BinanceAnalyzerV87:
             
             # ===== V105: FINAL RESOLVER (RESISTANCE MAP ENGINE - LEBIH TINGGI DARI V104!) =====
             v105_final = self.final_resolver_v105.resolve_all_signals(scoring_data)
+            
+            # ===== V115: FINAL RESOLVER (EXECUTION FEASIBILITY ENGINE - PALING TERTINGGI!) =====
+            v115_final = self.final_resolver_v115.resolve_all_signals(scoring_data)
             
             # ===== V106: FINAL RESOLVER (SEQUENCE ENGINE - TERTINGGI!) =====
             v106_final = self.final_resolver_v106.resolve_all_signals(scoring_data)
@@ -27995,6 +28484,11 @@ class BinanceAnalyzerV87:
             result["imc_v105"] = imc_result
             result["rsf_v105"] = rsf_result
             result["ent_v105"] = ent_result
+            result["efe_v111"] = efe_result
+            result["fsk_v113"] = fsk_result
+            result["dmt_v112"] = dmt_result
+            result["wvf_v114"] = wvf_result
+            result["tc_v115"] = tc_result
             result["rme_v105"] = rme_result
             result["void_v105"] = void_result
             result["erf_v105"] = erf_result
@@ -28006,6 +28500,13 @@ class BinanceAnalyzerV87:
             result["v105_recommendation"] = v105_final.get('recommendation', '')
             result["use_vel_for_timing"] = v105_final.get('use_vel_for_timing', False)
             result["v105_phase"] = v105_final.get('phase', 'NORMAL')
+            
+            # ===== V115: EXECUTION FEASIBILITY ENGINE =====
+            result["execution_phase"] = v115_final.get('phase', 'NORMAL')
+            result["execution_action"] = v115_final.get('action', 'PROCEED')
+            result["v115_bias"] = v115_final.get('final_bias', 'NEUTRAL')
+            result["v115_confidence"] = v115_final.get('confidence', 'LOW')
+            result["v115_priority"] = v115_final.get('priority_level', 99)
             
             # ===== V106: SEQUENCE ENGINE =====
             result["seq_v106"] = seq_result
