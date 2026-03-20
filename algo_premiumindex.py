@@ -762,6 +762,29 @@ IFL_MIN_OI_FOR_LONG = 1.5                   # OI > 1.5% for LONG entry
 IFL_MIN_OI_FOR_SHORT = 1.0                  # OI > 1.0% for SHORT entry
 IFL_LOW_FUEL_ACTION = "NO_TRADE"            # Action when fuel too low
 
+# ================= V130-DTI: DELTA-TIME INVARIANTS CONFIG =================
+DTI_LOCK_TIME_MINUTES = 15.0                # Lock signal for 15 minutes
+DTI_TP_TARGET_PCT = 6.0                     # TP 6% target
+DTI_EXCEPTION_OI_DROP = -10.0               # Unlock if OI drop > 10%
+
+# ================= V131-APF: ABSORPTION PARADOX FILTER CONFIG =================
+APF_OI_DROP_THRESHOLD = -1.0                # OI < -1% = fake absorption
+APF_ABSORPTION_VALID_OI = 0.5               # OI > 0.5% = real absorption
+
+# ================= V132-TMP: TARGET MAGNITUDE PRIORITY CONFIG =================
+TMP_NEARBY_LIQ_THRESHOLD = 2.0              # Liq < 2% = nearby
+TMP_STOP_HUNT_WARNING = True                # Enable stop-hunt warning
+
+# ================= V133-AVD: AGGRESSION VELOCITY DECAY CONFIG =================
+AVD_AGGRESSION_HIGH = 10.0                  # Agg > 10 = extreme
+AVD_AGGRESSION_LOW = 2.0                    # Agg < 2 = dead
+AVD_DECAY_WINDOW_MINUTES = 3                # Decay within 3 minutes
+
+# ================= V134-TPG: TP-SL PROXIMITY GUARD CONFIG =================
+TPG_SL_PCT = 8.0                            # Default SL 8%
+TPG_LIQ_PROXIMITY_WARNING = 2.0             # Warning if SL near liq
+TPG_SL_LIQ_BUFFER = 0.5                     # Buffer below liq cluster
+
 # ================= V126-VGA: VACUUM-GRAVITY ANCHOR CONFIG =================
 VGA_BID_ZERO_THRESHOLD = 0.1                 # Bid volume < 0.1 = kosong
 VGA_ASK_ZERO_THRESHOLD = 0.1                 # Ask volume < 0.1 = kosong
@@ -2735,6 +2758,363 @@ class InstitutionalFuelValidatorV129:
         return {"low_fuel": False, "bias": "NEUTRAL", "priority_level": 99}
 
 
+# ================= V130-DTI: DELTA-TIME INVARIANTS =================
+class DeltaTimeInvariantsV130:
+    """
+    🔥 V130-DTI: DELTA-TIME INVARIANTS - ANTI-SIGNAL FLIP
+    
+    Masalah: Signal berubah terlalu cepat (3 menit). TP 6% tidak mungkin
+    tercapai dalam 3 menit kecuali Flash Pump.
+    
+    Solusi: Lock signal selama minimal 15 menit, kecuali terjadi
+    Institutional Exit (OI Drop > 10%).
+    """
+    
+    def __init__(self):
+        self.signal_locked_until = {}
+        self.locked_bias = {}
+        self.signal_entry_price = {}
+    
+    def lock_signal(self, symbol: str, bias: str, price: float, current_time: float):
+        """Lock signal for DTI_LOCK_TIME_MINUTES minutes"""
+        self.signal_locked_until[symbol] = current_time + (DTI_LOCK_TIME_MINUTES * 60)
+        self.locked_bias[symbol] = bias
+        self.signal_entry_price[symbol] = price
+    
+    def check_lock(self, symbol: str, new_bias: str, 
+                   oi_delta: float, current_time: float) -> Dict:
+        """
+        Check if signal is locked or can be flipped
+        """
+        # No lock for this symbol
+        if symbol not in self.signal_locked_until:
+            return {"locked": False, "bias": new_bias}
+        
+        # Lock expired
+        if current_time > self.signal_locked_until[symbol]:
+            # Clear lock
+            del self.signal_locked_until[symbol]
+            del self.locked_bias[symbol]
+            return {"locked": False, "bias": new_bias}
+        
+        # Exception: Institutional Exit (OI drop > 10%)
+        if oi_delta < DTI_EXCEPTION_OI_DROP:
+            # Clear lock and allow flip
+            del self.signal_locked_until[symbol]
+            del self.locked_bias[symbol]
+            return {
+                "locked": False, 
+                "bias": new_bias,
+                "reason": f"DTI_EXCEPTION: OI {oi_delta:.2f}% drop > 10%, lock released"
+            }
+        
+        # Signal locked, maintain original bias
+        return {
+            "locked": True,
+            "bias": self.locked_bias.get(symbol, new_bias),
+            "reason": f"DTI_LOCKED: Signal locked for {DTI_LOCK_TIME_MINUTES} minutes, "
+                     f"maintaining {self.locked_bias.get(symbol, new_bias)} bias",
+            "expires_in": round((self.signal_locked_until[symbol] - current_time) / 60, 1)
+        }
+
+
+# ================= V131-APF: ABSORPTION PARADOX FILTER =================
+class AbsorptionParadoxFilterV131:
+    """
+    🔥 V131-APF: ABSORPTION PARADOX FILTER - ANTI-FAKE ABSORPTION
+    
+    Kasus PIPPINUSDT:
+    - ARC_ABSORPTION_VALIDATED: Ratio 0.129
+    - OI Delta: -1.56% (DROP!)
+    - Bot baca: Absorption = Whale nampung = LONG ❌
+    - Realita: FAKE ABSORPTION! Whale keluar (unwinding)!
+    
+    Prinsip:
+    Absorption hanya VALID jika OI NAIK (Whale sedang membangun posisi).
+    Jika OI turun, itu adalah FAKE ABSORPTION = Distribution!
+    """
+    
+    @staticmethod
+    def detect(absorption_active: bool, oi_delta: float, 
+               absorption_ratio: float = None) -> Dict:
+        """
+        Deteksi fake absorption
+        """
+        if absorption_active:
+            # Jika OI turun, ini FAKE ABSORPTION!
+            if oi_delta < APF_OI_DROP_THRESHOLD:               # OI < -1%
+                return {
+                    "fake_absorption": True,
+                    "bias": "SHORT",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -23,
+                    "reason": f"APF_FAKE_ABSORPTION: Absorption terdeteksi TAPI OI {oi_delta:.2f}% (DROP!) = "
+                             f"Whale BUKAN menyerap barang, tapi sedang KELUAR (Unwinding)! "
+                             f"Absorption ratio {absorption_ratio:.3f} adalah TRAP! SHORT!",
+                    "phase": "FAKE_ABSORPTION"
+                }
+            
+            # Jika OI naik, ini REAL ABSORPTION!
+            if oi_delta > APF_ABSORPTION_VALID_OI:             # OI > 0.5%
+                return {
+                    "real_absorption": True,
+                    "bias": "LONG",
+                    "confidence": "SUPREME",
+                    "priority_level": -22,
+                    "reason": f"APF_REAL_ABSORPTION: Absorption + OI {oi_delta:.2f}% (RISE!) = "
+                             f"Whale membangun posisi! SIAP LONG!",
+                    "phase": "REAL_ABSORPTION"
+                }
+        
+        return {"fake_absorption": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V132-TMP: TARGET MAGNITUDE PRIORITY =================
+class TargetMagnitudePriorityV132:
+    """
+    🔥 V132-TMP: TARGET MAGNITUDE PRIORITY - ANTI-STOP HUNT
+    
+    Kasus PIPPINUSDT:
+    - Short liq: +2.27% (DEKAT!)
+    - Long liq: -3.69% (JUGA DEKAT!)
+    - TP 6% Anda ada di atas short liq
+    - Bot: TP 6% = entry LONG
+    - Realita: MM akan hit short liq dulu (naik 2.27%), lalu balik hit long liq (turun 3.69%),
+              lalu lanjut ke target 6% Anda? Tidak! SL Anda kena di -8%!
+    
+    Prinsip:
+    Jika ada target likuidasi < 2% di arah lawan, Anda akan di-stop-hunt dulu!
+    """
+    
+    @staticmethod
+    def detect(short_dist: float, long_dist: float, 
+               target_bias: str, tp_target_pct: float = 6.0) -> Dict:
+        """
+        Deteksi apakah akan ada stop hunt sebelum TP tercapai
+        """
+        # Cek jika ada target likuidasi dekat (<2%) di arah lawan
+        nearby_short = short_dist < TMP_NEARBY_LIQ_THRESHOLD
+        nearby_long = abs(long_dist) < TMP_NEARBY_LIQ_THRESHOLD
+        
+        # Jika mau LONG tapi ada short liq dekat (akan naik dulu ke short liq)
+        if target_bias == "LONG" and nearby_short:
+            return {
+                "stop_hunt_warning": True,
+                "bias": "WAIT",  # Jangan entry dulu!
+                "action": "WAIT_FOR_SHORT_SWEEP",
+                "confidence": "HIGH",
+                "priority_level": -20,
+                "reason": f"TMP_STOP_HUNT_WARNING: Mau LONG TP {tp_target_pct}% TAPI "
+                         f"ada Short liq {short_dist:.2f}% (DEKAT!) = "
+                         f"MM akan SWEEP SHORT dulu (naik) lalu DUMP ke long liq! "
+                         f"SL {TPG_SL_PCT}% Anda akan kena! TUNGGU FLUSH!",
+                "phase": "STOP_HUNT_WARNING"
+            }
+        
+        # Jika mau SHORT tapi ada long liq dekat (akan turun dulu ke long liq)
+        if target_bias == "SHORT" and nearby_long:
+            return {
+                "stop_hunt_warning": True,
+                "bias": "WAIT",
+                "action": "WAIT_FOR_LONG_SWEEP",
+                "confidence": "HIGH",
+                "priority_level": -20,
+                "reason": f"TMP_STOP_HUNT_WARNING: Mau SHORT TP {tp_target_pct}% TAPI "
+                         f"ada Long liq {abs(long_dist):.2f}% (DEKAT!) = "
+                         f"MM akan SWEEP LONG dulu (turun) lalu PUMP ke short liq! "
+                         f"SL {TPG_SL_PCT}% Anda akan kena! TUNGGU FLUSH!",
+                "phase": "STOP_HUNT_WARNING"
+            }
+        
+        return {"stop_hunt_warning": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V133-AVD: AGGRESSION VELOCITY DECAY =================
+class AggressionVelocityDecayV133:
+    """
+    🔥 V133-AVD: AGGRESSION VELOCITY DECAY - ANTI-EXHAUSTION MOVE
+    
+    Kasus PIPPINUSDT:
+    - Jam 21:38: Agg 19.0x (SANGAT AGRESIF!)
+    - Jam 21:41: Agg 1.0x (MATI!)
+    - Bot baca: Agg 19x = bullish
+    - Realita: EXHAUSTION MOVE! MM push terakhir untuk pancing LONG, lalu cabut!
+    
+    Prinsip:
+    Lonjakan agresi dari 19x ke 1x dalam 3 menit = "The Exhaustion Move".
+    MM melakukan push terakhir, lalu "cabut saklar" dan biarkan harga jatuh.
+    """
+    
+    def __init__(self):
+        self.agg_history = {}
+        self.agg_timestamp = {}
+    
+    def detect(self, symbol: str, current_agg: float, 
+               current_time: float, oi_delta: float) -> Dict:
+        """
+        Deteksi aggression exhaustion
+        """
+        # Simpan history
+        if symbol not in self.agg_history:
+            self.agg_history[symbol] = []
+            self.agg_timestamp[symbol] = []
+        
+        self.agg_history[symbol].append(current_agg)
+        self.agg_timestamp[symbol].append(current_time)
+        
+        # Keep only last 10
+        if len(self.agg_history[symbol]) > 10:
+            self.agg_history[symbol] = self.agg_history[symbol][-10:]
+            self.agg_timestamp[symbol] = self.agg_timestamp[symbol][-10:]
+        
+        # Need at least 2 data points
+        if len(self.agg_history[symbol]) < 2:
+            return {"exhaustion": False, "bias": "NEUTRAL"}
+        
+        # Cek aggression decay dalam 3 menit
+        recent_agg = self.agg_history[symbol][-1]
+        prev_agg = self.agg_history[symbol][-2]
+        time_diff = (current_time - self.agg_timestamp[symbol][-2]) / 60
+        
+        # Jika Agg turun drastis (dari >10 ke <2) dalam <3 menit
+        if prev_agg > AVD_AGGRESSION_HIGH and recent_agg < AVD_AGGRESSION_LOW:
+            if time_diff < AVD_DECAY_WINDOW_MINUTES:
+                return {
+                    "exhaustion": True,
+                    "bias": "SHORT",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -21,
+                    "reason": f"AVD_AGGRESSION_EXHAUSTION: Agg turun dari {prev_agg:.1f}x ke {recent_agg:.1f}x "
+                             f"dalam {time_diff:.1f} menit! OI {oi_delta:.2f}% = "
+                             f"EXHAUSTION MOVE! MM push terakhir untuk pancing LONG, lalu cabut! "
+                             f"SIAP DUMP! EXIT LONG!",
+                    "phase": "AGGRESSION_EXHAUSTION"
+                }
+        
+        return {"exhaustion": False, "bias": "NEUTRAL"}
+
+
+# ================= V134-TPG: TP-SL PROXIMITY GUARD =================
+class TPSLProximityGuardV134:
+    """
+    🔥 V134-TPG: TP-SL PROXIMITY GUARD - ANTI-LIQ HUNT
+    
+    Kasus PIPPINUSDT:
+    - Long liq: -1.84% (dekat dengan SL 8% Anda!)
+    - SL 8% Anda berada tepat di area long liq cluster
+    - Bot: Entry LONG
+    - Realita: HFT tahu SL 8% Anda, mereka akan gerakkan harga ke -1.84%
+              (makan retail) dan otomatis menyeret harga ke -8% (makan SL Anda)
+    
+    Prinsip:
+    Jika SL Anda berada di area liquidation cluster, JANGAN ENTRY!
+    """
+    
+    @staticmethod
+    def detect(entry_price: float, sl_pct: float, 
+               long_liq_clusters: List[float], 
+               short_liq_clusters: List[float],
+               bias: str) -> Dict:
+        """
+        Cek apakah SL berada di area liquidation cluster
+        """
+        sl_price = entry_price * (1 - sl_pct/100) if bias == "LONG" else entry_price * (1 + sl_pct/100)
+        
+        # Untuk LONG: SL di bawah entry
+        if bias == "LONG":
+            for liq in long_liq_clusters:
+                if liq < entry_price:
+                    distance_to_sl = abs(sl_price - liq) / entry_price * 100
+                    if distance_to_sl < TPG_LIQ_PROXIMITY_WARNING:
+                        # SL terlalu dekat dengan liquidation cluster!
+                        # Rekomendasi: pindah SL ke bawah cluster
+                        new_sl = liq * (1 - TPG_SL_LIQ_BUFFER/100)
+                        return {
+                            "danger": True,
+                            "bias": "WAIT",
+                            "action": "ADJUST_SL",
+                            "recommended_sl": round(new_sl, 8),
+                            "recommended_sl_pct": round((entry_price - new_sl) / entry_price * 100, 2),
+                            "reason": f"TPG_SL_DANGER: SL {sl_pct:.1f}% berada dalam {distance_to_sl:.2f}% "
+                                     f"dari liquidation cluster di {liq:.6f}! HFT akan hunt SL Anda! "
+                                     f"Rekomendasi: pindah SL ke {new_sl:.6f} "
+                                     f"({(entry_price - new_sl) / entry_price * 100:.1f}%)",
+                            "phase": "SL_DANGER_ZONE"
+                        }
+        
+        # Untuk SHORT: SL di atas entry
+        if bias == "SHORT":
+            for liq in short_liq_clusters:
+                if liq > entry_price:
+                    distance_to_sl = abs(sl_price - liq) / entry_price * 100
+                    if distance_to_sl < TPG_LIQ_PROXIMITY_WARNING:
+                        new_sl = liq * (1 + TPG_SL_LIQ_BUFFER/100)
+                        return {
+                            "danger": True,
+                            "bias": "WAIT",
+                            "action": "ADJUST_SL",
+                            "recommended_sl": round(new_sl, 8),
+                            "recommended_sl_pct": round((new_sl - entry_price) / entry_price * 100, 2),
+                            "reason": f"TPG_SL_DANGER: SL {sl_pct:.1f}% berada dalam {distance_to_sl:.2f}% "
+                                     f"dari liquidation cluster di {liq:.6f}! HFT akan hunt SL Anda!",
+                            "phase": "SL_DANGER_ZONE"
+                        }
+        
+        return {"danger": False, "bias": "NEUTRAL"}
+
+
+# ================= V135-OPD: OI-PRICE DIRECTION FILTER =================
+class OIPriceDirectionFilterV135:
+    """
+    🔥 V135-OPD: OI-PRICE DIRECTION FILTER - ANTI-SHORT COVERING TRAP
+    
+    Kasus PIPPINUSDT:
+    - Price: +1.25% (UP!)
+    - OI: -1.56% (DOWN!)
+    - Bot baca: Price up = bullish
+    - Realita: SHORT COVERING RALLY! Bersifat sementara, bukan awal pump!
+    
+    Prinsip:
+    IF Price UP + OI DOWN = EXIT ONLY (Jangan New Entry LONG)
+    IF Price DOWN + OI UP = ACCUMULATION (Siap-siap LONG di bawah)
+    """
+    
+    @staticmethod
+    def detect(price_change: float, oi_delta: float, bias: str) -> Dict:
+        """
+        Filter berdasarkan OI-Price direction
+        """
+        # SHORT COVERING RALLY: Price up, OI down
+        if price_change > 0 and oi_delta < 0:
+            if bias == "LONG":
+                return {
+                    "short_covering": True,
+                    "bias": "NEUTRAL",  # Jangan entry LONG!
+                    "action": "NO_NEW_LONG",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -24,
+                    "reason": f"OPD_SHORT_COVERING: Price {price_change:+.2f}% (UP!) + "
+                             f"OI {oi_delta:.2f}% (DOWN!) = SHORT COVERING RALLY! "
+                             f"Bersifat sementara, BUKAN AWAL PUMP! DILARANG NEW ENTRY LONG!",
+                    "phase": "SHORT_COVERING_RALLY"
+                }
+        
+        # ACCUMULATION: Price down, OI up
+        if price_change < 0 and oi_delta > 0:
+            return {
+                "accumulation": True,
+                "bias": "LONG_PREPARE",
+                "confidence": "SUPREME",
+                "priority_level": -23,
+                "reason": f"OPD_ACCUMULATION: Price {price_change:.2f}% (DOWN!) + "
+                         f"OI {oi_delta:.2f}% (UP!) = WHALE ACCUMULATION! "
+                         f"Siap-siap LONG di bawah!",
+                "phase": "ACCUMULATION_PHASE"
+            }
+        
+        return {"short_covering": False, "accumulation": False, "bias": "NEUTRAL"}
+
+
 # ================= V121-TTK: TIME TO KILL CONFIRMATION =================
 class TimeToKillConfirmationV121:
     """
@@ -4657,121 +5037,42 @@ class ConflictResolverV115_FINAL:
 # ================= V120-FINAL-UPDATED: CONFLICT RESOLVER DENGAN V107 MODULES =================
 class ConflictResolverV120_FINAL_ENHANCED:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN ANTI-HFT SHIELD & ANTI-KRIMINAL LOGIC
+    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN ANTI-GOCOK LOGIC (V130-V135)
     
     PRIORITY -25: V126-VGA (Vacuum-Gravity Anchor)      ← BARU TERTINGGI! ANTI-LYNUSDT
     ┌─────────────────────────────────────────────────────────┐
     │ -25. V126-VGA: Vacuum-Gravity Anchor                    │ ← BARU! VETO MUTLAK BID KOSONG
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -24: V127-MDI (MACD Dead Zone Integrity)   ← BARU ANTI-LYNUSDT
+    PRIORITY -24: V135-OPD (OI-Price Direction) ← BARU! ANTI-SHORT COVERING TRAP
     ┌─────────────────────────────────────────────────────────┐
-    │ -24. V127-MDI: MACD Dead Zone Integrity               │ ← BARU! ANTI-EXIT PUMP
+    │ -24. V135-OPD: OI-Price Direction Filter                │ ← BARU! ANTI-PIPPINUSDT
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -23: V128-FSF (Fake Squeeze Fuel)          ← BARU ANTI-LYNUSDT
+    PRIORITY -23: V131-APF (Absorption Paradox) ← BARU! ANTI-FAKE ABSORPTION
     ┌─────────────────────────────────────────────────────────┐
-    │ -23. V128-FSF: Fake Squeeze Fuel                        │ ← BARU! ANTI-TRAP BUILDING
+    │ -23. V131-APF: Absorption Paradox Filter                │ ← BARU! ANTI-PIPPINUSDT
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -20: V200-DMV (Dead Market Veto)
+    PRIORITY -22: V126-AVT (Ask-Vacuum Bull-Trap)
     ┌─────────────────────────────────────────────────────────┐
-    │ -20. V200-DMV: Dead Market Veto                        │ ← EXISTING
+    │ -22. V126-AVT: Ask-Vacuum Bull-Trap                     │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -19: V122-VAV (Vacuum Aggression Validator)
+    PRIORITY -21: V133-AVD (Aggression Velocity Decay) ← BARU! ANTI-EXHAUSTION MOVE
     ┌─────────────────────────────────────────────────────────┐
-    │ -19. V122-VAV: Vacuum Aggression Validator              │ ← BARU! ANTI-PLAYUSDT
+    │ -21. V133-AVD: Aggression Velocity Decay                │ ← BARU! ANTI-PIPPINUSDT
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -19: V126-VP (Vacuum Priority)
+    PRIORITY -20: V132-TMP (Target Magnitude Priority) ← BARU! ANTI-STOP HUNT
     ┌─────────────────────────────────────────────────────────┐
-    │ -19. V126-VP: Vacuum Priority                           │ ← BARU! ANTI-PLAYUSDT
+    │ -20. V132-TMP: Target Magnitude Priority                │ ← BARU! ANTI-PIPPINUSDT
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -18: V123-OEF (OI Exhaustion vs Fuel)
+    PRIORITY -19: V129-IFL (Institutional Fuel Validator)
     ┌─────────────────────────────────────────────────────────┐
-    │ -18. V123-OEF: OI Exhaustion vs Fuel Injection          │ ← BARU! ANTI-PLAYUSDT
+    │ -19. V129-IFL: Institutional Fuel Validator             │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -18: V125-FSF (False Squeeze Filter)
-    ┌─────────────────────────────────────────────────────────┐
-    │ -18. V125-FSF: False Squeeze Filter (FLOW VETO)         │ ← BARU! ANTI-PLAYUSDT
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -17: V124-PDW (Payout Distance Weight)
-    ┌─────────────────────────────────────────────────────────┐
-    │ -17. V124-PDW: Payout Distance Weight                   │ ← BARU! ANTI-PLAYUSDT
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -17: V118-ROC (RSI-OI Ceiling)
-    ┌─────────────────────────────────────────────────────────┐
-    │ -17. V118-ROC: RSI-OI Ceiling                          │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -16: V119-LGV (Liquidity Gravity vs Payout)
-    ┌─────────────────────────────────────────────────────────┐
-    │ -16. V119-LGV: Liquidity Gravity vs Payout              │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -15: V120-AFD (Aggression-Flow Divergence)
-    ┌─────────────────────────────────────────────────────────┐
-    │ -15. V120-AFD: Aggression-Flow Divergence               │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -14: V116-BSW (Bait & Switch Detector)
-    ┌─────────────────────────────────────────────────────────┐
-    │ -14. V116-BSW: Bait & Switch Detector                   │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -13: V100-LTF (Liquidity Trap Filter)
-    ┌─────────────────────────────────────────────────────────┐
-    │ -13. V100-LTF: Liquidity Trap Filter                    │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -12: V120-ASR (Absorption & Stability Rule)
-    ┌─────────────────────────────────────────────────────────┐
-    │ -12. V120-ASR: Absorption & Stability Rule              │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -7: WMI-FLOW CORRELATION
-    ┌─────────────────────────────────────────────────────────┐
-    │ -7.  V107-WFC: WMI-Flow Correlation                    │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -6: FLOW-BASED PBV PRIORITY
-    ┌─────────────────────────────────────────────────────────┐
-    │ -6.  V107-FBR (PBV High Flow Mode)                     │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -5: VACUUM CLASSIFIER
-    ┌─────────────────────────────────────────────────────────┐
-    │ -5.  V107-VC: Vacuum Classifier                         │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -4: FLOW-BASED CASCADE PRIORITY
-    ┌─────────────────────────────────────────────────────────┐
-    │ -4.  V107-FBR (High Flow Cascade)                       │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -3: HIGH FLOW DEFAULT
-    ┌─────────────────────────────────────────────────────────┐
-    │ -3.  V107-FBR (High Flow Default)                       │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -2: LOW FLOW ENERGY
-    ┌─────────────────────────────────────────────────────────┐
-    │ -2.  V107-FBR (Low Flow Energy)                         │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -1: LOW FLOW DEFAULT
-    ┌─────────────────────────────────────────────────────────┐
-    │ -1.  V107-FBR (Low Flow Default)                        │ ← EXISTING
-    └─────────────────────────────────────────────────────────┘
-    
-    PRIORITY -0: EXISTING MODULES (LIP, LCP, OVI, LMS, ATD)
-    ┌─────────────────────────────────────────────────────────┐
-    │ -0.  V106-LIP: Liquidation In Progress Lock             │\n    │ -0.  V106-LCP: Liquidation Cascade Probability          │\n    │ -0.  V106-OVI: Orderbook Vacuum Index (Enhanced)        │\n    │ -0.  V106-LMS: Liquidation Momentum Score               │\n    │ -0.  V106-ATD: Adversarial Trap Detection               │\n    └─────────────────────────────────────────────────────────┘
     """
     
     @staticmethod
@@ -4788,25 +5089,26 @@ class ConflictResolverV120_FINAL_ENHANCED:
                 "priority_level": -25
             }
         
-        # ===== PRIORITY -24: V127-MDI (MACD Dead Zone Integrity) =====
-        mdi_res = results.get('mdi_v127', {})
-        if mdi_res.get('exit_pump'):
+        # ===== PRIORITY -24: V135-OPD (OI-Price Direction) =====
+        opd_res = results.get('opd_v135', {})
+        if opd_res.get('short_covering'):
             return {
-                "final_bias": mdi_res['bias'],
-                "confidence": mdi_res.get('confidence', 'ABSOLUTE'),
-                "reason": mdi_res.get('reason', ''),
-                "phase": mdi_res.get('phase', 'MACD_DEAD_ZONE_BOUNCE'),
-                "priority_level": -24
+                "final_bias": opd_res['bias'],
+                "confidence": opd_res.get('confidence', 'ABSOLUTE'),
+                "reason": opd_res.get('reason', ''),
+                "phase": opd_res.get('phase', 'SHORT_COVERING_RALLY'),
+                "priority_level": -24,
+                "action": opd_res.get('action', 'NO_NEW_LONG')
             }
         
-        # ===== PRIORITY -23: V128-FSF (Fake Squeeze Fuel) =====
-        fsf_res = results.get('fsf_v128', {})
-        if fsf_res.get('fake_fuel'):
+        # ===== PRIORITY -23: V131-APF (Absorption Paradox) =====
+        apf_res = results.get('apf_v131', {})
+        if apf_res.get('fake_absorption'):
             return {
-                "final_bias": fsf_res['bias'],
-                "confidence": fsf_res.get('confidence', 'ABSOLUTE'),
-                "reason": fsf_res.get('reason', ''),
-                "phase": fsf_res.get('phase', 'FAKE_SQUEEZE_FUEL'),
+                "final_bias": apf_res['bias'],
+                "confidence": apf_res.get('confidence', 'ABSOLUTE'),
+                "reason": apf_res.get('reason', ''),
+                "phase": apf_res.get('phase', 'FAKE_ABSORPTION'),
                 "priority_level": -23
             }
         
@@ -4821,72 +5123,27 @@ class ConflictResolverV120_FINAL_ENHANCED:
                 "priority_level": -22
             }
         
-        # ===== PRIORITY -21: V128-CFA (Critical Flush Alert) =====
-        cfa_res = results.get('cfa_v128', {})
-        if cfa_res.get('flush_alert'):
+        # ===== PRIORITY -21: V133-AVD (Aggression Velocity Decay) =====
+        avd_res = results.get('avd_v133', {})
+        if avd_res.get('exhaustion'):
             return {
-                "final_bias": cfa_res['bias'],
-                "confidence": cfa_res.get('confidence', 'ABSOLUTE'),
-                "reason": cfa_res.get('reason', ''),
-                "phase": cfa_res.get('phase', 'CRITICAL_FLUSH_ALERT'),
-                "priority_level": -21,
-                "action": cfa_res.get('action', 'FORCE_SHORT')
+                "final_bias": avd_res['bias'],
+                "confidence": avd_res.get('confidence', 'ABSOLUTE'),
+                "reason": avd_res.get('reason', ''),
+                "phase": avd_res.get('phase', 'AGGRESSION_EXHAUSTION'),
+                "priority_level": -21
             }
         
-        # ===== PRIORITY -20: V127-IGO (Imbalance Gravity Override) =====
-        igo_res = results.get('igo_v127', {})
-        if igo_res.get('override_wmi'):
+        # ===== PRIORITY -20: V132-TMP (Target Magnitude Priority) =====
+        tmp_res = results.get('tmp_v132', {})
+        if tmp_res.get('stop_hunt_warning'):
             return {
-                "final_bias": igo_res['bias'],
-                "confidence": igo_res.get('confidence', 'ABSOLUTE'),
-                "reason": igo_res.get('reason', ''),
-                "phase": igo_res.get('phase', 'IMBALANCE_GRAVITY_OVERRIDE'),
-                "priority_level": -20
-            }
-        
-        # ===== PRIORITY -20: V200-DMV (EXISTING) =====
-        dmv_res = results.get('dmv_v200', {})
-        if dmv_res.get('veto_active'):
-            return {
-                "final_bias": dmv_res.get('bias', 'NEUTRAL'),
-                "confidence": "ABSOLUTE",
-                "reason": dmv_res.get('reason', 'Dead Market Veto'),
-                "phase": dmv_res.get('market_state', 'DEAD_MARKET'),
-                "priority_level": -20
-            }
-        
-        # ===== PRIORITY -19: V122-VAV (Vacuum Aggression Validator) =====
-        vav_res = results.get('vav_v122', {})
-        if vav_res.get('vacuum_aggression'):
-            return {
-                "final_bias": vav_res['bias'],
-                "confidence": vav_res.get('confidence', 'ABSOLUTE'),
-                "reason": vav_res.get('reason', ''),
-                "phase": vav_res.get('phase', 'VACUUM_AGGRESSION'),
-                "priority_level": -19
-            }
-        
-        # ===== PRIORITY -19: V126-VP (Vacuum Priority) =====
-        vp_res = results.get('vp_v126', {})
-        if vp_res.get('vacuum_priority'):
-            return {
-                "final_bias": vp_res['bias'],
-                "confidence": vp_res.get('confidence', 'ABSOLUTE'),
-                "reason": vp_res.get('reason', ''),
-                "phase": vp_res.get('phase', 'VACUUM_PRIORITY'),
-                "priority_level": -19
-            }
-        
-        # ===== PRIORITY -19: V129-IFL (Institutional Fuel Validator) =====
-        ifl_res = results.get('ifl_v129', {})
-        if ifl_res.get('low_fuel'):
-            return {
-                "final_bias": ifl_res.get('bias', 'NEUTRAL'),
-                "confidence": ifl_res.get('confidence', 'HIGH'),
-                "reason": ifl_res.get('reason', ''),
-                "phase": ifl_res.get('phase', 'LOW_FUEL_PUMP'),
-                "priority_level": -19,
-                "action": ifl_res.get('action', 'NO_TRADE')
+                "final_bias": tmp_res['bias'],
+                "confidence": tmp_res.get('confidence', 'HIGH'),
+                "reason": tmp_res.get('reason', ''),
+                "phase": tmp_res.get('phase', 'STOP_HUNT_WARNING'),
+                "priority_level": -20,
+                "action": tmp_res.get('action', 'WAIT_FOR_SWEEP')
             }
         
         # ===== PRIORITY -18: V123-OEF (OI Exhaustion) =====
@@ -27883,7 +28140,15 @@ class BinanceAnalyzerV87:
         self.cfa_v128 = CriticalFlushAlertV128()               # V128-CFA
         self.ifl_v129 = InstitutionalFuelValidatorV129()       # V129-IFL
         
-        # Gunakan resolver V120 enhanced yang baru (dengan ANTI-HFT SHIELD & ANTI-KRIMINAL)
+        # ===== V130-V135: ANTI-GOCOK MODULES (BARU!) =====
+        self.dti_v130 = DeltaTimeInvariantsV130()              # V130-DTI
+        self.apf_v131 = AbsorptionParadoxFilterV131()          # V131-APF
+        self.tmp_v132 = TargetMagnitudePriorityV132()          # V132-TMP
+        self.avd_v133 = AggressionVelocityDecayV133()          # V133-AVD
+        self.tpg_v134 = TPSLProximityGuardV134()               # V134-TPG
+        self.opd_v135 = OIPriceDirectionFilterV135()           # V135-OPD
+        
+        # Gunakan resolver V120 enhanced yang baru (dengan ANTI-GOCOK LOGIC V130-V135)
         self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
         
         # Track last signal bias for TTK
@@ -29727,6 +29992,42 @@ class BinanceAnalyzerV87:
             )
             scoring_data['ifl_v129'] = ifl_result
             
+            # ===== V130-V135: ANTI-GOCOK MODULES (BARU!) =====
+            # V130-DTI: Delta-Time Invariants (Signal Lock) - will be applied after final decision
+            # V131-APF: Absorption Paradox Filter
+            apf_result = self.apf_v131.detect(
+                absorption_active=scoring_data.get('arc_v99', {}).get('absorption_validated', False),
+                oi_delta=oi_delta_5m,
+                absorption_ratio=scoring_data.get('arc_v99', {}).get('ratio', 0)
+            )
+            scoring_data['apf_v131'] = apf_result
+            
+            # V132-TMP: Target Magnitude Priority (Stop Hunt Warning)
+            tmp_result = self.tmp_v132.detect(
+                short_dist=scoring_data['short_liq'],
+                long_dist=scoring_data['long_liq'],
+                target_bias='NEUTRAL'  # Will be checked after initial bias decision
+            )
+            scoring_data['tmp_v132'] = tmp_result
+            
+            # V133-AVD: Aggression Velocity Decay
+            avd_result = self.avd_v133.detect(
+                symbol=self.symbol,
+                current_agg=trades.get('aggressive_ratio', 1.0) if 'trades' in locals() else 1.0,
+                current_time=time.time(),
+                oi_delta=oi_delta_5m
+            )
+            scoring_data['avd_v133'] = avd_result
+            
+            # V134-TPG: TP-SL Proximity Guard (will be applied after entry decision)
+            # V135-OPD: OI-Price Direction Filter
+            opd_result = self.opd_v135.detect(
+                price_change=change_5m,
+                oi_delta=oi_delta_5m,
+                bias='NEUTRAL'  # Will be checked after initial bias decision
+            )
+            scoring_data['opd_v135'] = opd_result
+            
             # ===== V101: CALL NEW MODULES =====
             lmp_result = self.lmp_v101.check(
                 long_dist=scoring_data['long_liq'],
@@ -30739,6 +31040,33 @@ class BinanceAnalyzerV87:
             # Pastikan final_decision memiliki key 'bias' untuk digunakan di bagian selanjutnya
             if 'final_bias' in final_decision and 'bias' not in final_decision:
                 final_decision['bias'] = final_decision['final_bias']
+            
+            # ===== V130-DTI: DELTA-TIME INVARIANTS (SIGNAL LOCK) =====
+            # Apply signal lock AFTER final decision is made
+            if final_decision.get('bias') != 'NEUTRAL':
+                dti_check = self.dti_v130.check_lock(
+                    symbol=self.symbol,
+                    new_bias=final_decision['bias'],
+                    oi_delta=oi_delta_5m,
+                    current_time=time.time()
+                )
+                
+                if dti_check.get('locked'):
+                    final_decision['bias'] = dti_check['bias']
+                    final_decision['final_bias'] = dti_check['bias']
+                    final_decision['reason'] = dti_check.get('reason', final_decision.get('reason', ''))
+                    final_decision['phase'] = 'SIGNAL_LOCKED'
+                    final_decision['dti_locked'] = True
+                    final_decision['dti_expires_in'] = dti_check.get('expires_in', 0)
+                else:
+                    # Register new signal for locking
+                    self.dti_v130.lock_signal(
+                        symbol=self.symbol,
+                        bias=final_decision['bias'],
+                        price=price,
+                        current_time=time.time()
+                    )
+                    final_decision['dti_locked'] = False
             
             # 🔴 PERBAIKAN 4: Pastikan menggunakan key yang benar untuk entry_ready
             # Gunakan 'bias' jika ada, fallback ke 'final_bias'
