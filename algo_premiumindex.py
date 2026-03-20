@@ -631,6 +631,22 @@ LIP_PRICE_DROP_MIN = -10.0                     # Price drop > 10%
 LIP_WMI_THRESHOLD = -90                         # WMI < -90
 LIP_AGG_MAX = 0.1                                # Agg < 0.1
 
+# ================= V107-VC: VACUUM CLASSIFIER CONFIG =================
+VC_REAL_VACUUM_FLOW_MAX = 1.0              # Flow < 1.0 = real vacuum
+VC_SPOOF_WALL_FLOW_MIN = 2.0                # Flow > 2.0 = spoof wall
+VC_REAL_VACUUM_BID_MAX = 1000               # Bid < 1000 = real vacuum
+VC_SPOOF_OVI_THRESHOLD = 0.1                 # OVI < 0.1 = vacuum detected
+
+# ================= V107-FBR: FLOW-BASED RESOLVER CONFIG =================
+FBR_HIGH_FLOW_THRESHOLD = 2.0                # Flow > 2.0 = high flow mode
+FBR_LOW_FLOW_THRESHOLD = 1.0                 # Flow < 1.0 = low flow mode
+FBR_WMI_EXTREME_THRESHOLD = 80.0              # |WMI| > 80 = extreme
+
+# ================= V107-WFC: WMI-FLOW CORRELATION CONFIG =================
+WFC_WMI_EXTREME_MIN = 80.0                    # |WMI| > 80
+WFC_FLOW_HIGH_MIN = 2.0                        # Flow > 2.0
+WFC_CONFLICT_ACTION = "REVERSE"                 # Lawan arah WMI saat conflict
+
 # ================= V120-MDE: META DECISION ENGINE CONFIG =================
 MDE_STATE_WEIGHTS = {
     "LIQUIDATION_IN_PROGRESS": 1.0,
@@ -1721,6 +1737,224 @@ class OrderbookVacuumIndexV106:
             }
         
         return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V107-VC: VACUUM CLASSIFIER =================
+class VacuumClassifierV107:
+    """
+    🔥 V107-VC: VACUUM CLASSIFIER - Bedakan REAL VACUUM vs SPOOF WALL
+    
+    XNYUSDT (✅ SHORT):
+    - OVI Score: 0.00 (Vacuum)
+    - Flow: 0.3x (< 1.0)
+    - Bid Volume: 0 (< 1000)
+    → REAL VACUUM ✅ SHORT
+    
+    LYNUSDT (❌ SHORT):
+    - OVI Score: -7.22 (Vacuum)
+    - Flow: 4.26x (> 2.0)
+    - Bid Volume: 16,328 (> 1000)
+    → SPOOF WALL ❌ JANGAN SHORT!
+    """
+    
+    @staticmethod
+    def classify(ovi_score: float, flow: float, bid_volume: float, agg: float) -> Dict:
+        """
+        Klasifikasi tipe vacuum berdasarkan flow dan bid volume
+        """
+        # Cek apakah vacuum terdeteksi
+        if abs(ovi_score) < VC_SPOOF_OVI_THRESHOLD:  # OVI < 0.1
+            vacuum_type = "VACUUM_DETECTED"
+            reason = f"OVI Score {ovi_score:.2f} < 0.1 = Vacuum detected"
+            
+            # ===== REAL VACUUM (XNYUSDT Style) =====
+            if flow < VC_REAL_VACUUM_FLOW_MAX and bid_volume < VC_REAL_VACUUM_BID_MAX:
+                return {
+                    "vacuum_type": "REAL_VACUUM",
+                    "bias": "SHORT",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -5,  # Lebih tinggi dari OVI biasa
+                    "reason": f"VC_REAL_VACUUM: Flow {flow:.2f}x (<1.0) + Bid {bid_volume} (<1000) = "
+                             f"BENAR-BENAR KOSONG! Free fall imminent! SHORT!",
+                    "override_modules": ["OVI", "ENERGY", "LCP"]
+                }
+            
+            # ===== SPOOF WALL (LYNUSDT Style) =====
+            elif flow > VC_SPOOF_WALL_FLOW_MIN and bid_volume > VC_REAL_VACUUM_BID_MAX:
+                return {
+                    "vacuum_type": "SPOOF_WALL",
+                    "bias": "LONG",  # Lawan arah!
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -5,
+                    "reason": f"VC_SPOOF_WALL: Flow {flow:.2f}x (>2.0) + Bid {bid_volume} (>1000) = "
+                             f"VACUUM PALSU! Whale pasang tembok spoof! Akan PUMP! LONG!",
+                    "override_modules": ["OVI", "VACUUM", "LCP"]
+                }
+            
+            # ===== NEUTRAL VACUUM =====
+            else:
+                return {
+                    "vacuum_type": "NEUTRAL_VACUUM",
+                    "bias": "NEUTRAL",
+                    "confidence": "MEDIUM",
+                    "priority_level": 0,
+                    "reason": f"VC_NEUTRAL_VACUUM: Flow {flow:.2f}x, Bid {bid_volume}. "
+                             f"Vacuum ambiguous, tunggu konfirmasi.",
+                    "override_modules": []
+                }
+        
+        return {
+            "vacuum_type": "NONE",
+            "bias": "NEUTRAL",
+            "priority_level": 99
+        }
+
+
+# ================= V107-FBR: FLOW-BASED RESOLVER =================
+class FlowBasedResolverV107:
+    """
+    🔥 V107-FBR: FLOW-BASED RESOLVER - Prioritas berbeda berdasarkan flow
+    
+    HIGH FLOW (>2.0): Prioritaskan CASCADE + PBV
+    - Flow tinggi = real execution sedang terjadi
+    - Ikuti cascade speed (kecepatan eksekusi)
+    
+    LOW FLOW (<1.0): Prioritaskan ENERGY + OVI
+    - Flow rendah = market sepi, hemat energi
+    - Ikuti energy path (jalur termurah)
+    
+    Kasus LYNUSDT:
+    - Flow: 4.26x (>2.0) = HIGH FLOW MODE
+    - CASCADE: LONG (up faster)
+    - ENERGY: SHORT (down cheaper)
+    - Harusnya: IKUT CASCADE (LONG) ✅
+    - Bot: IKUT ENERGY (SHORT) ❌
+    """
+    
+    @staticmethod
+    def resolve(flow: float, 
+                cascade_bias: str, cascade_ratio: float,
+                energy_bias: str, energy_up: float, energy_down: float,
+                pbv_result: Dict) -> Dict:
+        """
+        Resolve conflict berdasarkan flow
+        """
+        reason = f"Flow {flow:.2f}x: "
+        
+        # ===== HIGH FLOW MODE (Flow > 2.0) =====
+        if flow > FBR_HIGH_FLOW_THRESHOLD:
+            reason += "HIGH FLOW MODE - Prioritaskan CASCADE + PBV"
+            
+            # PBV memiliki prioritas tertinggi di high flow mode
+            if pbv_result and isinstance(pbv_result, dict):
+                build_type = pbv_result.get('build_type', '')
+                if build_type == 'LIQUIDATION_FUEL':
+                    return {
+                        "bias": "LONG",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -6,  # Lebih tinggi dari classifier
+                        "reason": f"FBR_HIGH_FLOW_PBV: {reason}. PBV LIQUIDATION_FUEL override semua!",
+                        "mode": "HIGH_FLOW_PBV"
+                    }
+            
+            # Jika cascade dan energy conflict, pilih cascade
+            if cascade_bias != 'NEUTRAL' and cascade_bias != energy_bias:
+                return {
+                    "bias": cascade_bias,
+                    "confidence": "SUPREME",
+                    "priority_level": -4,
+                    "reason": f"FBR_HIGH_FLOW: {reason}. Cascade {cascade_bias} ({cascade_ratio:.1f}x) > Energy {energy_bias}",
+                    "mode": "HIGH_FLOW_CASCADE"
+                }
+            
+            # Default ke cascade
+            if cascade_bias != 'NEUTRAL':
+                return {
+                    "bias": cascade_bias,
+                    "confidence": "HIGH",
+                    "priority_level": -3,
+                    "reason": f"FBR_HIGH_FLOW: {reason}. Ikut CASCADE {cascade_bias}",
+                    "mode": "HIGH_FLOW_CASCADE_DEFAULT"
+                }
+        
+        # ===== LOW FLOW MODE (Flow < 1.0) =====
+        elif flow < FBR_LOW_FLOW_THRESHOLD:
+            reason += "LOW FLOW MODE - Prioritaskan ENERGY + OVI"
+            
+            # Jika cascade dan energy conflict, pilih energy
+            if energy_bias != 'NEUTRAL' and energy_bias != cascade_bias:
+                return {
+                    "bias": energy_bias,
+                    "confidence": "SUPREME",
+                    "priority_level": -2,
+                    "reason": f"FBR_LOW_FLOW: {reason}. Energy {energy_bias} > Cascade {cascade_bias}",
+                    "mode": "LOW_FLOW_ENERGY"
+                }
+            
+            # Default ke energy
+            if energy_bias != 'NEUTRAL':
+                return {
+                    "bias": energy_bias,
+                    "confidence": "HIGH",
+                    "priority_level": -1,
+                    "reason": f"FBR_LOW_FLOW: {reason}. Ikut ENERGY {energy_bias}",
+                    "mode": "LOW_FLOW_ENERGY_DEFAULT"
+                }
+        
+        # ===== MEDIUM FLOW MODE =====
+        else:
+            reason += "MEDIUM FLOW MODE - Gunakan logic normal"
+        
+        return {
+            "bias": "NEUTRAL",
+            "priority_level": 99
+        }
+
+
+# ================= V107-WFC: WMI-FLOW CORRELATION =================
+class WMIFlowCorrelationV107:
+    """
+    🔥 V107-WFC: WMI-FLOW CORRELATION - Deteksi konflik WMI vs Flow
+    
+    Jika WMI extreme (>80) TAPI flow tinggi (>2.0) = TRAP!
+    - WMI bilang target besar di satu arah
+    - Flow tinggi menunjukkan eksekusi sedang terjadi
+    - Konflik ini biasanya fake move
+    
+    Kasus LYNUSDT:
+    - WMI: -88.7x (EXTREME LONG POOL below)
+    - Flow: 4.26x (HIGH)
+    - WMI bilang SHORT, flow bilang ada aktivitas tinggi
+    - Ini KONFLIK! Biasanya trap!
+    """
+    
+    @staticmethod
+    def detect(wmi_ratio: float, flow: float, 
+               oi_delta: float, price_change: float) -> Dict:
+        """
+        Deteksi konflik antara WMI dan flow
+        """
+        if abs(wmi_ratio) > WFC_WMI_EXTREME_MIN:          # |WMI| > 80
+            if flow > WFC_FLOW_HIGH_MIN:                  # Flow > 2.0
+                # Konflik terdeteksi!
+                # Lawan arah WMI
+                bias = "LONG" if wmi_ratio < 0 else "SHORT"
+                
+                return {
+                    "conflict_detected": True,
+                    "bias": bias,
+                    "confidence": "SUPREME",
+                    "priority_level": -7,  # Sangat tinggi!
+                    "reason": f"WFC_CONFLICT: WMI {wmi_ratio:.1f}x (EXTREME!) + Flow {flow:.2f}x (HIGH!) = "
+                             f"KONFLIK! Ini fake move! Lawan arah WMI ke {bias}!",
+                    "phase": "WMI_FLOW_CONFLICT"
+                }
+        
+        return {
+            "conflict_detected": False,
+            "bias": "NEUTRAL",
+            "priority_level": 99
+        }
 
 
 # ================= V106-LMS: LIQUIDATION MOMENTUM SCORE =================
@@ -3128,56 +3362,133 @@ class ConflictResolverV115_FINAL:
         }
 
 
-# ================= V120-FINAL: CONFLICT RESOLVER DENGAN META DECISION ENGINE =================
-class ConflictResolverV120_FINAL:
+# ================= V120-FINAL-UPDATED: CONFLICT RESOLVER DENGAN V107 MODULES =================
+class ConflictResolverV120_FINAL_UPDATED:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN META DECISION ENGINE
+    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN VACUUM CLASSIFIER & FLOW-BASED RESOLVER
     
-    PRIORITY -20 (MUTLAK TERTINGGI - LYNUSDT PATCH):
+    PRIORITY -7: WMI-FLOW CORRELATION
     ┌─────────────────────────────────────────────────────────┐
-    │ -20. V106-LIP: Liquidation In Progress Lock             │ ← TERTINGGI!
+    │ -7.  V107-WFC: WMI-Flow Correlation                    │ ← BARU!
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -15 (ABSOLUTE VETO):
+    PRIORITY -6: FLOW-BASED PBV PRIORITY
     ┌─────────────────────────────────────────────────────────┐
-    │ -15. V106-LCP: Liquidation Cascade Probability          │
-    │ -14. V106-OVI: Orderbook Vacuum Index                   │
-    │ -13. V106-LMS: Liquidation Momentum Score               │
-    │ -12. V106-ATD: Adversarial Trap Detection               │
+    │ -6.  V107-FBR (PBV High Flow Mode)                     │ ← BARU!
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -10 (META DECISION ENGINE):
+    PRIORITY -5: VACUUM CLASSIFIER
     ┌─────────────────────────────────────────────────────────┐
-    │ -10. V120-MDE: Meta Decision Engine                     │ ← SUPREME COMMANDER!
+    │ -5.  V107-VC: Vacuum Classifier                         │ ← BARU!
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -8 (EXISTING HIGH PRIORITY):
+    PRIORITY -4: FLOW-BASED CASCADE PRIORITY
     ┌─────────────────────────────────────────────────────────┐
-    │ -8.  V104-SE: Sequence Engine                           │
-    │ -7.  V104-FRD: Front-Run Detector                       │
-    │ -6.  V104-PMD: Pre-Move Detector                        │
-    │ -5.  V104-ADF: Active Distribution Filter               │
+    │ -4.  V107-FBR (High Flow Cascade)                       │ ← BARU!
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -3 (V102 MODULES - TURUNKAN PRIORITAS):
+    PRIORITY -3: HIGH FLOW DEFAULT
     ┌─────────────────────────────────────────────────────────┐
-    │ -3.  V102-EIO: Extreme Imbalance Override               │ ← TURUN!
-    │ -2.  V102-MOD: Massive OI Drop Validator                │
-    │ -1.  V104-WSP: WMI Squeeze Priority                     │
+    │ -3.  V107-FBR (High Flow Default)                       │ ← BARU!
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY 0 (V101 MODULES):
+    PRIORITY -2: LOW FLOW ENERGY
     ┌─────────────────────────────────────────────────────────┐
-    │ 0.   V101-OI_FUEL_VS_LIQ_GRAVITY                        │
-    │ 1.   V101-FLUSH_SEQUENCE_VETO                           │
-    │ 2.   V101-DEAD_AGG_MAGNET                               │
+    │ -2.  V107-FBR (Low Flow Energy)                         │ ← BARU!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -1: LOW FLOW DEFAULT
+    ┌─────────────────────────────────────────────────────────┐
+    │ -1.  V107-FBR (Low Flow Default)                        │ ← BARU!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -0: EXISTING MODULES (LIP, LCP, OVI, LMS, ATD)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -0.  V106-LIP: Liquidation In Progress Lock             │
+    │ -0.  V106-LCP: Liquidation Cascade Probability          │
+    │ -0.  V106-OVI: Orderbook Vacuum Index (Enhanced)        │
+    │ -0.  V106-LMS: Liquidation Momentum Score               │
+    │ -0.  V106-ATD: Adversarial Trap Detection               │
     └─────────────────────────────────────────────────────────┘
     """
     
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
         
-        # ===== PRIORITY -20: LIQUIDATION IN PROGRESS LOCK =====
+        # ===== PRIORITY -7: WMI-FLOW CORRELATION =====
+        wfc_res = results.get('wfc_v107', {})
+        if wfc_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": wfc_res['bias'],
+                "confidence": wfc_res.get('confidence', 'SUPREME'),
+                "reason": wfc_res.get('reason', ''),
+                "phase": wfc_res.get('phase', 'WMI_FLOW_CONFLICT'),
+                "priority_level": -7
+            }
+        
+        # ===== PRIORITY -6: FLOW-BASED PBV PRIORITY =====
+        fbr_res = results.get('fbr_v107', {})
+        if fbr_res.get('mode') == 'HIGH_FLOW_PBV':
+            return {
+                "final_bias": fbr_res['bias'],
+                "confidence": fbr_res.get('confidence', 'ABSOLUTE'),
+                "reason": fbr_res.get('reason', ''),
+                "phase": "HIGH_FLOW_PBV",
+                "priority_level": -6
+            }
+        
+        # ===== PRIORITY -5: VACUUM CLASSIFIER =====
+        vc_res = results.get('vc_v107', {})
+        if vc_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": vc_res['bias'],
+                "confidence": vc_res.get('confidence', 'ABSOLUTE'),
+                "reason": vc_res.get('reason', ''),
+                "phase": vc_res.get('vacuum_type', 'VACUUM_DETECTED'),
+                "priority_level": -5
+            }
+        
+        # ===== PRIORITY -4: FLOW-BASED CASCADE PRIORITY =====
+        if fbr_res.get('mode') == 'HIGH_FLOW_CASCADE':
+            return {
+                "final_bias": fbr_res['bias'],
+                "confidence": fbr_res.get('confidence', 'SUPREME'),
+                "reason": fbr_res.get('reason', ''),
+                "phase": "HIGH_FLOW_CASCADE",
+                "priority_level": -4
+            }
+        
+        # ===== PRIORITY -3: HIGH FLOW DEFAULT =====
+        if fbr_res.get('mode') == 'HIGH_FLOW_CASCADE_DEFAULT':
+            return {
+                "final_bias": fbr_res['bias'],
+                "confidence": fbr_res.get('confidence', 'HIGH'),
+                "reason": fbr_res.get('reason', ''),
+                "phase": "HIGH_FLOW_DEFAULT",
+                "priority_level": -3
+            }
+        
+        # ===== PRIORITY -2: LOW FLOW ENERGY =====
+        if fbr_res.get('mode') == 'LOW_FLOW_ENERGY':
+            return {
+                "final_bias": fbr_res['bias'],
+                "confidence": fbr_res.get('confidence', 'SUPREME'),
+                "reason": fbr_res.get('reason', ''),
+                "phase": "LOW_FLOW_ENERGY",
+                "priority_level": -2
+            }
+        
+        # ===== PRIORITY -1: LOW FLOW DEFAULT =====
+        if fbr_res.get('mode') == 'LOW_FLOW_ENERGY_DEFAULT':
+            return {
+                "final_bias": fbr_res['bias'],
+                "confidence": fbr_res.get('confidence', 'HIGH'),
+                "reason": fbr_res.get('reason', ''),
+                "phase": "LOW_FLOW_DEFAULT",
+                "priority_level": -1
+            }
+        
+        # ===== PRIORITY 0: V106 MODULES (EXISTING) =====
         lip_res = results.get('lip_v106', {})
         if lip_res.get('bias') != 'NEUTRAL':
             return {
@@ -3185,10 +3496,9 @@ class ConflictResolverV120_FINAL:
                 "confidence": lip_res.get('confidence', 'ABSOLUTE'),
                 "reason": lip_res.get('reason', ''),
                 "phase": "LIQUIDATION_IN_PROGRESS",
-                "priority_level": -20
+                "priority_level": 0
             }
         
-        # ===== PRIORITY -15: LIQUIDATION CASCADE PROBABILITY =====
         lcp_res = results.get('lcp_v106', {})
         if lcp_res.get('bias') != 'NEUTRAL':
             return {
@@ -3196,10 +3506,9 @@ class ConflictResolverV120_FINAL:
                 "confidence": lcp_res.get('confidence', 'ABSOLUTE'),
                 "reason": lcp_res.get('reason', ''),
                 "phase": "CASCADE_MODE",
-                "priority_level": -15
+                "priority_level": 0
             }
         
-        # ===== PRIORITY -14: ORDERBOOK VACUUM INDEX =====
         ovi_res = results.get('ovi_v106', {})
         if ovi_res.get('bias') != 'NEUTRAL':
             return {
@@ -3207,10 +3516,9 @@ class ConflictResolverV120_FINAL:
                 "confidence": ovi_res.get('confidence', 'ABSOLUTE'),
                 "reason": ovi_res.get('reason', ''),
                 "phase": "VACUUM_FREEFALL",
-                "priority_level": -14
+                "priority_level": 0
             }
         
-        # ===== PRIORITY -13: LIQUIDATION MOMENTUM SCORE =====
         lms_res = results.get('lms_v106', {})
         if lms_res.get('bias') != 'NEUTRAL':
             return {
@@ -3218,10 +3526,9 @@ class ConflictResolverV120_FINAL:
                 "confidence": lms_res.get('confidence', 'ABSOLUTE'),
                 "reason": lms_res.get('reason', ''),
                 "phase": "STRONG_MOMENTUM",
-                "priority_level": -13
+                "priority_level": 0
             }
         
-        # ===== PRIORITY -12: ADVERSARIAL TRAP DETECTION =====
         atd_res = results.get('atd_v106', {})
         if atd_res.get('bias') != 'NEUTRAL':
             return {
@@ -3229,31 +3536,7 @@ class ConflictResolverV120_FINAL:
                 "confidence": atd_res.get('confidence', 'ABSOLUTE'),
                 "reason": atd_res.get('reason', ''),
                 "phase": "TRAP_DETECTED",
-                "priority_level": -12
-            }
-        
-        # ===== PRIORITY -10: META DECISION ENGINE =====
-        mde_res = results.get('mde_v120', {})
-        if mde_res.get('bias') != 'NEUTRAL':
-            return {
-                "final_bias": mde_res['bias'],
-                "confidence": mde_res.get('confidence', 'HIGH'),
-                "reason": mde_res.get('reason', ''),
-                "phase": mde_res.get('state', 'MDE_DECISION'),
-                "priority_level": -10,
-                "prob_long": mde_res.get('prob_long', 50),
-                "prob_short": mde_res.get('prob_short', 50)
-            }
-        
-        # ===== PRIORITY -8: V104 SEQUENCE ENGINE =====
-        se_res = results.get('se_v104', {})
-        if se_res.get('bias') != 'NEUTRAL':
-            return {
-                "final_bias": se_res['bias'],
-                "confidence": se_res.get('confidence', 'SUPREME'),
-                "reason": se_res.get('reason', ''),
-                "phase": se_res.get('stage', 'SEQUENCE_PHASE'),
-                "priority_level": -8
+                "priority_level": 0
             }
         
         # Default
@@ -25963,8 +26246,13 @@ class BinanceAnalyzerV87:
         # ===== V120 META DECISION ENGINE =====
         self.mde_v120 = MetaDecisionEngineV120()               # V120-MDE
         
-        # Gunakan resolver V120 yang baru
-        self.final_resolver_v120 = ConflictResolverV120_FINAL()
+        # ===== V107 VACUUM & FLOW-BASED MODULES =====
+        self.vc_v107 = VacuumClassifierV107()                    # V107-VC
+        self.fbr_v107 = FlowBasedResolverV107()                  # V107-FBR
+        self.wfc_v107 = WMIFlowCorrelationV107()                 # V107-WFC
+        
+        # Gunakan resolver V120 yang baru (UPDATED dengan V107 modules)
+        self.final_resolver_v120_updated = ConflictResolverV120_FINAL_UPDATED()
         
         # ===== V106 SEQUENCE ENGINE =====
         self.seq_v106 = SequenceEngineV106()                 # V106-SEQ
@@ -28449,6 +28737,43 @@ class BinanceAnalyzerV87:
             scoring_data['tp_v107'] = tp_result
             scoring_data['current_phase'] = phase_result.get('current_phase', 'UNKNOWN')
             
+            # ===== V107 VACUUM & FLOW-BASED MODULES =====
+            # Vacuum Classifier (membedakan real vs spoof)
+            vc_result = self.vc_v107.classify(
+                ovi_score=ovi_result.get('ovi_score', 0) if 'ovi_result' in locals() else 0,
+                flow=trades.get('ratio', 1.0),
+                bid_volume=ob_data.get('bid_volume_near', 0) if ob_data else 0,
+                agg=trades.get('aggressive_ratio', 1.0)
+            )
+            
+            # WMI-Flow Correlation
+            wfc_result = self.wfc_v107.detect(
+                wmi_ratio=wmi_ratio,
+                flow=trades.get('ratio', 1.0),
+                oi_delta=oi_delta_5m,
+                price_change=change_5m
+            )
+            
+            # Flow-Based Resolver (prioritas berbeda berdasarkan flow)
+            cascade_result = scoring_data.get('cascade', {})
+            lep_result = scoring_data.get('lep', {})
+            pbv_result = scoring_data.get('pbv_v100', {})
+            
+            fbr_result = self.fbr_v107.resolve(
+                flow=trades.get('ratio', 1.0),
+                cascade_bias=cascade_result.get('bias', 'NEUTRAL'),
+                cascade_ratio=cascade_result.get('ratio', 1.0),
+                energy_bias=lep_result.get('bias', 'NEUTRAL'),
+                energy_up=lep_result.get('up_energy', 0) if isinstance(lep_result, dict) else 0,
+                energy_down=lep_result.get('down_energy', 0) if isinstance(lep_result, dict) else 0,
+                pbv_result=pbv_result if isinstance(pbv_result, dict) else {}
+            )
+            
+            # Update scoring_data dengan V107 modules
+            scoring_data['vc_v107'] = vc_result
+            scoring_data['wfc_v107'] = wfc_result
+            scoring_data['fbr_v107'] = fbr_result
+            
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
             
@@ -28470,8 +28795,8 @@ class BinanceAnalyzerV87:
             # ===== V115: FINAL RESOLVER (EXECUTION FEASIBILITY ENGINE - PALING TERTINGGI!) =====
             v115_final = self.final_resolver_v115.resolve_all_signals(scoring_data)
             
-            # ===== V120: FINAL RESOLVER (META DECISION ENGINE - SUPREME COMMANDER!) =====
-            v120_final = self.final_resolver_v120.resolve_all_signals(scoring_data)
+            # ===== V120: FINAL RESOLVER UPDATED (META DECISION ENGINE + V107 MODULES - SUPREME COMMANDER!) =====
+            v120_final = self.final_resolver_v120_updated.resolve_all_signals(scoring_data)
             
             # ===== V106: FINAL RESOLVER (SEQUENCE ENGINE - TERTINGGI!) =====
             v106_final = self.final_resolver_v106.resolve_all_signals(scoring_data)
@@ -28479,8 +28804,25 @@ class BinanceAnalyzerV87:
             # ===== V107: FINAL RESOLVER (EXIT ENGINE - PALING TERTINGGI!) =====
             v107_final = self.final_resolver_v107.resolve_all_signals(scoring_data)
             
-            # Gunakan V120 resolver jika ada signal LYNUSDT (priority <= -20)
-            if v120_final.get('priority_level', 99) <= -10:
+            # Gunakan V120 resolver jika ada signal V107 (priority <= -7) atau LYNUSDT (priority <= -10)
+            if v120_final.get('priority_level', 99) <= -7:
+                # V120 override dengan V107 modules (WFC/FBR/VC - MUTLAK!)
+                final_decision = {
+                    'bias': v120_final['final_bias'],
+                    'final_bias': v120_final['final_bias'],
+                    'confidence': v120_final['confidence'],
+                    'reason': v120_final['reason'],
+                    'phase': v120_final['phase'],
+                    'priority_level': v120_final['priority_level'],
+                    'market_state': v120_final.get('state', 'UNKNOWN'),
+                    'prob_long': v120_final.get('prob_long', 50),
+                    'prob_short': v120_final.get('prob_short', 50),
+                    'intention': mie_result.get('intention', 'NEUTRAL'),
+                    'vacuum_type': vc_result.get('vacuum_type', 'NONE'),
+                    'flow_mode': fbr_result.get('mode', 'NORMAL'),
+                    'override_modules': ['V120_MDE_V107_UPDATED']
+                }
+            elif v120_final.get('priority_level', 99) <= -10:
                 # V120 override (META DECISION ENGINE / LYNUSDT PATCH - MUTLAK!)
                 final_decision = {
                     'bias': v120_final['final_bias'],
