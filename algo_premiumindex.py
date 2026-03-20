@@ -647,12 +647,6 @@ WFC_WMI_EXTREME_MIN = 80.0                    # |WMI| > 80
 WFC_FLOW_HIGH_MIN = 2.0                        # Flow > 2.0
 WFC_CONFLICT_ACTION = "REVERSE"                 # Lawan arah WMI saat conflict
 
-# ================= V200-DMV: DEAD MARKET VETO CONFIG =================
-DMV_AGG_DEAD_THRESHOLD = 0.1                 # Agg < 0.1 = dead market
-DMV_FLOW_DEAD_THRESHOLD = 0.5                 # Flow < 0.5 = dead market
-DMV_MIN_REAL_FLOW = 0.3                        # Minimal flow untuk arah real
-DMV_ORDERBOOK_THRESHOLD = 1000                 # Threshold volume orderbook
-
 # ================= V120-MDE: META DECISION ENGINE CONFIG =================
 MDE_STATE_WEIGHTS = {
     "LIQUIDATION_IN_PROGRESS": 1.0,
@@ -26600,17 +26594,6 @@ class BinanceAnalyzerV87:
             bid_vol = sum(q for _, q in ob_data.get('bids', [])[:5]) if ob_data.get('bids') else 0
             # ============================================================
 
-            # ===== V200-DMV: DEAD MARKET VETO (PRIORITAS TERTINGGI) =====
-            # Dipanggil PALING AWAL setelah data dikumpulkan, SEBELUM resolver apapun
-            dmv_result = DeadMarketVetoV200.evaluate(
-                agg_ratio=trades.get('aggressive_ratio', 1.0),
-                flow=trades.get('ratio', 1.0),
-                bid_vol=bid_vol,
-                ask_vol=ask_vol,
-                rsi=None  # Akan diupdate nanti setelah RSI dihitung
-            )
-            # ============================================================
-
             # --- 3. AMBIL OI (SEKARANG VS 5 MENIT LALU) ---
             oi_now = self.fetcher.get_open_interest_current()
             oi_then = self.fetcher.get_oi_5m_ago()
@@ -26637,17 +26620,6 @@ class BinanceAnalyzerV87:
             rsi6 = IndicatorCalculator.calculate_rsi(closes_1m, 6)
             rsi14 = IndicatorCalculator.calculate_rsi(closes_1m, 14)
             macd = IndicatorCalculator.calculate_macd(closes_1m)
-
-            # ===== V200-DMV: UPDATE DENGAN RSI =====
-            # Re-evaluate DMV dengan RSI yang sudah dihitung
-            dmv_result = DeadMarketVetoV200.evaluate(
-                agg_ratio=trades.get('aggressive_ratio', 1.0),
-                flow=trades.get('ratio', 1.0),
-                bid_vol=bid_vol,
-                ask_vol=ask_vol,
-                rsi=rsi6
-            )
-            # ============================================================
 
             change_1m = ((closes_1m[-1] - closes_1m[-2]) / closes_1m[-2]) * 100 if len(closes_1m) >= 2 else 0
             change_5m = ((closes_1m[-1] - closes_1m[-5]) / closes_1m[-5]) * 100 if len(closes_1m) >= 5 else 0
