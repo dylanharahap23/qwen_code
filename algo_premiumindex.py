@@ -739,6 +739,21 @@ VP_BID_VACUUM_THRESHOLD = 0.1                # Bid volume < 0.1 = vacuum
 VP_ASK_VACUUM_THRESHOLD = 0.1                # Ask volume < 0.1 = vacuum
 VP_PRIORITY_LEVEL = -19                       # Higher than WMI
 
+# ================= V126-VGA: VACUUM-GRAVITY ANCHOR CONFIG =================
+VGA_BID_ZERO_THRESHOLD = 0.1                 # Bid volume < 0.1 = kosong
+VGA_ASK_ZERO_THRESHOLD = 0.1                 # Ask volume < 0.1 = kosong
+VGA_PRIORITY_LEVEL = -25                      # Lebih tinggi dari modul lain
+
+# ================= V127-MDI: MACD DEAD ZONE INTEGRITY CONFIG =================
+MDI_MACD_DEAD_ZONE_THRESHOLD = 0              # DIF < 0 dan DEA < 0
+MDI_PRICE_BOUNCE_MIN = 0.5                    # Price bounce > 0.5%
+MDI_PRIORITY_LEVEL = -24
+
+# ================= V128-FSF: FAKE SQUEEZE FUEL CONFIG =================
+FSF_OI_RISE_MIN = 1.0                         # OI naik > 1%
+FSF_AGG_LOW_MAX = 0.3                         # Agg < 0.3 = rendah
+FSF_PRIORITY_LEVEL = -23
+
 # ================= V121-TTK: TIME TO KILL CONFIG =================
 TTK_WAIT_MINUTES = 5                         # Wait 5 minutes after signal
 TTK_PRICE_MOVE_REQUIRED = 1.0                # Need 1% move to confirm
@@ -2404,6 +2419,124 @@ class VacuumPriorityV126:
             }
         
         return {"vacuum_priority": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V126-VGA: VACUUM-GRAVITY ANCHOR =================
+class VacuumGravityAnchorV126:
+    """
+    🔥 V126-VGA: VACUUM-GRAVITY ANCHOR - VETO MUTLAK JIKA BID KOSONG
+    
+    Jika Bid_Volume == 0, maka VETO MUTLAK semua signal LONG,
+    tidak peduli seberapa besar Payout-nya. Harga tidak bisa naik jika tidak ada pijakan.
+    
+    Kasus LYNUSDT 12:22:
+    - Bid Volume: 0 (KOSONG!)
+    - Payout Ratio: 4.35x (Bot tergoda)
+    - Harusnya: VETO → SHORT!
+    """
+    
+    @staticmethod
+    def detect(bid_volume: float, ask_volume: float, 
+               wmi_ratio: float, payout_ratio: float) -> Dict:
+        """
+        Vacuum detector - force direction based on empty side
+        """
+        # BID VACUUM: tidak ada support di bawah → SHORT
+        if bid_volume < VGA_BID_ZERO_THRESHOLD:
+            return {
+                "vacuum_anchor": True,
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "priority_level": VGA_PRIORITY_LEVEL,
+                "reason": f"VGA_BID_VACUUM: Bid volume {bid_volume:.1f} (KOSONG!) + "
+                         f"WMI {wmi_ratio:.1f}x + Payout {payout_ratio:.1f}x = "
+                         f"TIDAK ADA PIJAKAN! Harga WAJIB TURUN! "
+                         f"VETO semua signal LONG! SHORT!",
+                "phase": "VACUUM_GRAVITY_ANCHOR"
+            }
+        
+        # ASK VACUUM: tidak ada resistance di atas → LONG
+        if ask_volume < VGA_ASK_ZERO_THRESHOLD:
+            return {
+                "vacuum_anchor": True,
+                "bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "priority_level": VGA_PRIORITY_LEVEL,
+                "reason": f"VGA_ASK_VACUUM: Ask volume {ask_volume:.1f} (KOSONG!) + "
+                         f"WMI {wmi_ratio:.1f}x = TIDAK ADA HAMBATAN! Harga WAJIB NAIK!",
+                "phase": "VACUUM_GRAVITY_ANCHOR"
+            }
+        
+        return {"vacuum_anchor": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V127-MDI: MACD DEAD ZONE INTEGRITY =================
+class MACDDeadZoneIntegrityV127:
+    """
+    🔥 V127-MDI: MACD DEAD ZONE INTEGRITY - ANTI-EXIT PUMP
+    
+    Dalam kondisi MACD < 0 (dead zone), pantulan harga ke atas (bounce) adalah
+    kesempatan MM untuk menjual di harga lebih tinggi (Exit Pump), bukan awal tren naik.
+    
+    Kasus LYNUSDT 12:22:
+    - MACD_DEAD_ZONE: True (sudah terdeteksi)
+    - Price Change: +0.85% (bounce)
+    - Bot: ignore → LONG ❌
+    - Harusnya: SELL_THE_BOUNCE → SHORT ✅
+    """
+    
+    @staticmethod
+    def detect(macd_dead_zone: bool, price_change_5m: float) -> Dict:
+        """
+        Deteksi exit pump di MACD dead zone
+        """
+        if macd_dead_zone:                                      # MACD di bawah 0
+            if price_change_5m > MDI_PRICE_BOUNCE_MIN:          # Price bounce > 0.5%
+                return {
+                    "exit_pump": True,
+                    "bias": "SHORT",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": MDI_PRIORITY_LEVEL,
+                    "reason": f"MDI_EXIT_PUMP: MACD dead zone + price bounce {price_change_5m:+.2f}% = "
+                             f"EXIT PUMP! MM jual di harga lebih tinggi. SHORT!",
+                    "phase": "MACD_DEAD_ZONE_BOUNCE"
+                }
+        return {"exit_pump": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V128-FSF: FAKE SQUEEZE FUEL =================
+class FakeSqueezeFuelV128:
+    """
+    🔥 V128-FSF: FAKE SQUEEZE FUEL - ANTI-TRAP BUILDING
+    
+    Jika OI naik tapi agresi rendah (<0.3), artinya posisi baru dibuka menggunakan
+    LIMIT ORDERS, bukan MARKET BUY. Ini biasanya TRAP BUILDING, bukan squeeze fuel.
+    
+    Kasus LYNUSDT 12:22:
+    - OI Δ: +1.89% (naik)
+    - Agg: 0.25x (RENDAH!)
+    - Bot: OI naik = fuel → LONG ❌
+    - Realita: TRAP BUILDING! Harga akan turun!
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, agg_ratio: float) -> Dict:
+        """
+        Deteksi apakah OI naik adalah fuel atau trap
+        """
+        if oi_delta > FSF_OI_RISE_MIN:                          # OI naik > 1%
+            if agg_ratio < FSF_AGG_LOW_MAX:                     # Agg < 0.3
+                return {
+                    "fake_fuel": True,
+                    "bias": "SHORT",  # Lawan arah!
+                    "confidence": "ABSOLUTE",
+                    "priority_level": FSF_PRIORITY_LEVEL,
+                    "reason": f"FSF_FAKE_FUEL: OI {oi_delta:.2f}% (naik) + Agg {agg_ratio:.2f}x (rendah) = "
+                             f"TRAP BUILDING! Whale buka posisi pakai LIMIT ORDER untuk jebak retail! "
+                             f"JANGAN LONG! SHORT!",
+                    "phase": "FAKE_SQUEEZE_FUEL"
+                }
+        return {"fake_fuel": False, "bias": "NEUTRAL", "priority_level": 99}
 
 
 # ================= V121-TTK: TIME TO KILL CONFIRMATION =================
@@ -4330,6 +4463,21 @@ class ConflictResolverV120_FINAL_ENHANCED:
     """
     🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN ANTI-HFT SHIELD & ANTI-KRIMINAL LOGIC
     
+    PRIORITY -25: V126-VGA (Vacuum-Gravity Anchor)      ← BARU TERTINGGI! ANTI-LYNUSDT
+    ┌─────────────────────────────────────────────────────────┐
+    │ -25. V126-VGA: Vacuum-Gravity Anchor                    │ ← BARU! VETO MUTLAK BID KOSONG
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -24: V127-MDI (MACD Dead Zone Integrity)   ← BARU ANTI-LYNUSDT
+    ┌─────────────────────────────────────────────────────────┐
+    │ -24. V127-MDI: MACD Dead Zone Integrity               │ ← BARU! ANTI-EXIT PUMP
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -23: V128-FSF (Fake Squeeze Fuel)          ← BARU ANTI-LYNUSDT
+    ┌─────────────────────────────────────────────────────────┐
+    │ -23. V128-FSF: Fake Squeeze Fuel                        │ ← BARU! ANTI-TRAP BUILDING
+    └─────────────────────────────────────────────────────────┘
+    
     PRIORITY -20: V200-DMV (Dead Market Veto)
     ┌─────────────────────────────────────────────────────────┐
     │ -20. V200-DMV: Dead Market Veto                        │ ← EXISTING
@@ -4427,16 +4575,44 @@ class ConflictResolverV120_FINAL_ENHANCED:
     
     PRIORITY -0: EXISTING MODULES (LIP, LCP, OVI, LMS, ATD)
     ┌─────────────────────────────────────────────────────────┐
-    │ -0.  V106-LIP: Liquidation In Progress Lock             │
-    │ -0.  V106-LCP: Liquidation Cascade Probability          │
-    │ -0.  V106-OVI: Orderbook Vacuum Index (Enhanced)        │
-    │ -0.  V106-LMS: Liquidation Momentum Score               │
-    │ -0.  V106-ATD: Adversarial Trap Detection               │
-    └─────────────────────────────────────────────────────────┘
+    │ -0.  V106-LIP: Liquidation In Progress Lock             │\n    │ -0.  V106-LCP: Liquidation Cascade Probability          │\n    │ -0.  V106-OVI: Orderbook Vacuum Index (Enhanced)        │\n    │ -0.  V106-LMS: Liquidation Momentum Score               │\n    │ -0.  V106-ATD: Adversarial Trap Detection               │\n    └─────────────────────────────────────────────────────────┘
     """
     
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== PRIORITY -25: V126-VGA (Vacuum-Gravity Anchor) =====
+        vga_res = results.get('vga_v126', {})
+        if vga_res.get('vacuum_anchor'):
+            return {
+                "final_bias": vga_res['bias'],
+                "confidence": vga_res.get('confidence', 'ABSOLUTE'),
+                "reason": vga_res.get('reason', ''),
+                "phase": vga_res.get('phase', 'VACUUM_GRAVITY_ANCHOR'),
+                "priority_level": -25
+            }
+        
+        # ===== PRIORITY -24: V127-MDI (MACD Dead Zone Integrity) =====
+        mdi_res = results.get('mdi_v127', {})
+        if mdi_res.get('exit_pump'):
+            return {
+                "final_bias": mdi_res['bias'],
+                "confidence": mdi_res.get('confidence', 'ABSOLUTE'),
+                "reason": mdi_res.get('reason', ''),
+                "phase": mdi_res.get('phase', 'MACD_DEAD_ZONE_BOUNCE'),
+                "priority_level": -24
+            }
+        
+        # ===== PRIORITY -23: V128-FSF (Fake Squeeze Fuel) =====
+        fsf_res = results.get('fsf_v128', {})
+        if fsf_res.get('fake_fuel'):
+            return {
+                "final_bias": fsf_res['bias'],
+                "confidence": fsf_res.get('confidence', 'ABSOLUTE'),
+                "reason": fsf_res.get('reason', ''),
+                "phase": fsf_res.get('phase', 'FAKE_SQUEEZE_FUEL'),
+                "priority_level": -23
+            }
         
         # ===== PRIORITY -20: V200-DMV (EXISTING) =====
         dmv_res = results.get('dmv_v200', {})
@@ -25729,9 +25905,10 @@ class ConflictResolverV82:
 
 # ================= V87 CONFIG =================
 ZAS_AGG_MAX = 0.0           # Zero Aggression Squeeze: Agg must be 0
-ZAS_FLOW_MAX = 1.5          # Flow < 1.5
+ZAS_FLOW_MAX = 1.5          # Flow < 1.5 (old config, kept for compatibility)
 ZAS_RSI_MIN = 20            # RSI between 20-65
 ZAS_RSI_MAX = 65
+ZAS_FLOW_REQUIRED = 1.5     # Minimal flow untuk squeeze (ANTI-LYNUSDT)
 
 LCD_AGG_MAX = 0.05          # Liquidity Compression: Agg ≤ 0.05
 LCD_FLOW_MAX = 1.2          # Flow < 1.2
@@ -25917,6 +26094,7 @@ LFC_PAYOUT_RATIO_THRESHOLD = 1.5  # If payout ratio > 1.5x, prioritize direction
 class ZeroAggressionSqueezeV87:
     """
     V87: Zero Aggression Squeeze - ANTI-SELLER EXHAUSTION
+    (MODIFIKASI: tambah syarat flow > 1.5 dan OI naik untuk aktif)
     
     Kasus POWERUSDT dan ROBOUSDT:
     - Agg = 0.00x (TIDAK ADA SELLER AGGRESIF!)
@@ -25927,18 +26105,40 @@ class ZeroAggressionSqueezeV87:
     - Agg = 0 BUKAN weak momentum, tapi SELLER EXHAUSTION!
     - Market maker sedang freeze orderbook
     - Satu market buy bisa gerakkan harga +4% sampai +8%
+    
+    UPDATE ANTI-LYNUSDT:
+    Sekarang ZAS hanya aktif jika:
+    - Agg = 0
+    - Flow > 1.5 (ada bensin)
+    - OI naik (short baru masuk) atau price uptrend
     """
     @staticmethod
-    def analyze(agg_ratio: float, flow: float, rsi: float, oi_delta: float = None) -> Dict:
-        is_squeeze = agg_ratio <= ZAS_AGG_MAX and flow < ZAS_FLOW_MAX and ZAS_RSI_MIN < rsi < ZAS_RSI_MAX
+    def analyze(agg_ratio: float, flow: float, rsi: float, 
+                oi_delta: float = None, price_change: float = None) -> Dict:
+        """
+        Sekarang ZAS hanya aktif jika ada fuel yang cukup
+        """
+        is_squeeze = False
+        reason = ""
+        
+        if agg_ratio <= ZAS_AGG_MAX and flow > ZAS_FLOW_REQUIRED:          # TAMBAH syarat flow > 1.5!
+            if oi_delta and oi_delta > 1.0:                   # OI naik = short baru masuk
+                is_squeeze = True
+                reason = f"ZAS_SQUEEZE_VALID: Agg {agg_ratio:.2f}x + Flow {flow:.2f}x + OI {oi_delta:+.2f}% = Squeeze valid! Short baru masuk, ada fuel!"
+            elif price_change and price_change > 1.0:         # Atau price uptrend kuat
+                is_squeeze = True
+                reason = f"ZAS_SQUEEZE_VALID: Agg {agg_ratio:.2f}x + Flow {flow:.2f}x + Price {price_change:+.2f}% = Squeeze valid! Uptrend dengan flow!"
+            else:
+                reason = f"ZAS_INACTIVE: Agg {agg_ratio:.2f}x tapi Flow {flow:.2f}x rendah. No fuel for squeeze."
+        else:
+            reason = "ZAS_INACTIVE: Normal aggression or flow insufficient."
         
         if is_squeeze:
-            oi_info = f" OI Δ {oi_delta:.2f}% " if oi_delta is not None else ""
             return {
                 "is_squeeze": True,
                 "bias": "LONG",
                 "confidence": "SUPREME",
-                "reason": f"ZAS_ZERO_AGGRESSION: Agg {agg_ratio:.2f}x (NO SELLERS LEFT!) + Flow {flow:.2f}x + RSI {rsi:.1f}{oi_info}→ Squeeze +4-8% incoming!",
+                "reason": reason,
                 "phase": "LIQUIDITY_FREEZE"
             }
         
@@ -25946,7 +26146,7 @@ class ZeroAggressionSqueezeV87:
             "is_squeeze": False,
             "bias": "NEUTRAL",
             "confidence": "LOW",
-            "reason": "Normal - no zero aggression detected",
+            "reason": reason,
             "phase": "NORMAL"
         }
 
@@ -27429,6 +27629,11 @@ class BinanceAnalyzerV87:
         self.pdw_v124 = PayoutDistanceWeightV124()             # V124-PDW
         self.fsf_v125 = FalseSqueezeFilterV125()               # V125-FSF
         self.vp_v126 = VacuumPriorityV126()                    # V126-VP
+        
+        # ===== ANTI-LYNUSDT MODULES (V126-V128) =====
+        self.vga_v126 = VacuumGravityAnchorV126()              # V126-VGA
+        self.mdi_v127 = MACDDeadZoneIntegrityV127()            # V127-MDI
+        self.fsf_v128 = FakeSqueezeFuelV128()                  # V128-FSF
         
         # Gunakan resolver V120 enhanced yang baru (dengan ANTI-HFT SHIELD & ANTI-KRIMINAL)
         self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
@@ -29212,6 +29417,30 @@ class BinanceAnalyzerV87:
                 price_change=change_5m
             )
             scoring_data['vp_v126'] = vp_result
+            
+            # ===== ANTI-LYNUSDT MODULES (V126-V128) =====
+            # V126-VGA: Vacuum-Gravity Anchor
+            vga_result = self.vga_v126.detect(
+                bid_volume=odd_result.get('bid_volume_near', 0) if 'odd_result' in locals() else 0,
+                ask_volume=odd_result.get('ask_volume_near', 0) if 'odd_result' in locals() else 0,
+                wmi_ratio=wmi_ratio,
+                payout_ratio=lpc_result.get('payout_ratio', 1.0) if 'lpc_result' in locals() else 1.0
+            )
+            scoring_data['vga_v126'] = vga_result
+            
+            # V127-MDI: MACD Dead Zone Integrity
+            mdi_result = self.mdi_v127.detect(
+                macd_dead_zone=macd.get('dif', 0) < 0 and macd.get('dea', 0) < 0 if 'macd' in locals() else False,
+                price_change_5m=change_5m
+            )
+            scoring_data['mdi_v127'] = mdi_result
+            
+            # V128-FSF: Fake Squeeze Fuel
+            fsf_v128_result = self.fsf_v128.detect(
+                oi_delta=oi_delta_5m,
+                agg_ratio=trades.get('aggressive_ratio', 1.0) if 'trades' in locals() else 1.0
+            )
+            scoring_data['fsf_v128'] = fsf_v128_result
             
             # ===== V101: CALL NEW MODULES =====
             lmp_result = self.lmp_v101.check(
