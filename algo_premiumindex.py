@@ -615,6 +615,36 @@ EFE_DEAD_MARKET_PRIORITY = -225
 EFE_WMI_INVALID_PRIORITY = -220
 EFE_TRAP_PRIORITY = -215
 
+# ================= V106-LYN: ANTI-LYNUSDT CONFIG =================
+LCP_OI_DROP_MIN = -5.0                    # OI drop > 5%
+LCP_PRICE_DROP_MIN = -10.0                 # Price drop > 10%
+LCP_CASCADE_THRESHOLD = 5.0                # LCP > 5 = cascade imminent
+
+OVI_VACUUM_THRESHOLD = 0.1                  # OVI < 0.1 = vacuum
+OVI_BID_ZERO_CHECK = True                    # Cek bid volume = 0
+
+LMS_SHORT_THRESHOLD = -50                    # LMS < -50 = strong short
+ATD_TRAP_THRESHOLD = 50                       # ATD > 50 = trap
+
+LIP_OI_DROP_MIN = -5.0                        # OI drop > 5%
+LIP_PRICE_DROP_MIN = -10.0                     # Price drop > 10%
+LIP_WMI_THRESHOLD = -90                         # WMI < -90
+LIP_AGG_MAX = 0.1                                # Agg < 0.1
+
+# ================= V120-MDE: META DECISION ENGINE CONFIG =================
+MDE_STATE_WEIGHTS = {
+    "LIQUIDATION_IN_PROGRESS": 1.0,
+    "VACUUM_FREEFALL": 0.9,
+    "CASCADE_MODE": 0.8,
+    "SQUEEZE_PHASE": 0.6,
+    "BUILD_PHASE": 0.4,
+    "DISTRIBUTION_PHASE": 0.3,
+    "RANDOM_NOISE": 0.1
+}
+
+MDE_TIME_DECAY_FACTOR = 0.7                    # Signal age decay per 30 seconds
+MDE_SIGNAL_AGE_WINDOW = 30                      # 30 seconds window
+
 # ================= V104-SE: SEQUENCE ENGINE CONFIG =================
 SE_BUILD_OI_MIN = 2.0                     # OI > 2% = BUILD phase
 SE_BUILD_FLOW_MIN = 1.5                    # Flow > 1.5 = BUILD phase
@@ -1572,6 +1602,434 @@ class TrapClassifierV115:
             "reason": reason,
             "action": action
         }
+
+
+# ================= V106-LIP: LIQUIDATION IN PROGRESS LOCK =================
+class LiquidationInProgressLockV106:
+    """
+    🔥 V106-LIP: LIQUIDATION IN PROGRESS LOCK - PRIORITAS TERTINGGI
+    Jika OI drop > 5% + Price drop > 10% = LIQUIDATION SEDANG BERLANGSUNG!
+    
+    Kasus LYNUSDT:
+    - OI: -9.43% (< -5%)
+    - Price: -15.76% (< -10%)
+    - WMI: -99.6x (< -90)
+    - Agg: 0.05x (< 0.1)
+    - Bot: LONG ❌ (karena imbalance)
+    - Harusnya: LIP_LOCK → SHORT! ✅
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, price_change: float,
+               wmi_ratio: float, agg: float) -> Dict:
+        
+        if oi_delta < LIP_OI_DROP_MIN:                          # OI drop > 5%
+            if price_change < LIP_PRICE_DROP_MIN:               # Price drop > 10%
+                if wmi_ratio < LIP_WMI_THRESHOLD:               # WMI < -90
+                    if agg < LIP_AGG_MAX:                       # Agg < 0.1 (no buyers)
+                        return {
+                            "bias": "SHORT",
+                            "confidence": "ABSOLUTE",
+                            "priority_level": -20,  # MUTLAK TERTINGGI!
+                            "reason": f"LIP_LIQUIDATION: OI {oi_delta:.2f}% (DROP!) + "
+                                     f"Price {price_change:.2f}% (CRASH!) + "
+                                     f"WMI {wmi_ratio:.1f}x + Agg {agg:.2f}x (NO BUYERS!) = "
+                                     f"LONG LIQUIDATION IN PROGRESS! WAJIB SHORT! "
+                                     f"Override IMBALANCE 100x sekalipun!",
+                            "override_all": True,
+                            "override_modules": ["ALL"]
+                        }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V106-LCP: LIQUIDATION CASCADE PROBABILITY =================
+class LiquidationCascadeProbabilityV106:
+    """
+    🔥 V106-LCP: LIQUIDATION CASCADE PROBABILITY
+    Formula: LCP = (OI_drop_rate × Price_drop_rate × Bid_vacuum) / (Agg × Flow × Distance)
+    
+    Jika LCP > 5.0 = CASCADE IMMINENT!
+    """
+    
+    @staticmethod
+    def calculate(oi_delta: float, price_change: float,
+                  bid_volume: float, ask_volume: float,
+                  agg: float, flow: float, long_dist: float) -> Dict:
+        
+        # Hitung bid vacuum factor
+        if bid_volume == 0:
+            bid_vacuum_factor = 1.0  # Complete vacuum
+        else:
+            bid_vacuum_factor = bid_volume / max(ask_volume, 1.0)
+        
+        # Rate per minute (5 menit window)
+        oi_drop_rate = abs(oi_delta) / 5.0
+        price_drop_rate = abs(price_change) / 5.0
+        
+        # Denominator dengan safety
+        denominator = max(agg, 0.01) * max(flow, 0.01) * max(abs(long_dist), 0.1)
+        lcp = (oi_drop_rate * price_drop_rate * bid_vacuum_factor) / denominator
+        
+        if lcp > LCP_CASCADE_THRESHOLD:  # > 5.0
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "priority_level": -15,
+                "lcp_score": round(lcp, 2),
+                "reason": f"LCP_CASCADE: LCP Score {lcp:.2f} > 5.0! "
+                         f"OI {oi_delta:.1f}% ({oi_drop_rate:.2f}/min) + "
+                         f"Price {price_change:.1f}% ({price_drop_rate:.2f}/min) + "
+                         f"Bid Vacuum {bid_vacuum_factor:.2f} = CASCADE IMMINENT!",
+                "override_modules": ["IMC", "LIM", "SAT", "EIO"]
+            }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V106-OVI: ORDERBOOK VACUUM INDEX =================
+class OrderbookVacuumIndexV106:
+    """
+    🔥 V106-OVI: ORDERBOOK VACUUM INDEX
+    Formula: OVI = (Bid/Ask) × (1/Agg) × WMI_direction
+    
+    Jika OVI < 0.1 = NO SUPPORT BELOW! (SHORT bias)
+    """
+    
+    @staticmethod
+    def detect(bid_volume: float, ask_volume: float,
+               agg: float, wmi_ratio: float) -> Dict:
+        
+        # Handle bid = 0 case
+        if bid_volume == 0:
+            ovi = 0.0
+        else:
+            ovi = (bid_volume / max(ask_volume, 1.0)) * (1 / max(agg, 0.01))
+            if wmi_ratio < 0:
+                ovi = -ovi
+        
+        if ovi < OVI_VACUUM_THRESHOLD:  # < 0.1
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "priority_level": -14,
+                "ovi_score": round(ovi, 2),
+                "reason": f"OVI_VACUUM: OVI Score {ovi:.2f} < 0.1! "
+                         f"Bid Volume {bid_volume} + Agg {agg:.2f}x + "
+                         f"WMI {wmi_ratio:.1f}x = NO SUPPORT BELOW! FREE FALL!",
+                "override_modules": ["IMC", "LIM", "SAT"]
+            }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V106-LMS: LIQUIDATION MOMENTUM SCORE =================
+class LiquidationMomentumScoreV106:
+    """
+    🔥 V106-LMS: LIQUIDATION MOMENTUM SCORE
+    Formula: LMS = (OI_delta × Price_change × WMI) / (Imbalance × Flow)
+    
+    Jika LMS < -50 = STRONG SHORT MOMENTUM!
+    """
+    
+    @staticmethod
+    def calculate(oi_delta: float, price_change: float,
+                  wmi_ratio: float, imbalance_ratio: float,
+                  flow: float) -> Dict:
+        
+        numerator = oi_delta * price_change * wmi_ratio
+        denominator = max(imbalance_ratio, 1.0) * max(flow, 0.01)
+        lms = numerator / denominator
+        
+        if lms < LMS_SHORT_THRESHOLD:  # < -50
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "priority_level": -13,
+                "lms_score": round(lms, 2),
+                "reason": f"LMS_MOMENTUM: LMS Score {lms:.2f} < -50! "
+                         f"OI {oi_delta:.1f}% × Price {price_change:.1f}% × "
+                         f"WMI {wmi_ratio:.1f}x = STRONG SHORT MOMENTUM! "
+                         f"Jangan trust Imbalance {imbalance_ratio:.1f}x!",
+                "override_modules": ["IMC", "LIM", "EIO"]
+            }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V106-ATD: ADVERSARIAL TRAP DETECTION =================
+class AdversarialTrapDetectionV106:
+    """
+    🔥 V106-ATD: ADVERSARIAL TRAP DETECTION
+    Formula: ATD = (Imbalance × RSI) / (|OI| × |Price| × Agg)
+    
+    Jika ATD > 50 = IMBALANCE ADALAH TRAP! Reverse bias!
+    """
+    
+    @staticmethod
+    def detect(imbalance_ratio: float, rsi: float,
+               oi_delta: float, price_change: float,
+               agg: float) -> Dict:
+        
+        denominator = abs(oi_delta) * abs(price_change) * max(agg, 0.01)
+        atd_score = (imbalance_ratio * rsi) / denominator
+        
+        if atd_score > ATD_TRAP_THRESHOLD:  # > 50
+            # Imbalance is a TRAP - reverse the bias!
+            reverse_bias = "SHORT" if imbalance_ratio > 1 else "LONG"
+            
+            return {
+                "bias": reverse_bias,
+                "confidence": "ABSOLUTE",
+                "priority_level": -12,
+                "atd_score": round(atd_score, 2),
+                "reason": f"ATD_TRAP: ATD Score {atd_score:.2f} > 50! "
+                         f"Imbalance {imbalance_ratio:.1f}x adalah TRAP! "
+                         f"RSI {rsi:.1f} + OI {oi_delta:.1f}% + "
+                         f"Price {price_change:.1f}% + Agg {agg:.2f}x = "
+                         f"REVERSE BIAS ke {reverse_bias}!",
+                "override_modules": ["IMC", "LIM", "SAT", "EIO"]
+            }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V120-MDE: META DECISION ENGINE =================
+class MetaDecisionEngineV120:
+    """
+    🔥 V120-MDE: META DECISION ENGINE - SUPREME COMMANDER
+    Gabungkan semua signal + state → probabilistic decision
+    
+    Komponen:
+    1. Market State Classifier
+    2. Dynamic Signal Weights
+    3. Time Decay
+    4. Probabilistic Scoring
+    """
+    
+    @staticmethod
+    def classify_market_state(data: Dict) -> Dict:
+        """
+        Tentukan STATE market berdasarkan semua data
+        Ini adalah inti dari Meta Decision Engine
+        """
+        
+        # ===== STATE 1: LIQUIDATION_IN_PROGRESS =====
+        if data.get('lip_v106', {}).get('bias') != 'NEUTRAL':
+            return {
+                "state": "LIQUIDATION_IN_PROGRESS",
+                "confidence": 1.0,
+                "bias": "SHORT",
+                "reason": "STATE: Liquidation sedang berlangsung! WAJIB SHORT!"
+            }
+        
+        # ===== STATE 2: VACUUM_FREEFALL =====
+        if data.get('ovi_v106', {}).get('bias') != 'NEUTRAL':
+            ovi_result = data.get('ovi_v106', {})
+            if ovi_result.get('ovi_score', 1.0) < 0.1:
+                return {
+                    "state": "VACUUM_FREEFALL",
+                    "confidence": 0.95,
+                    "bias": "SHORT",
+                    "reason": "STATE: Orderbook vacuum! Free fall imminent!"
+                }
+        
+        # ===== STATE 3: CASCADE_MODE =====
+        lcp_result = data.get('lcp_v106', {})
+        if lcp_result.get('lcp_score', 0) > LCP_CASCADE_THRESHOLD:
+            return {
+                "state": "CASCADE_MODE",
+                "confidence": 0.9,
+                "bias": "SHORT",
+                "reason": f"STATE: Cascade probability {lcp_result.get('lcp_score', 0):.2f} > 5.0!"
+            }
+        
+        # ===== STATE 4: SQUEEZE_PHASE =====
+        if data.get('wmi_ratio', 0) > 90:
+            energy_up = data.get('up_energy', 999)
+            energy_down = data.get('down_energy', 0)
+            if energy_up < energy_down * 1.2:  # Energy up lebih murah
+                return {
+                    "state": "SQUEEZE_PHASE",
+                    "confidence": 0.8,
+                    "bias": "LONG",
+                    "reason": "STATE: Squeeze phase! LONG temporary before distribution!"
+                }
+        
+        # ===== STATE 5: BUILD_PHASE =====
+        oi_delta = data.get('oi_delta_5m', 0)
+        flow = data.get('trade_flow', 1.0)
+        agg = data.get('aggressive_ratio', 1.0)
+        
+        if oi_delta > 2.0 and flow > 2.0 and agg < 2.0:
+            return {
+                "state": "BUILD_PHASE",
+                "confidence": 0.7,
+                "bias": "NEUTRAL",
+                "reason": "STATE: Build phase! Wait for next move."
+            }
+        
+        # ===== STATE 6: DISTRIBUTION_PHASE =====
+        rsi = data.get('rsi6', 50)
+        if rsi > 80 and oi_delta > 2.0:
+            if flow > 2.0:
+                return {
+                    "state": "DISTRIBUTION_PHASE",
+                    "confidence": 0.75,
+                    "bias": "SHORT",
+                    "reason": "STATE: Distribution phase! SHORT after squeeze!"
+                }
+        
+        # ===== DEFAULT =====
+        return {
+            "state": "RANDOM_NOISE",
+            "confidence": 0.3,
+            "bias": "NEUTRAL",
+            "reason": "STATE: Random noise. No clear signal."
+        }
+    
+    @staticmethod
+    def calculate_probabilistic_score(data: Dict, state_info: Dict) -> Dict:
+        """
+        Hitung probabilitas LONG vs SHORT berdasarkan semua signal + state
+        """
+        prob_long = 0.0
+        prob_short = 0.0
+        reasons = []
+        
+        # ===== SIGNAL WEIGHTS BERDASARKAN STATE =====
+        state = state_info.get('state', 'RANDOM_NOISE')
+        
+        # State-based weighting
+        if state == "LIQUIDATION_IN_PROGRESS":
+            # Hanya signal liquidation yang penting
+            if data.get('lip_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.5
+                reasons.append("LIP +0.5")
+            if data.get('ovi_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.3
+                reasons.append("OVI +0.3")
+            if data.get('lcp_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.2
+                reasons.append("LCP +0.2")
+            
+            # Imbalance diabaikan di state ini
+            # prob_long += 0  # IMBALANCE IGNORED!
+        
+        elif state == "VACUUM_FREEFALL":
+            # Priority: OVI, LIP, LCP
+            if data.get('ovi_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.4
+                reasons.append("OVI +0.4")
+            if data.get('lip_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.3
+                reasons.append("LIP +0.3")
+            if data.get('lcp_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.2
+                reasons.append("LCP +0.2")
+        
+        elif state == "SQUEEZE_PHASE":
+            # Priority: WMI, ENERGY, FRD
+            if data.get('wmi_ratio', 0) > 90:
+                prob_long += 0.3
+                reasons.append("WMI +0.3")
+            if data.get('frd_v104', {}).get('bias') == 'LONG':
+                prob_long += 0.3
+                reasons.append("FRD +0.3")
+            if data.get('energy_bias', '') == 'LONG':
+                prob_long += 0.2
+                reasons.append("ENERGY +0.2")
+        
+        elif state == "BUILD_PHASE":
+            # WAIT - no trade
+            return {
+                "bias": "NEUTRAL",
+                "confidence": "MEDIUM",
+                "prob_long": 0.0,
+                "prob_short": 0.0,
+                "reason": "BUILD PHASE - WAIT for next move"
+            }
+        
+        else:  # RANDOM_NOISE or others
+            # Gunakan semua signal dengan bobot normal
+            if data.get('lip_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.2
+            if data.get('lcp_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.15
+            if data.get('ovi_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.15
+            if data.get('lms_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.1
+            if data.get('atd_v106', {}).get('bias') == 'SHORT':
+                prob_short += 0.1
+            
+            if data.get('wmi_ratio', 0) > 80:
+                prob_long += 0.15
+            if data.get('energy_bias', '') == 'LONG':
+                prob_long += 0.1
+            if data.get('frd_v104', {}).get('bias') == 'LONG':
+                prob_long += 0.1
+        
+        # ===== TIME DECAY =====
+        # Signal lebih baru = bobot lebih besar
+        # Implementasi sederhana: asumsi signal age = 0 (fresh)
+        # Di production, perlu track timestamp setiap signal
+        
+        # ===== NORMALIZE =====
+        total = prob_long + prob_short
+        if total > 0:
+            prob_long_pct = (prob_long / total) * 100
+            prob_short_pct = (prob_short / total) * 100
+        else:
+            prob_long_pct = 50
+            prob_short_pct = 50
+        
+        # ===== FINAL DECISION =====
+        if prob_short_pct > 70:
+            return {
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "prob_long": round(prob_long_pct, 1),
+                "prob_short": round(prob_short_pct, 1),
+                "reason": f"MDE_PROB: SHORT {prob_short_pct:.1f}% vs LONG {prob_long_pct:.1f}% | {', '.join(reasons)}",
+                "state": state
+            }
+        elif prob_long_pct > 70:
+            return {
+                "bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "prob_long": round(prob_long_pct, 1),
+                "prob_short": round(prob_short_pct, 1),
+                "reason": f"MDE_PROB: LONG {prob_long_pct:.1f}% vs SHORT {prob_short_pct:.1f}% | {', '.join(reasons)}",
+                "state": state
+            }
+        elif prob_short_pct > 60:
+            return {
+                "bias": "SHORT",
+                "confidence": "HIGH",
+                "prob_long": round(prob_long_pct, 1),
+                "prob_short": round(prob_short_pct, 1),
+                "reason": f"MDE_PROB: SHORT {prob_short_pct:.1f}% vs LONG {prob_long_pct:.1f}%",
+                "state": state
+            }
+        elif prob_long_pct > 60:
+            return {
+                "bias": "LONG",
+                "confidence": "HIGH",
+                "prob_long": round(prob_long_pct, 1),
+                "prob_short": round(prob_short_pct, 1),
+                "reason": f"MDE_PROB: LONG {prob_long_pct:.1f}% vs SHORT {prob_short_pct:.1f}%",
+                "state": state
+            }
+        else:
+            return {
+                "bias": "NEUTRAL",
+                "confidence": "LOW",
+                "prob_long": round(prob_long_pct, 1),
+                "prob_short": round(prob_short_pct, 1),
+                "reason": f"MDE_PROB: No clear edge | L {prob_long_pct:.1f}% vs S {prob_short_pct:.1f}%",
+                "state": state
+            }
 
 
 # ================= V104-MIE UPDATED: MACRO INTENTION DETECTOR DENGAN PRICE CONTEXT =================
@@ -2665,6 +3123,144 @@ class ConflictResolverV115_FINAL:
             "final_bias": "NEUTRAL",
             "confidence": "LOW",
             "reason": "No strong signal",
+            "phase": "NEUTRAL",
+            "priority_level": 99
+        }
+
+
+# ================= V120-FINAL: CONFLICT RESOLVER DENGAN META DECISION ENGINE =================
+class ConflictResolverV120_FINAL:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN META DECISION ENGINE
+    
+    PRIORITY -20 (MUTLAK TERTINGGI - LYNUSDT PATCH):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -20. V106-LIP: Liquidation In Progress Lock             │ ← TERTINGGI!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -15 (ABSOLUTE VETO):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -15. V106-LCP: Liquidation Cascade Probability          │
+    │ -14. V106-OVI: Orderbook Vacuum Index                   │
+    │ -13. V106-LMS: Liquidation Momentum Score               │
+    │ -12. V106-ATD: Adversarial Trap Detection               │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -10 (META DECISION ENGINE):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -10. V120-MDE: Meta Decision Engine                     │ ← SUPREME COMMANDER!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -8 (EXISTING HIGH PRIORITY):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -8.  V104-SE: Sequence Engine                           │
+    │ -7.  V104-FRD: Front-Run Detector                       │
+    │ -6.  V104-PMD: Pre-Move Detector                        │
+    │ -5.  V104-ADF: Active Distribution Filter               │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -3 (V102 MODULES - TURUNKAN PRIORITAS):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -3.  V102-EIO: Extreme Imbalance Override               │ ← TURUN!
+    │ -2.  V102-MOD: Massive OI Drop Validator                │
+    │ -1.  V104-WSP: WMI Squeeze Priority                     │
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY 0 (V101 MODULES):
+    ┌─────────────────────────────────────────────────────────┐
+    │ 0.   V101-OI_FUEL_VS_LIQ_GRAVITY                        │
+    │ 1.   V101-FLUSH_SEQUENCE_VETO                           │
+    │ 2.   V101-DEAD_AGG_MAGNET                               │
+    └─────────────────────────────────────────────────────────┘
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== PRIORITY -20: LIQUIDATION IN PROGRESS LOCK =====
+        lip_res = results.get('lip_v106', {})
+        if lip_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": lip_res['bias'],
+                "confidence": lip_res.get('confidence', 'ABSOLUTE'),
+                "reason": lip_res.get('reason', ''),
+                "phase": "LIQUIDATION_IN_PROGRESS",
+                "priority_level": -20
+            }
+        
+        # ===== PRIORITY -15: LIQUIDATION CASCADE PROBABILITY =====
+        lcp_res = results.get('lcp_v106', {})
+        if lcp_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": lcp_res['bias'],
+                "confidence": lcp_res.get('confidence', 'ABSOLUTE'),
+                "reason": lcp_res.get('reason', ''),
+                "phase": "CASCADE_MODE",
+                "priority_level": -15
+            }
+        
+        # ===== PRIORITY -14: ORDERBOOK VACUUM INDEX =====
+        ovi_res = results.get('ovi_v106', {})
+        if ovi_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": ovi_res['bias'],
+                "confidence": ovi_res.get('confidence', 'ABSOLUTE'),
+                "reason": ovi_res.get('reason', ''),
+                "phase": "VACUUM_FREEFALL",
+                "priority_level": -14
+            }
+        
+        # ===== PRIORITY -13: LIQUIDATION MOMENTUM SCORE =====
+        lms_res = results.get('lms_v106', {})
+        if lms_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": lms_res['bias'],
+                "confidence": lms_res.get('confidence', 'ABSOLUTE'),
+                "reason": lms_res.get('reason', ''),
+                "phase": "STRONG_MOMENTUM",
+                "priority_level": -13
+            }
+        
+        # ===== PRIORITY -12: ADVERSARIAL TRAP DETECTION =====
+        atd_res = results.get('atd_v106', {})
+        if atd_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": atd_res['bias'],
+                "confidence": atd_res.get('confidence', 'ABSOLUTE'),
+                "reason": atd_res.get('reason', ''),
+                "phase": "TRAP_DETECTED",
+                "priority_level": -12
+            }
+        
+        # ===== PRIORITY -10: META DECISION ENGINE =====
+        mde_res = results.get('mde_v120', {})
+        if mde_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": mde_res['bias'],
+                "confidence": mde_res.get('confidence', 'HIGH'),
+                "reason": mde_res.get('reason', ''),
+                "phase": mde_res.get('state', 'MDE_DECISION'),
+                "priority_level": -10,
+                "prob_long": mde_res.get('prob_long', 50),
+                "prob_short": mde_res.get('prob_short', 50)
+            }
+        
+        # ===== PRIORITY -8: V104 SEQUENCE ENGINE =====
+        se_res = results.get('se_v104', {})
+        if se_res.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": se_res['bias'],
+                "confidence": se_res.get('confidence', 'SUPREME'),
+                "reason": se_res.get('reason', ''),
+                "phase": se_res.get('stage', 'SEQUENCE_PHASE'),
+                "priority_level": -8
+            }
+        
+        # Default
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected",
             "phase": "NEUTRAL",
             "priority_level": 99
         }
@@ -25357,6 +25953,19 @@ class BinanceAnalyzerV87:
         
         self.final_resolver_v105 = ConflictResolverV105_FINAL()   # V105-FINAL
         
+        # ===== V106 ANTI-LYNUSDT MODULES =====
+        self.lip_v106 = LiquidationInProgressLockV106()        # V106-LIP
+        self.lcp_v106 = LiquidationCascadeProbabilityV106()    # V106-LCP
+        self.ovi_v106 = OrderbookVacuumIndexV106()             # V106-OVI
+        self.lms_v106 = LiquidationMomentumScoreV106()         # V106-LMS
+        self.atd_v106 = AdversarialTrapDetectionV106()         # V106-ATD
+        
+        # ===== V120 META DECISION ENGINE =====
+        self.mde_v120 = MetaDecisionEngineV120()               # V120-MDE
+        
+        # Gunakan resolver V120 yang baru
+        self.final_resolver_v120 = ConflictResolverV120_FINAL()
+        
         # ===== V106 SEQUENCE ENGINE =====
         self.seq_v106 = SequenceEngineV106()                 # V106-SEQ
         self.cpd_v106 = CrowdParadoxDetectorV106()           # V106-CPD
@@ -27680,6 +28289,71 @@ class BinanceAnalyzerV87:
                 expected_move=expected_move
             )
             
+            # ===== V106 ANTI-LYNUSDT MODULES =====
+            lip_result = self.lip_v106.detect(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                wmi_ratio=wmi_ratio,
+                agg=trades.get('aggressive_ratio', 1.0)
+            )
+            
+            lcp_result = self.lcp_v106.calculate(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                bid_volume=odd_result.get('bid_volume_near', 0) if 'odd_result' in locals() else 0,
+                ask_volume=odd_result.get('ask_volume_near', 1.0) if 'odd_result' in locals() else 1.0,
+                agg=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                long_dist=liq.get('long_dist', 999)
+            )
+            
+            ovi_result = self.ovi_v106.detect(
+                bid_volume=odd_result.get('bid_volume_near', 0) if 'odd_result' in locals() else 0,
+                ask_volume=odd_result.get('ask_volume_near', 1.0) if 'odd_result' in locals() else 1.0,
+                agg=trades.get('aggressive_ratio', 1.0),
+                wmi_ratio=wmi_ratio
+            )
+            
+            lms_result = self.lms_v106.calculate(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                wmi_ratio=wmi_ratio,
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                flow=trades.get('ratio', 1.0)
+            )
+            
+            atd_result = self.atd_v106.detect(
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                agg=trades.get('aggressive_ratio', 1.0)
+            )
+            
+            # ===== V120 META DECISION ENGINE =====
+            mde_data = {
+                'lip_v106': lip_result,
+                'lcp_v106': lcp_result,
+                'ovi_v106': ovi_result,
+                'lms_v106': lms_result,
+                'atd_v106': atd_result,
+                'se_v104': se_result if 'se_result' in locals() else {},
+                'frd_v104': frd_result if 'frd_result' in locals() else {},
+                'pmd_v104': pmd_result if 'pmd_result' in locals() else {},
+                'adf_v104': adf_result if 'adf_result' in locals() else {},
+                'wmi_ratio': wmi_ratio,
+                'oi_delta_5m': oi_delta_5m,
+                'trade_flow': trades.get('ratio', 1.0),
+                'aggressive_ratio': trades.get('aggressive_ratio', 1.0),
+                'rsi6': rsi6,
+                'up_energy': up_energy if 'up_energy' in locals() else 0,
+                'down_energy': down_energy if 'down_energy' in locals() else 0,
+                'energy_bias': energy_bias if 'energy_bias' in locals() else 'NEUTRAL',
+            }
+            
+            state_info = self.mde_v120.classify_market_state(mde_data)
+            mde_result = self.mde_v120.calculate_probabilistic_score(mde_data, state_info)
+            
             # Update results dictionary dengan module V105
             scoring_data['dsd_v105'] = dsd_result
             scoring_data['ssd_v105'] = ssd_result
@@ -27694,6 +28368,14 @@ class BinanceAnalyzerV87:
             scoring_data['rme_v105'] = rme_result
             scoring_data['void_v105'] = void_result
             scoring_data['erf_v105'] = erf_result
+            
+            # Update dengan V106 LYNUSDT PATCH & V120 MDE
+            scoring_data['lip_v106'] = lip_result
+            scoring_data['lcp_v106'] = lcp_result
+            scoring_data['ovi_v106'] = ovi_result
+            scoring_data['lms_v106'] = lms_result
+            scoring_data['atd_v106'] = atd_result
+            scoring_data['mde_v120'] = mde_result
             
             # ===== V107 EXIT ENGINE =====
             
@@ -27788,14 +28470,32 @@ class BinanceAnalyzerV87:
             # ===== V115: FINAL RESOLVER (EXECUTION FEASIBILITY ENGINE - PALING TERTINGGI!) =====
             v115_final = self.final_resolver_v115.resolve_all_signals(scoring_data)
             
+            # ===== V120: FINAL RESOLVER (META DECISION ENGINE - SUPREME COMMANDER!) =====
+            v120_final = self.final_resolver_v120.resolve_all_signals(scoring_data)
+            
             # ===== V106: FINAL RESOLVER (SEQUENCE ENGINE - TERTINGGI!) =====
             v106_final = self.final_resolver_v106.resolve_all_signals(scoring_data)
             
             # ===== V107: FINAL RESOLVER (EXIT ENGINE - PALING TERTINGGI!) =====
             v107_final = self.final_resolver_v107.resolve_all_signals(scoring_data)
             
-            # Gunakan V107 resolver jika ada signal sweep/dirty covering (priority <= -225)
-            if v107_final.get('priority_level', 99) <= -225:
+            # Gunakan V120 resolver jika ada signal LYNUSDT (priority <= -20)
+            if v120_final.get('priority_level', 99) <= -10:
+                # V120 override (META DECISION ENGINE / LYNUSDT PATCH - MUTLAK!)
+                final_decision = {
+                    'bias': v120_final['final_bias'],
+                    'final_bias': v120_final['final_bias'],
+                    'confidence': v120_final['confidence'],
+                    'reason': v120_final['reason'],
+                    'phase': v120_final['phase'],
+                    'priority_level': v120_final['priority_level'],
+                    'market_state': v120_final.get('state', 'UNKNOWN'),
+                    'prob_long': v120_final.get('prob_long', 50),
+                    'prob_short': v120_final.get('prob_short', 50),
+                    'intention': mie_result.get('intention', 'NEUTRAL'),
+                    'override_modules': ['V120_MDE', 'V106_LYN_PATCH']
+                }
+            elif v107_final.get('priority_level', 99) <= -225:
                 # V107 override (EXIT ENGINE - SLEEP/DIRTY COVERING - PALING TERTINGGI!)
                 final_decision = {
                     'bias': v107_final['final_bias'],
@@ -29066,6 +29766,17 @@ class BinanceAnalyzerV87:
             result["tde_v106"] = time_result
             result["next_phase"] = v106_final.get('next_phase', 'NONE')
             result["v106_phase"] = v106_final.get('phase', 'NORMAL')
+            
+            # ===== V106 LYNUSDT PATCH & V120 META DECISION ENGINE =====
+            result["lip_v106"] = lip_result
+            result["lcp_v106"] = lcp_result
+            result["ovi_v106"] = ovi_result
+            result["lms_v106"] = lms_result
+            result["atd_v106"] = atd_result
+            result["mde_v120"] = mde_result
+            result["market_state"] = v120_final.get('market_state', 'UNKNOWN')
+            result["prob_long"] = v120_final.get('prob_long', 50)
+            result["prob_short"] = v120_final.get('prob_short', 50)
             
             result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
             result["v102_enhanced_priority_level"] = v102_enhanced_final.get('priority_level', 99)
