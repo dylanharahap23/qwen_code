@@ -615,6 +615,37 @@ EFE_DEAD_MARKET_PRIORITY = -225
 EFE_WMI_INVALID_PRIORITY = -220
 EFE_TRAP_PRIORITY = -215
 
+# ================= V104-SE: SEQUENCE ENGINE CONFIG =================
+SE_BUILD_OI_MIN = 2.0                     # OI > 2% = BUILD phase
+SE_BUILD_FLOW_MIN = 1.5                    # Flow > 1.5 = BUILD phase
+SE_BUILD_AGG_MAX = 2.0                     # Agg < 2 = BUILD phase (belum agresif)
+
+SE_SQUEEZE_WMI_MIN = 90.0                   # WMI > 90 = squeeze possible
+SE_SQUEEZE_ENERGY_RATIO = 1.2               # Energy up < down * ratio
+
+SE_DISTRIBUTION_RSI_MIN = 80.0              # RSI > 80
+SE_DISTRIBUTION_OI_MIN = 2.0                # OI > 2%
+SE_DISTRIBUTION_FLOW_MIN = 2.0              # Flow > 2x untuk distribution
+
+# ================= V104-FRD: FRONT-RUN DETECTOR CONFIG =================
+FRD_WMI_THRESHOLD = 90.0                    # WMI > 90
+FRD_FLOW_MIN = 1.5                          # Flow > 1.5
+FRD_ENERGY_RATIO = 1.2                      # Energy up < down * ratio
+
+# ================= V104-CRE: CONFLICT RESOLUTION ENGINE CONFIG =================
+CRE_EXECUTION_FEASIBILITY_CHECK = True      # Cek eksekusi feasible
+CRE_CASCADE_EXTREME_RATIO = 5.0             # Cascade > 5x = extreme
+
+# ================= V104-PMD: PRE-MOVE DETECTOR CONFIG =================
+PMD_OI_BUILD_MIN = 2.0                       # OI > 2% = build
+PMD_FLOW_ACTIVE_MIN = 2.0                    # Flow > 2x = active
+PMD_AGG_MAX = 2.0                            # Agg < 2 = belum agresif
+
+# ================= V104-ADF: ACTIVE DISTRIBUTION FILTER CONFIG =================
+ADF_RSI_HIGH_MIN = 80.0                      # RSI > 80
+ADF_OI_BUILD_MIN = 2.0                       # OI > 2%
+ADF_FLOW_HIGH_MIN = 2.0                      # Flow > 2x
+
 # ================= V100-LGT: LIQUIDATION GRAVITY TRAP DETECTOR =================
 class LiquidationGravityTrapDetectorV100:
     """🔥 V100-LGT: LIQUIDATION GRAVITY TRAP - ANTI-COSUSDT TRAP
@@ -939,6 +970,303 @@ class EntryTimingValidatorV105:
             "bias": "NEUTRAL",
             "priority_level": 99
         }
+
+
+# ================= V104-SE: SEQUENCE ENGINE =================
+class SequenceEngineV104:
+    """
+    🔥 V104-SE: SEQUENCE ENGINE - MULTI-STAGE LIQUIDITY GAME
+    
+    Stage 1: BUILD - OI naik, flow aktif, agg belum agresif
+    Stage 2: SQUEEZE - WMI tinggi, energy up murah, trap side crowded
+    Stage 3: DISTRIBUTION - RSI tinggi, flow tinggi, OI masih naik
+    Stage 4: LIQUIDATION - Target likuidasi dihajar
+    
+    Kasus XANUSDT:
+    - OI: +2.84% (BUILD)
+    - Flow: 2.23x (AKTIF)
+    - Agg: 1.22x (BELUM AGRESIF)
+    - WMI: 98.4x (SQUEEZE POSSIBLE)
+    - Energy up murah (PATH KOSONG)
+    - Bot baca: DISTRIBUTION ❌
+    - Realita: SQUEEZE DULU, baru distribution!
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, flow: float, agg_ratio: float, 
+               wmi_ratio: float, rsi: float,
+               energy_up: float, energy_down: float) -> Dict:
+        """
+        Deteksi stage market berdasarkan data
+        """
+        stage = "UNKNOWN"
+        bias = "NEUTRAL"
+        reason = ""
+        confidence = "LOW"
+        
+        # ===== STAGE 1: BUILD =====
+        if oi_delta > SE_BUILD_OI_MIN:                          # OI > 2%
+            if flow > SE_BUILD_FLOW_MIN:                        # Flow > 1.5
+                if agg_ratio < SE_BUILD_AGG_MAX:                # Agg < 2 (belum agresif)
+                    stage = "BUILD_PHASE"
+                    bias = "NEUTRAL"  # Wait for next phase
+                    confidence = "HIGH"
+                    reason = f"SE_BUILD: OI {oi_delta:+.2f}% (BUILD!) + Flow {flow:.2f}x + Agg {agg_ratio:.2f}x (BELUM AGRESIF). Whale sedang build posisi!"
+        
+        # ===== STAGE 2: SQUEEZE =====
+        if wmi_ratio > SE_SQUEEZE_WMI_MIN:                      # WMI > 90
+            if energy_up < energy_down * SE_SQUEEZE_ENERGY_RATIO:  # Energy up murah
+                stage = "SQUEEZE_PHASE"
+                bias = "LONG"
+                confidence = "SUPREME"
+                reason = f"SE_SQUEEZE: WMI {wmi_ratio:.1f}x + Energy Up {energy_up:.2f} < Down {energy_down:.2f}. MM akan SQUEEZE DULU sebelum distribution!"
+        
+        # ===== STAGE 3: DISTRIBUTION =====
+        elif rsi > SE_DISTRIBUTION_RSI_MIN:                     # RSI > 80
+            if oi_delta > SE_DISTRIBUTION_OI_MIN:               # OI > 2%
+                if flow > SE_DISTRIBUTION_FLOW_MIN:             # Flow > 2x
+                    stage = "DISTRIBUTION_PHASE"
+                    bias = "SHORT"
+                    confidence = "SUPREME"
+                    reason = f"SE_DISTRIBUTION: RSI {rsi:.1f} + OI {oi_delta:+.2f}% + Flow {flow:.2f}x. Whale DISTRIBUSI ke retail FOMO!"
+        
+        # ===== STAGE 4: LIQUIDATION =====
+        # (akan ditangani oleh modul lain)
+        
+        return {
+            "stage": stage,
+            "bias": bias,
+            "confidence": confidence,
+            "reason": reason,
+            "priority_level": -60  # Lebih tinggi dari market mode
+        }
+
+
+# ================= V104-FRD: FRONT-RUN DETECTOR =================
+class FrontRunDetectorV104:
+    """
+    🔥 V104-FRD: FRONT-RUN DETECTOR - HFT FRONT-RUN LIQUIDATION PATH
+    
+    HFT selalu front-run liquidation path:
+    - Jika WMI tinggi (>90)
+    - Flow aktif (>1.5)
+    - Energy up lebih murah dari down
+    - Maka mereka akan SQUEEZE DULU sebelum dump
+    
+    Kasus XANUSDT:
+    - WMI: 98.4x (>90)
+    - Flow: 2.23x (>1.5)
+    - Energy up lebih murah
+    - Bot: SHORT ❌
+    - Harusnya: FRONT-RUN UP → LONG dulu!
+    """
+    
+    @staticmethod
+    def detect(wmi_ratio: float, flow: float, 
+               energy_up: float, energy_down: float,
+               oi_delta: float) -> Dict:
+        """
+        Deteksi front-run opportunity
+        """
+        # FRONT-RUN UP (squeeze dulu)
+        if wmi_ratio > FRD_WMI_THRESHOLD:                      # WMI > 90
+            if flow > FRD_FLOW_MIN:                            # Flow > 1.5
+                if energy_up < energy_down * FRD_ENERGY_RATIO: # Energy up murah
+                    return {
+                        "front_run": "FRONT_RUN_UP",
+                        "bias": "LONG",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -65,  # Sangat tinggi
+                        "reason": f"FRD_FRONT_RUN_UP: WMI {wmi_ratio:.1f}x + Flow {flow:.2f}x + "
+                                 f"Energy Up {energy_up:.2f} < Down {energy_down:.2f}. "
+                                 f"HFT akan SQUEEZE DULU sebelum distribution!",
+                        "phase": "FRONT_RUN_SQUEEZE"
+                    }
+        
+        # FRONT-RUN DOWN (dump dulu)
+        elif wmi_ratio < -FRD_WMI_THRESHOLD:                   # WMI < -90
+            if flow < 1/FRD_FLOW_MIN:                          # Flow selling > 1.5x
+                if energy_down < energy_up * FRD_ENERGY_RATIO: # Energy down murah
+                    return {
+                        "front_run": "FRONT_RUN_DOWN",
+                        "bias": "SHORT",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -65,
+                        "reason": f"FRD_FRONT_RUN_DOWN: WMI {wmi_ratio:.1f}x + Sell Flow + "
+                                 f"Energy Down {energy_down:.2f} < Up {energy_up:.2f}. "
+                                 f"HFT akan DUMP DULU sebelum accumulation!",
+                        "phase": "FRONT_RUN_DUMP"
+                    }
+        
+        return {"front_run": "NORMAL", "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V104-CRE: CONFLICT RESOLUTION ENGINE =================
+class ConflictResolutionEngineV104:
+    """
+    🔥 V104-CRE: CONFLICT RESOLUTION ENGINE - HAKIM UNTUK SEMUA MODUL
+    
+    Priority:
+    1. Execution feasibility
+    2. Energy path
+    3. Cascade speed
+    4. Liquidity
+    
+    Kalau ada conflict, CRE yang mutusin.
+    """
+    
+    @staticmethod
+    def resolve(results: Dict) -> Dict:
+        """
+        Resolve conflict antara berbagai modul
+        """
+        # ===== 1. CEK EXECUTION FEASIBILITY =====
+        # Cek apakah eksekusi feasible (ada volume, orderbook, dll)
+        pfe_result = results.get('pfe_v100', {})
+        if pfe_result.get('is_infeasible'):
+            return {
+                "bias": "NO_TRADE",
+                "confidence": "ABSOLUTE",
+                "reason": f"CRE_NO_TRADE: {pfe_result.get('reason', 'Execution not feasible')}",
+                "priority_level": -70
+            }
+        
+        # ===== 2. ENERGY PATH (jika ada conflict dengan cascade) =====
+        energy_bias = results.get('energy_bias', 'NEUTRAL')
+        cascade_bias = results.get('cascade', {}).get('bias', 'NEUTRAL')
+        
+        if energy_bias != 'NEUTRAL' and cascade_bias != 'NEUTRAL' and energy_bias != cascade_bias:
+            # Ada conflict! Pilih berdasarkan mana yang lebih ekstrim
+            cascade_ratio = results.get('cascade', {}).get('ratio', 1.0)
+            if cascade_ratio > CRE_CASCADE_EXTREME_RATIO:  # Cascade > 5x
+                return {
+                    "bias": cascade_bias,
+                    "confidence": "SUPREME",
+                    "reason": f"CRE_CASCADE_PRIORITY: Cascade {cascade_ratio:.1f}x lebih ekstrim. Ikuti CASCADE.",
+                    "priority_level": -68
+                }
+            else:
+                return {
+                    "bias": energy_bias,
+                    "confidence": "HIGH",
+                    "reason": f"CRE_ENERGY_PRIORITY: Energy path lebih ekonomis. Ikuti ENERGY.",
+                    "priority_level": -67
+                }
+        
+        # ===== 3. CASCADE SPEED (jika ekstrim) =====
+        cascade_ratio = results.get('cascade', {}).get('ratio', 1.0)
+        if cascade_ratio > CRE_CASCADE_EXTREME_RATIO:
+            return {
+                "bias": results.get('cascade', {}).get('bias', 'NEUTRAL'),
+                "confidence": "HIGH",
+                "reason": f"CRE_CASCADE_EXTREME: Cascade {cascade_ratio:.1f}x > 5x. Ikuti CASCADE.",
+                "priority_level": -66
+            }
+        
+        # ===== 4. LIQUIDITY (fallback) =====
+        liquidity_bias = results.get('liquidity_gravity', {}).get('bias', 'NEUTRAL')
+        if liquidity_bias != 'NEUTRAL':
+            return {
+                "bias": liquidity_bias,
+                "confidence": "MEDIUM",
+                "reason": "CRE_LIQUIDITY: Fallback ke liquidity bias.",
+                "priority_level": -65
+            }
+        
+        return {"bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V104-PMD: PRE-MOVE DETECTOR =================
+class PreMoveDetectorV104:
+    """
+    🔥 V104-PMD: PRE-MOVE DETECTOR - DETEKSI BUILD SEBELUM MOVE BESAR
+    
+    XANUSDT Pattern:
+    - OI: +2.84% (BUILD!)
+    - Flow: 2.23x (AKTIF!)
+    - Agg: 1.22x (BELUM AGRESIF!)
+    - Energy up murah (PATH KOSONG!)
+    
+    Ini BUKAN distribution!
+    Ini PRE-MOVE BUILD sebelum squeeze!
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, flow: float, agg_ratio: float,
+               energy_up: float, energy_down: float,
+               wmi_ratio: float) -> Dict:
+        """
+        Deteksi pre-move build
+        """
+        if oi_delta > PMD_OI_BUILD_MIN:                        # OI > 2% (build)
+            if flow > PMD_FLOW_ACTIVE_MIN:                     # Flow > 2x (aktif)
+                if agg_ratio < PMD_AGG_MAX:                    # Agg < 2 (belum agresif)
+                    if energy_up < energy_down:                # Energy up lebih murah
+                        return {
+                            "is_pre_move": True,
+                            "pre_move_type": "SQUEEZE_BUILD",
+                            "bias": "LONG",
+                            "confidence": "SUPREME",
+                            "priority_level": -64,
+                            "reason": f"PMD_SQUEEZE_BUILD: OI {oi_delta:+.2f}% (BUILD!) + "
+                                     f"Flow {flow:.2f}x (AKTIF!) + Agg {agg_ratio:.2f}x (BELUM AGRESIF!) + "
+                                     f"Energy Up murah. Ini PRE-MOVE BUILD sebelum SQUEEZE!",
+                            "phase": "PRE_MOVE_BUILD"
+                        }
+        
+        return {"is_pre_move": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V104-ADF: ACTIVE DISTRIBUTION FILTER =================
+class ActiveDistributionFilterV104:
+    """
+    🔥 V104-ADF: ACTIVE DISTRIBUTION FILTER - BEDAKAN BUILD vs DISTRIBUTION
+    
+    Selama ini lo kira:
+    RSI tinggi + OI naik = distribution ❌
+    
+    Padahal di HFT context:
+    RSI tinggi + OI naik + FLOW TINGGI = ACTIVE BUILD (bukan distribution!)
+    
+    Distribution asli: RSI tinggi + OI TURUN + flow tinggi
+    """
+    
+    @staticmethod
+    def detect(rsi: float, oi_delta: float, flow: float, agg_ratio: float) -> Dict:
+        """
+        Deteksi apakah ini ACTIVE BUILD atau DISTRIBUTION
+        """
+        # ===== ACTIVE BUILD (XAN Pattern) =====
+        if rsi > ADF_RSI_HIGH_MIN:                             # RSI > 80
+            if oi_delta > ADF_OI_BUILD_MIN:                    # OI > 2% (BUILD!)
+                if flow > ADF_FLOW_HIGH_MIN:                   # Flow > 2x
+                    if agg_ratio < 2.0:                        # Agg belum agresif
+                        return {
+                            "phase": "ACTIVE_BUILD",
+                            "bias": "LONG",  # Akan squeeze dulu
+                            "confidence": "SUPREME",
+                            "priority_level": -63,
+                            "reason": f"ADF_ACTIVE_BUILD: RSI {rsi:.1f} + OI {oi_delta:+.2f}% (BUILD!) + "
+                                     f"Flow {flow:.2f}x (AKTIF!) + Agg {agg_ratio:.2f}x. "
+                                     f"Ini ACTIVE BUILD, BUKAN distribution! Akan SQUEEZE dulu!",
+                            "phase_detail": "ACTIVE_BUILD_BEFORE_SQUEEZE"
+                        }
+        
+        # ===== REAL DISTRIBUTION =====
+        if rsi > ADF_RSI_HIGH_MIN:                             # RSI > 80
+            if oi_delta < -1.0:                                # OI TURUN!
+                if flow > ADF_FLOW_HIGH_MIN:                   # Flow > 2x
+                    return {
+                        "phase": "REAL_DISTRIBUTION",
+                        "bias": "SHORT",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -62,
+                        "reason": f"ADF_REAL_DISTRIBUTION: RSI {rsi:.1f} + OI {oi_delta:.2f}% (DROP!) + "
+                                 f"Flow {flow:.2f}x. Ini DISTRIBUTION ASLI! SHORT!",
+                        "phase_detail": "REAL_DISTRIBUTION"
+                    }
+        
+        return {"phase": "NORMAL", "bias": "NEUTRAL", "priority_level": 99}
 
 
 # ================= V111-EFE: EXECUTION FEASIBILITY ENGINE =================
@@ -2047,6 +2375,113 @@ class StrictPriorityLockV105:
             "reason": "No strong signal",
             "phase": "NEUTRAL",
             "priority": 99
+        }
+
+
+# ================= V104-FINAL: CONFLICT RESOLVER DENGAN MULTI-STAGE ENGINE =================
+class ConflictResolverV104_FINAL:
+    """
+    🔥 URUTAN PRIORITAS MUTLAK V104 - DENGAN MULTI-STAGE ENGINE
+    
+    PRIORITY -70 (EXECUTION FEASIBILITY):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -70. V104-CRE: Conflict Resolution Engine               │ ← HAKIM!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -69 (SEQUENCE ENGINE):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -69. V104-SE: Sequence Engine                           │ ← STAGE DETECTOR!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -68 (FRONT-RUN):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -68. V104-FRD: Front-Run Detector                       │ ← FRONT-RUN!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -67 (PRE-MOVE):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -67. V104-PMD: Pre-Move Detector                        │ ← PRE-MOVE!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -66 (ACTIVE DISTRIBUTION FILTER):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -66. V104-ADF: Active Distribution Filter               │ ← BUILD vs DIST!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -65 (EXISTING HIGH PRIORITY):
+    ┌─────────────────────────────────────────────────────────┐
+    │ -65. V104-FRD: Front-Run (lanjutan)                     │
+    │ -64. V104-PMD: Pre-Move (lanjutan)                      │
+    └─────────────────────────────────────────────────────────┘
+    
+    ... (priority -60, -50, -40, dst dari sebelumnya) ...
+    """
+    
+    @staticmethod
+    def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== PRIORITY -70: CONFLICT RESOLUTION ENGINE =====
+        cre_result = results.get('cre_v104', {})
+        if cre_result.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": cre_result['bias'],
+                "confidence": cre_result.get('confidence', 'ABSOLUTE'),
+                "reason": cre_result.get('reason', ''),
+                "phase": cre_result.get('phase', 'CRE_DECISION'),
+                "priority_level": -70
+            }
+        
+        # ===== PRIORITY -69: SEQUENCE ENGINE =====
+        se_result = results.get('se_v104', {})
+        if se_result.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": se_result['bias'],
+                "confidence": se_result.get('confidence', 'SUPREME'),
+                "reason": se_result.get('reason', ''),
+                "phase": se_result.get('stage', 'SEQUENCE_PHASE'),
+                "priority_level": -69
+            }
+        
+        # ===== PRIORITY -68: FRONT-RUN DETECTOR =====
+        frd_result = results.get('frd_v104', {})
+        if frd_result.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": frd_result['bias'],
+                "confidence": frd_result.get('confidence', 'ABSOLUTE'),
+                "reason": frd_result.get('reason', ''),
+                "phase": frd_result.get('phase', 'FRONT_RUN'),
+                "priority_level": -68
+            }
+        
+        # ===== PRIORITY -67: PRE-MOVE DETECTOR =====
+        pmd_result = results.get('pmd_v104', {})
+        if pmd_result.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": pmd_result['bias'],
+                "confidence": pmd_result.get('confidence', 'SUPREME'),
+                "reason": pmd_result.get('reason', ''),
+                "phase": pmd_result.get('phase', 'PRE_MOVE_BUILD'),
+                "priority_level": -67
+            }
+        
+        # ===== PRIORITY -66: ACTIVE DISTRIBUTION FILTER =====
+        adf_result = results.get('adf_v104', {})
+        if adf_result.get('bias') != 'NEUTRAL':
+            return {
+                "final_bias": adf_result['bias'],
+                "confidence": adf_result.get('confidence', 'SUPREME'),
+                "reason": adf_result.get('reason', ''),
+                "phase": adf_result.get('phase', 'ACTIVE_BUILD'),
+                "priority_level": -66
+            }
+        
+        # Default
+        return {
+            "final_bias": "NEUTRAL",
+            "confidence": "LOW",
+            "reason": "No strong signal detected",
+            "phase": "NEUTRAL",
+            "priority_level": 99
         }
 
 
@@ -24904,6 +25339,14 @@ class BinanceAnalyzerV87:
         self.rsf_v105 = ReboundSqueezeFuelV105()            # V105-RSF
         self.ent_v105 = EntryTimingValidatorV105()          # V105-ENT
         
+        # ===== V104 MULTI-STAGE ENGINE MODULES =====
+        self.se_v104 = SequenceEngineV104()                    # V104-SE
+        self.frd_v104 = FrontRunDetectorV104()                  # V104-FRD
+        self.cre_v104 = ConflictResolutionEngineV104()          # V104-CRE
+        self.pmd_v104 = PreMoveDetectorV104()                   # V104-PMD
+        self.adf_v104 = ActiveDistributionFilterV104()          # V104-ADF
+        self.final_resolver_v104 = ConflictResolverV104_FINAL()  # V104-FINAL
+        
         # ===== V111-V115 EXECUTION FEASIBILITY ENGINE =====
         self.efe_v111 = ExecutionFeasibilityEngineV111()      # V111-EFE
         self.dmt_v112 = DeadMarketTrapV112()                  # V112-DMT
@@ -27081,6 +27524,73 @@ class BinanceAnalyzerV87:
             scoring_data['cpd_v106'] = crowd_result
             scoring_data['tde_v106'] = time_result
             
+            # ===== V104 MULTI-STAGE ENGINE MODULES =====
+            
+            # Sequence Engine
+            se_result = self.se_v104.detect(
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 1.0),
+                agg_ratio=trades.get('aggressive_ratio', 1.0),
+                wmi_ratio=wmi_ratio,
+                rsi=rsi6,
+                energy_up=up_energy if 'up_energy' in locals() else 0,
+                energy_down=down_energy if 'down_energy' in locals() else 0
+            )
+            
+            # Front-Run Detector
+            frd_result = self.frd_v104.detect(
+                wmi_ratio=wmi_ratio,
+                flow=trades.get('ratio', 1.0),
+                energy_up=up_energy if 'up_energy' in locals() else 0,
+                energy_down=down_energy if 'down_energy' in locals() else 0,
+                oi_delta=oi_delta_5m
+            )
+            
+            # Conflict Resolution Engine
+            cre_result = self.cre_v104.resolve(results=scoring_data)
+            
+            # Pre-Move Detector
+            pmd_result = self.pmd_v104.detect(
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 1.0),
+                agg_ratio=trades.get('aggressive_ratio', 1.0),
+                energy_up=up_energy if 'up_energy' in locals() else 0,
+                energy_down=down_energy if 'down_energy' in locals() else 0,
+                wmi_ratio=wmi_ratio
+            )
+            
+            # Active Distribution Filter
+            adf_result = self.adf_v104.detect(
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                flow=trades.get('ratio', 1.0),
+                agg_ratio=trades.get('aggressive_ratio', 1.0)
+            )
+            
+            # Update results dictionary dengan module V104
+            scoring_data.update({
+                'se_v104': se_result,
+                'frd_v104': frd_result,
+                'cre_v104': cre_result,
+                'pmd_v104': pmd_result,
+                'adf_v104': adf_result,
+            })
+            
+            # Gunakan resolver V104
+            v104_final = self.final_resolver_v104.resolve_all_signals(scoring_data)
+            
+            # Update final_decision dengan V104
+            if v104_final.get('priority_level', 99) < -60:
+                final_decision = {
+                    'bias': v104_final.get('final_bias', 'NEUTRAL'),
+                    'final_bias': v104_final.get('final_bias', 'NEUTRAL'),
+                    'confidence': v104_final.get('confidence', 'LOW'),
+                    'reason': v104_final.get('reason', ''),
+                    'phase': v104_final.get('phase', 'NORMAL'),
+                    'priority_level': v104_final.get('priority_level', 99),
+                    'sequence_stage': se_result.get('stage', 'UNKNOWN')
+                }
+            
             # ===== V105 DOUBLE SWEEP MODULES =====
             
             # Double Sweep Detector
@@ -28511,6 +29021,14 @@ class BinanceAnalyzerV87:
             result["fmd_v104"] = fmd_result
             result["intention"] = mie_result.get('intention', 'NEUTRAL')
             result["v104_phase"] = v104_final.get('phase', 'NORMAL')
+            
+            # ===== V104: MULTI-STAGE ENGINE =====
+            result["se_v104"] = se_result
+            result["frd_v104"] = frd_result
+            result["cre_v104"] = cre_result
+            result["pmd_v104"] = pmd_result
+            result["adf_v104"] = adf_result
+            result["sequence_stage"] = se_result.get('stage', 'UNKNOWN')
             
             # ===== V105: RESISTANCE MAP ENGINE & DOUBLE SWEEP =====
             result["dsd_v105"] = dsd_result
