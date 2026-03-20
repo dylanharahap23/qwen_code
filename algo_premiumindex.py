@@ -713,6 +713,32 @@ AFD_FLOW_ACTIVE_MIN = 1.0                   # Flow > 1.0 = active
 AFD_AGG_DEAD_MAX = 0.1                      # Agg < 0.1 = dead
 AFD_PASSIVE_DISTRIBUTION = True              # Detect passive distribution
 
+# ================= V122-VAV: VACUUM AGGRESSION VALIDATOR CONFIG =================
+VAV_AGG_DEAD_MAX = 0.1                      # Agg < 0.1 = dead
+VAV_BID_VACUUM_THRESHOLD = 0.1               # Bid volume < 0.1 = vacuum
+VAV_PRICE_DOWN_THRESHOLD = -1.0              # Price change < -1% = downtrend
+VAV_PRICE_UP_THRESHOLD = 1.0                 # Price change > 1% = uptrend
+
+# ================= V123-OEF: OI EXHAUSTION vs FUEL INJECTION CONFIG =================
+OEF_OI_DROP_MASSIVE = -5.0                   # OI drop > 5% = massive exit
+OEF_OI_RISE_FUEL = 2.0                       # OI rise > 2% = fuel injection
+OEF_PRICE_DOWN_THRESHOLD = -1.0              # Price change < -1%
+OEF_FORBID_LONG = True                        # Forbid LONG when OI dropping
+
+# ================= V124-PDW: PAYOUT DISTANCE WEIGHT CONFIG =================
+PDW_DEPTH_RATIO_THRESHOLD = 2.0              # Depth ratio > 2x = gravity wins
+PDW_IGNORE_PAYOUT_RATIO = 10.0               # Ignore payout if depth ratio extreme
+
+# ================= V125-FSF: FALSE SQUEEZE FILTER CONFIG =================
+FSF_MIN_FLOW_FOR_SQUEEZE = 0.8               # Flow < 0.8 = NO SQUEEZE!
+FSF_MIN_FLOW_FOR_LONG = 1.0                  # Flow < 1.0 = NO LONG!
+FSF_VETO_PRIORITY = -18                       # Priority for flow veto
+
+# ================= V126-VP: VACUUM PRIORITY CONFIG =================
+VP_BID_VACUUM_THRESHOLD = 0.1                # Bid volume < 0.1 = vacuum
+VP_ASK_VACUUM_THRESHOLD = 0.1                # Ask volume < 0.1 = vacuum
+VP_PRIORITY_LEVEL = -19                       # Higher than WMI
+
 # ================= V121-TTK: TIME TO KILL CONFIG =================
 TTK_WAIT_MINUTES = 5                         # Wait 5 minutes after signal
 TTK_PRICE_MOVE_REQUIRED = 1.0                # Need 1% move to confirm
@@ -2104,6 +2130,280 @@ class AggressionFlowDivergenceV120:
                     }
         
         return {"passive_distribution": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V122-VAV: VACUUM AGGRESSION VALIDATOR =================
+class VacuumAggressionValidatorV122:
+    """
+    🔥 V122-VAV: VACUUM AGGRESSION VALIDATOR - ANTI-FAKE SQUEEZE
+    
+    Kasus PLAYUSDT:
+    - Agg: 0.00x (DEAD!)
+    - Bid Volume: 0.0 (VACUUM!)
+    - Price: -2.26% (DOWN!)
+    - Bot baca: Agg 0 = NO SELLERS = SQUEEZE ❌
+    - Realita: No Buyer Defense! Harga jatuh bebas!
+    
+    Prinsip:
+    Jika Aggression mati (0) saat harga sedang turun, itu artinya MM sedang membiarkan
+    harga jatuh karena gravitasi (Vacuum). Tidak ada "tembok" yang menahan.
+    """
+    
+    @staticmethod
+    def detect(agg_ratio: float, bid_volume: float, 
+               price_change: float, oi_delta: float) -> Dict:
+        """
+        Deteksi apakah Agg 0 adalah bullish atau bearish
+        """
+        # Kondisi: Agg dead, bid vacuum, price downtrend
+        if agg_ratio < VAV_AGG_DEAD_MAX:                     # Agg < 0.1
+            if bid_volume < VAV_BID_VACUUM_THRESHOLD:        # Bid vacuum
+                if price_change < VAV_PRICE_DOWN_THRESHOLD:   # Price downtrend
+                    return {
+                        "vacuum_aggression": True,
+                        "bias": "SHORT",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -19,
+                        "reason": f"VAV_NO_BUYER_DEFENSE: Agg {agg_ratio:.2f}x (DEAD!) + "
+                                 f"Bid {bid_volume:.0f} (VACUUM!) + Price {price_change:.2f}% (DOWN!) = "
+                                 f"TIDAK ADA YANG MENAHAN JATUH! Bukan squeeze! "
+                                 f"MM biarkan harga free fall karena gravitasi! SHORT!",
+                        "phase": "VACUUM_AGGRESSION_BEARISH"
+                    }
+        
+        # Kondisi kebalikan: Agg dead, ask vacuum, price uptrend = NO SELLERS = SQUEEZE!
+        if agg_ratio < VAV_AGG_DEAD_MAX:                     # Agg < 0.1
+            if bid_volume > 0 and price_change > VAV_PRICE_UP_THRESHOLD:  # Uptrend
+                return {
+                    "vacuum_aggression": True,
+                    "bias": "LONG",
+                    "confidence": "SUPREME",
+                    "priority_level": -18,
+                    "reason": f"VAV_NO_SELLER_DEFENSE: Agg {agg_ratio:.2f}x (DEAD!) + "
+                             f"Price {price_change:.2f}% (UP!) = "
+                             f"TIDAK ADA SELLER! Squeeze valid! LONG!",
+                    "phase": "VACUUM_AGGRESSION_BULLISH"
+                }
+        
+        return {"vacuum_aggression": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V123-OEF: OI EXHAUSTION vs FUEL INJECTION =================
+class OIExhaustionFuelInjectionV123:
+    """
+    🔥 V123-OEF: OI EXHAUSTION vs FUEL INJECTION - ANTI-FUELESS SQUEEZE
+    
+    Kasus PLAYUSDT:
+    - OI Δ5m: -6.03% (MASSIVE DROP!)
+    - Price: -2.26% (DOWN!)
+    - Bot baca: OI drop = weak fuel → ??? 
+    - Realita: LONG LIQUIDATION! Short sellers belum masuk!
+    
+    Prinsip:
+    Jangan pernah menebak Squeeze (Long) jika tidak ada Fuel Injection (OI naik).
+    Jika yang keluar adalah Long, tapi tidak ada Short baru yang masuk, harga masih butuh
+    mencari "lantai" likuiditas yang lebih dalam.
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, price_change: float, flow: float) -> Dict:
+        """
+        Deteksi apakah ada fuel untuk squeeze
+        """
+        # OI MASSIVE DROP + Price DOWN = LONG LIQUIDATION (bukan squeeze setup!)
+        if oi_delta < OEF_OI_DROP_MASSIVE:                   # OI drop > 5%
+            if price_change < OEF_PRICE_DOWN_THRESHOLD:       # Price downtrend
+                return {
+                    "oi_exhaustion": True,
+                    "bias": "SHORT",  # Bukan LONG!
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -18,
+                    "reason": f"OEF_LONG_LIQUIDATION: OI {oi_delta:.2f}% (MASSIVE DROP!) + "
+                             f"Price {price_change:.2f}% (DOWN!) = "
+                             f"LONG LIQUIDATION! Short sellers belum masuk! "
+                             f"DILARANG LONG! Harga masih butuh cari lantai bawah!",
+                    "phase": "OI_EXHAUSTION_NO_FUEL"
+                }
+        
+        # FUEL INJECTION: OI naik + Price turun = SHORT BUILDING (bisa squeeze nanti)
+        if oi_delta > OEF_OI_RISE_FUEL:                      # OI rise > 2%
+            if price_change < OEF_PRICE_DOWN_THRESHOLD:       # Price downtrend
+                return {
+                    "fuel_injection": True,
+                    "bias": "LONG_PREPARE",  # Prepare for squeeze
+                    "confidence": "HIGH",
+                    "priority_level": -17,
+                    "reason": f"OEF_FUEL_INJECTION: OI {oi_delta:.2f}% (RISE!) + "
+                             f"Price {price_change:.2f}% (DOWN!) = "
+                             f"SHORT BUILDING! Fuel terkumpul! Siap squeeze!",
+                    "phase": "FUEL_INJECTION_DETECTED"
+                }
+        
+        return {"oi_exhaustion": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V124-PDW: PAYOUT DISTANCE WEIGHT =================
+class PayoutDistanceWeightV124:
+    """
+    🔥 V124-PDW: PAYOUT DISTANCE WEIGHT - ANTI-FAKE RATIO
+    
+    Kasus PLAYUSDT:
+    - Target Short: +3.76% (Dekat)
+    - Target Long: -11.18% (Jauh tapi GEMUK!)
+    - Payout Ratio: Mendukung atas
+    - Realita: MM pilih target bawah karena total uang lebih banyak!
+    
+    Prinsip:
+    Meskipun Payout Ratio mendukung atas, secara Magnitude/Kedalaman,
+    target bawah jauh lebih "gemuk". MM Binance sering kali mengabaikan
+    target dekat yang rasionya besar demi menghantam target jauh yang
+    total uangnya lebih banyak.
+    """
+    
+    @staticmethod
+    def detect(short_dist: float, long_dist: float, 
+               short_vol: float, long_vol: float,
+               payout_ratio: float) -> Dict:
+        """
+        Deteksi berdasarkan kedalaman target
+        """
+        # Hitung depth ratio (berapa kali lebih dalam target bawah)
+        short_depth = abs(short_dist) if short_dist > 0 else 999
+        long_depth = abs(long_dist) if long_dist < 0 else 999
+        
+        depth_ratio = long_depth / short_depth if short_depth > 0 else 999
+        
+        # Jika depth ratio > 2x, gravity wins!
+        if depth_ratio > PDW_DEPTH_RATIO_THRESHOLD:          # Long depth > 2x Short depth
+            if long_vol > short_vol * 1.5:                   # Long volume juga lebih besar
+                return {
+                    "gravity_wins": True,
+                    "bias": "SHORT",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -17,
+                    "reason": f"PDW_GRAVITY_WINS: Long depth {long_depth:.2f}% > Short depth {short_depth:.2f}% "
+                             f"({depth_ratio:.1f}x) + Long vol {long_vol:.0f} > Short vol {short_vol:.0f} = "
+                             f"MM pilih target BAWAH! Abaikan payout ratio {payout_ratio:.1f}x! SHORT!",
+                    "phase": "GRAVITY_WINS"
+                }
+        
+        # Kebalikan: Short depth jauh lebih besar
+        depth_ratio_short = short_depth / long_depth if long_depth > 0 else 999
+        if depth_ratio_short > PDW_DEPTH_RATIO_THRESHOLD:
+            if short_vol > long_vol * 1.5:
+                return {
+                    "gravity_wins": True,
+                    "bias": "LONG",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -17,
+                    "reason": f"PDW_GRAVITY_WINS: Short depth {short_depth:.2f}% > Long depth {long_depth:.2f}% "
+                             f"({depth_ratio_short:.1f}x) = MM pilih target ATAS! LONG!",
+                    "phase": "GRAVITY_WINS"
+                }
+        
+        return {"gravity_wins": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V125-FSF: FALSE SQUEEZE FILTER =================
+class FalseSqueezeFilterV125:
+    """
+    🔥 V125-FSF: FALSE SQUEEZE FILTER - VETO MUTLAK BERDASARKAN FLOW
+    
+    Modul fvc (V100) sudah memberi peringatan:
+    "FVC_FLOW_INSUFFICIENT: Expected Squeeze but Flow 0.45x (LOW!)... REAL MOVEMENT WILL BE DOWN!"
+    
+    Tapi bot tetap LONG karena SE_SQUEEZE dan LFC_PAYOUT punya priority lebih tinggi.
+    
+    RULE BARU:
+    Jika Flow < 0.8, semua signal SQUEEZE (LONG) harus di-ABORT!
+    Alasan: Tidak pernah ada Squeeze tanpa volume (Flow).
+    """
+    
+    @staticmethod
+    def detect(flow: float, bias: str, 
+               fvc_warning: bool, fvc_reason: str) -> Dict:
+        """
+        Veto semua sinyal LONG jika flow terlalu rendah
+        """
+        # VETO: Flow terlalu rendah untuk squeeze
+        if flow < FSF_MIN_FLOW_FOR_SQUEEZE:                  # Flow < 0.8
+            if bias == "LONG":                                # Bot mau LONG
+                return {
+                    "false_squeeze": True,
+                    "bias": "SHORT",  # Reversal!
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -18,  # VETO PRIORITY!
+                    "reason": f"FSF_FALSE_SQUEEZE: Flow {flow:.2f}x < {FSF_MIN_FLOW_FOR_SQUEEZE}x! "
+                             f"TIDAK MUNGKIN ADA SQUEEZE tanpa volume! "
+                             f"{fvc_reason if fvc_warning else 'FVC juga warning!'} "
+                             f"LONG di-ABORT! Arah real = SHORT!",
+                    "phase": "FALSE_SQUEEZE_VETO"
+                }
+        
+        # VETO: Flow terlalu rendah untuk LONG
+        if flow < FSF_MIN_FLOW_FOR_LONG:                     # Flow < 1.0
+            if bias == "LONG":
+                return {
+                    "false_squeeze": True,
+                    "bias": "NEUTRAL",  # No trade
+                    "action": "NO_TRADE",
+                    "confidence": "HIGH",
+                    "priority_level": -17,
+                    "reason": f"FSF_NO_LONG: Flow {flow:.2f}x < {FSF_MIN_FLOW_FOR_LONG}x! "
+                             f"Tidak ada bensin untuk LONG! NO TRADE!",
+                    "phase": "NO_LONG_VETO"
+                }
+        
+        return {"false_squeeze": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V126-VP: VACUUM PRIORITY =================
+class VacuumPriorityV126:
+    """
+    🔥 V126-VP: VACUUM PRIORITY - OVERRIDE WMI KETIKA VACUUM
+    
+    Jika Bid_Vacuum aktif, Bias harus mengikuti Vacuum tersebut meskipun WMI berkata sebaliknya.
+    
+    Kasus PLAYUSDT:
+    - Bid Vacuum: TRUE (Bid volume 0.0)
+    - WMI: 92.7x (Short liq above)
+    - Bot: ikut WMI → LONG ❌
+    - Harusnya: ikut VACUUM → SHORT ✅
+    """
+    
+    @staticmethod
+    def detect(bid_volume: float, ask_volume: float, 
+               wmi: float, price_change: float) -> Dict:
+        """
+        Prioritaskan vacuum over WMI
+        """
+        # BID VACUUM (kosong di bawah) = harga jatuh bebas → SHORT
+        if bid_volume < VP_BID_VACUUM_THRESHOLD:
+            return {
+                "vacuum_priority": True,
+                "bias": "SHORT",
+                "confidence": "ABSOLUTE",
+                "priority_level": -19,  # Lebih tinggi dari WMI!
+                "reason": f"VP_BID_VACUUM: Bid volume {bid_volume:.0f} (KOSONG!) + "
+                         f"WMI {wmi:.1f}x = OVERRIDE WMI! "
+                         f"Tidak ada support di bawah! SHORT!",
+                "phase": "VACUUM_PRIORITY_ACTIVE"
+            }
+        
+        # ASK VACUUM (kosong di atas) = harga melesat naik → LONG
+        if ask_volume < VP_ASK_VACUUM_THRESHOLD:
+            return {
+                "vacuum_priority": True,
+                "bias": "LONG",
+                "confidence": "ABSOLUTE",
+                "priority_level": -19,
+                "reason": f"VP_ASK_VACUUM: Ask volume {ask_volume:.0f} (KOSONG!) + "
+                         f"WMI {wmi:.1f}x = OVERRIDE WMI! "
+                         f"Tidak ada resistance di atas! LONG!",
+                "phase": "VACUUM_PRIORITY_ACTIVE"
+            }
+        
+        return {"vacuum_priority": False, "bias": "NEUTRAL", "priority_level": 99}
 
 
 # ================= V121-TTK: TIME TO KILL CONFIRMATION =================
@@ -4035,69 +4335,94 @@ class ConflictResolverV120_FINAL_ENHANCED:
     │ -20. V200-DMV: Dead Market Veto                        │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
+    PRIORITY -19: V122-VAV (Vacuum Aggression Validator)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -19. V122-VAV: Vacuum Aggression Validator              │ ← BARU! ANTI-PLAYUSDT
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -19: V126-VP (Vacuum Priority)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -19. V126-VP: Vacuum Priority                           │ ← BARU! ANTI-PLAYUSDT
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -18: V123-OEF (OI Exhaustion vs Fuel)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -18. V123-OEF: OI Exhaustion vs Fuel Injection          │ ← BARU! ANTI-PLAYUSDT
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -18: V125-FSF (False Squeeze Filter)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -18. V125-FSF: False Squeeze Filter (FLOW VETO)         │ ← BARU! ANTI-PLAYUSDT
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -17: V124-PDW (Payout Distance Weight)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -17. V124-PDW: Payout Distance Weight                   │ ← BARU! ANTI-PLAYUSDT
+    └─────────────────────────────────────────────────────────┘
+    
     PRIORITY -17: V118-ROC (RSI-OI Ceiling)
     ┌─────────────────────────────────────────────────────────┐
-    │ -17. V118-ROC: RSI-OI Ceiling                          │ ← BARU! ANTI-KRIMINAL
+    │ -17. V118-ROC: RSI-OI Ceiling                          │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -16: V119-LGV (Liquidity Gravity vs Payout)
     ┌─────────────────────────────────────────────────────────┐
-    │ -16. V119-LGV: Liquidity Gravity vs Payout              │ ← BARU! ANTI-KRIMINAL
+    │ -16. V119-LGV: Liquidity Gravity vs Payout              │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -15: V120-AFD (Aggression-Flow Divergence)
     ┌─────────────────────────────────────────────────────────┐
-    │ -15. V120-AFD: Aggression-Flow Divergence               │ ← BARU! ANTI-KRIMINAL
+    │ -15. V120-AFD: Aggression-Flow Divergence               │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -14: V116-BSW (Bait & Switch Detector)
     ┌─────────────────────────────────────────────────────────┐
-    │ -14. V116-BSW: Bait & Switch Detector                   │ ← BARU!
+    │ -14. V116-BSW: Bait & Switch Detector                   │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -13: V100-LTF (Liquidity Trap Filter)
     ┌─────────────────────────────────────────────────────────┐
-    │ -13. V100-LTF: Liquidity Trap Filter                    │ ← BARU!
+    │ -13. V100-LTF: Liquidity Trap Filter                    │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -12: V120-ASR (Absorption & Stability Rule)
     ┌─────────────────────────────────────────────────────────┐
-    │ -12. V120-ASR: Absorption & Stability Rule              │ ← BARU!
+    │ -12. V120-ASR: Absorption & Stability Rule              │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -7: WMI-FLOW CORRELATION
     ┌─────────────────────────────────────────────────────────┐
-    │ -7.  V107-WFC: WMI-Flow Correlation                    │ ← BARU!
+    │ -7.  V107-WFC: WMI-Flow Correlation                    │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -6: FLOW-BASED PBV PRIORITY
     ┌─────────────────────────────────────────────────────────┐
-    │ -6.  V107-FBR (PBV High Flow Mode)                     │ ← BARU!
+    │ -6.  V107-FBR (PBV High Flow Mode)                     │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -5: VACUUM CLASSIFIER
     ┌─────────────────────────────────────────────────────────┐
-    │ -5.  V107-VC: Vacuum Classifier                         │ ← BARU!
+    │ -5.  V107-VC: Vacuum Classifier                         │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -4: FLOW-BASED CASCADE PRIORITY
     ┌─────────────────────────────────────────────────────────┐
-    │ -4.  V107-FBR (High Flow Cascade)                       │ ← BARU!
+    │ -4.  V107-FBR (High Flow Cascade)                       │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -3: HIGH FLOW DEFAULT
     ┌─────────────────────────────────────────────────────────┐
-    │ -3.  V107-FBR (High Flow Default)                       │ ← BARU!
+    │ -3.  V107-FBR (High Flow Default)                       │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -2: LOW FLOW ENERGY
     ┌─────────────────────────────────────────────────────────┐
-    │ -2.  V107-FBR (Low Flow Energy)                         │ ← BARU!
+    │ -2.  V107-FBR (Low Flow Energy)                         │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -1: LOW FLOW DEFAULT
     ┌─────────────────────────────────────────────────────────┐
-    │ -1.  V107-FBR (Low Flow Default)                        │ ← BARU!
+    │ -1.  V107-FBR (Low Flow Default)                        │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -0: EXISTING MODULES (LIP, LCP, OVI, LMS, ATD)
@@ -4122,6 +4447,61 @@ class ConflictResolverV120_FINAL_ENHANCED:
                 "reason": dmv_res.get('reason', 'Dead Market Veto'),
                 "phase": dmv_res.get('market_state', 'DEAD_MARKET'),
                 "priority_level": -20
+            }
+        
+        # ===== PRIORITY -19: V122-VAV (Vacuum Aggression Validator) =====
+        vav_res = results.get('vav_v122', {})
+        if vav_res.get('vacuum_aggression'):
+            return {
+                "final_bias": vav_res['bias'],
+                "confidence": vav_res.get('confidence', 'ABSOLUTE'),
+                "reason": vav_res.get('reason', ''),
+                "phase": vav_res.get('phase', 'VACUUM_AGGRESSION'),
+                "priority_level": -19
+            }
+        
+        # ===== PRIORITY -19: V126-VP (Vacuum Priority) =====
+        vp_res = results.get('vp_v126', {})
+        if vp_res.get('vacuum_priority'):
+            return {
+                "final_bias": vp_res['bias'],
+                "confidence": vp_res.get('confidence', 'ABSOLUTE'),
+                "reason": vp_res.get('reason', ''),
+                "phase": vp_res.get('phase', 'VACUUM_PRIORITY'),
+                "priority_level": -19
+            }
+        
+        # ===== PRIORITY -18: V123-OEF (OI Exhaustion) =====
+        oef_res = results.get('oef_v123', {})
+        if oef_res.get('oi_exhaustion'):
+            return {
+                "final_bias": oef_res['bias'],
+                "confidence": oef_res.get('confidence', 'ABSOLUTE'),
+                "reason": oef_res.get('reason', ''),
+                "phase": "OI_EXHAUSTION",
+                "priority_level": -18
+            }
+        
+        # ===== PRIORITY -18: V125-FSF (False Squeeze Filter) =====
+        fsf_res = results.get('fsf_v125', {})
+        if fsf_res.get('false_squeeze'):
+            return {
+                "final_bias": fsf_res['bias'],
+                "confidence": fsf_res.get('confidence', 'ABSOLUTE'),
+                "reason": fsf_res.get('reason', ''),
+                "phase": fsf_res.get('phase', 'FALSE_SQUEEZE'),
+                "priority_level": -18
+            }
+        
+        # ===== PRIORITY -17: V124-PDW (Payout Distance Weight) =====
+        pdw_res = results.get('pdw_v124', {})
+        if pdw_res.get('gravity_wins'):
+            return {
+                "final_bias": pdw_res['bias'],
+                "confidence": pdw_res.get('confidence', 'ABSOLUTE'),
+                "reason": pdw_res.get('reason', ''),
+                "phase": "GRAVITY_WINS",
+                "priority_level": -17
             }
         
         # ===== PRIORITY -17: V118-ROC (RSI-OI Ceiling) =====
@@ -27043,6 +27423,13 @@ class BinanceAnalyzerV87:
         self.afd_v120 = AggressionFlowDivergenceV120()          # V120-AFD
         self.ttk_v121 = TimeToKillConfirmationV121()             # V121-TTK
         
+        # ===== ANTI-PLAYUSDT MODULES (V122-V126) =====
+        self.vav_v122 = VacuumAggressionValidatorV122()        # V122-VAV
+        self.oef_v123 = OIExhaustionFuelInjectionV123()        # V123-OEF
+        self.pdw_v124 = PayoutDistanceWeightV124()             # V124-PDW
+        self.fsf_v125 = FalseSqueezeFilterV125()               # V125-FSF
+        self.vp_v126 = VacuumPriorityV126()                    # V126-VP
+        
         # Gunakan resolver V120 enhanced yang baru (dengan ANTI-HFT SHIELD & ANTI-KRIMINAL)
         self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
         
@@ -28779,6 +29166,52 @@ class BinanceAnalyzerV87:
                 price_change=change_5m
             )
             scoring_data['afd_v120'] = afd_result
+            
+            # ===== ANTI-PLAYUSDT MODULES (V122-V126) =====
+            # V122-VAV: Vacuum Aggression Validator
+            vav_result = self.vav_v122.detect(
+                agg_ratio=trades.get('aggressive_ratio', 1.0) if 'trades' in locals() else 1.0,
+                bid_volume=odd_result.get('bid_volume_near', 0) if 'odd_result' in locals() else 0,
+                price_change=change_5m,
+                oi_delta=oi_delta_5m
+            )
+            scoring_data['vav_v122'] = vav_result
+            
+            # V123-OEF: OI Exhaustion vs Fuel Injection
+            oef_result = self.oef_v123.detect(
+                oi_delta=oi_delta_5m,
+                price_change=change_5m,
+                flow=trades.get('ratio', 1.0) if 'trades' in locals() else 1.0
+            )
+            scoring_data['oef_v123'] = oef_result
+            
+            # V124-PDW: Payout Distance Weight
+            pdw_result = self.pdw_v124.detect(
+                short_dist=liq.get('short_dist', 999) if 'liq' in locals() else 999,
+                long_dist=liq.get('long_dist', 999) if 'liq' in locals() else 999,
+                short_vol=liq.get('short_vol', 0) if 'liq' in locals() else 0,
+                long_vol=liq.get('long_vol', 0) if 'liq' in locals() else 0,
+                payout_ratio=lpc_result.get('payout_ratio', 1.0) if 'lpc_result' in locals() else 1.0
+            )
+            scoring_data['pdw_v124'] = pdw_result
+            
+            # V125-FSF: False Squeeze Filter
+            fsf_result = self.fsf_v125.detect(
+                flow=trades.get('ratio', 1.0) if 'trades' in locals() else 1.0,
+                bias=final_decision.get('bias', 'NEUTRAL') if 'final_decision' in locals() else 'NEUTRAL',
+                fvc_warning=fvc_result.get('is_valid_squeeze') is False if 'fvc_result' in locals() else False,
+                fvc_reason=fvc_result.get('reason', '') if 'fvc_result' in locals() else ''
+            )
+            scoring_data['fsf_v125'] = fsf_result
+            
+            # V126-VP: Vacuum Priority
+            vp_result = self.vp_v126.detect(
+                bid_volume=odd_result.get('bid_volume_near', 0) if 'odd_result' in locals() else 0,
+                ask_volume=odd_result.get('ask_volume_near', 0) if 'odd_result' in locals() else 0,
+                wmi=wmi_ratio,
+                price_change=change_5m
+            )
+            scoring_data['vp_v126'] = vp_result
             
             # ===== V101: CALL NEW MODULES =====
             lmp_result = self.lmp_v101.check(
