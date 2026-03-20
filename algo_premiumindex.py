@@ -785,6 +785,29 @@ TPG_SL_PCT = 8.0                            # Default SL 8%
 TPG_LIQ_PROXIMITY_WARNING = 2.0             # Warning if SL near liq
 TPG_SL_LIQ_BUFFER = 0.5                     # Buffer below liq cluster
 
+# ================= V140-RST: RETAIL SENTIMENT TRACKER CONFIG =================
+RST_PANIC_SELL_THRESHOLD = -2.0           # Price change < -2% = panic
+RST_FOMO_BUY_THRESHOLD = 2.0               # Price change > 2% = FOMO
+RST_VOLUME_SURGE_THRESHOLD = 2.0           # Volume ratio > 2 = surge
+RST_RETAIL_FLOW_PANIC = 1.5                # Retail sell flow > 1.5x
+RST_RETAIL_FLOW_FOMO = 0.5                 # Retail buy flow < 0.5x
+
+# ================= V141-QCD: QUANT CROWDEDNESS DETECTOR CONFIG =================
+QCD_VOLUME_RATIO_HIGH = 3.0                # Volume > 3x normal
+QCD_VOLATILITY_HIGH = 0.05                  # Volatility > 5%
+QCD_OI_GROWTH_HIGH = 10.0                   # OI growth > 10% in 5m
+QCD_CROWDED_SCORE_MAX = 5                   # Max score 5
+
+# ================= V142-MSV: MULTI-STRATEGY VOTING CONFIG =================
+MSV_STRATEGY_GROUPS = {
+    "liquidity": 0.25,      # bobot 25%
+    "momentum": 0.20,        # bobot 20%
+    "reversal": 0.20,        # bobot 20%
+    "flow": 0.20,            # bobot 20%
+    "orderbook": 0.15        # bobot 15%
+}
+MSV_VOTE_THRESHOLD = 0.6                    # Minimal 60% untuk eksekusi
+
 # ================= V126-VGA: VACUUM-GRAVITY ANCHOR CONFIG =================
 VGA_BID_ZERO_THRESHOLD = 0.1                 # Bid volume < 0.1 = kosong
 VGA_ASK_ZERO_THRESHOLD = 0.1                 # Ask volume < 0.1 = kosong
@@ -3115,6 +3138,247 @@ class OIPriceDirectionFilterV135:
         return {"short_covering": False, "accumulation": False, "bias": "NEUTRAL"}
 
 
+# ================= V140-RST: RETAIL SENTIMENT TRACKER =================
+class RetailSentimentTrackerV140:
+    """
+    🔥 V140-RST: RETAIL SENTIMENT TRACKER - INTI ALGORITMA CHINA
+    
+    Prinsip SuperMind: 
+    "散户在恐慌中割肉，量化在低位接盘；散户在狂热中追高，量化在高位派发。"
+    
+    Kami tidak memprediksi harga, kami memanfaatkan emosi retail!
+    """
+    
+    @staticmethod
+    def detect(price_change: float, volume_ratio: float, 
+               retail_flow: float, rsi: float = None) -> Dict:
+        """
+        Deteksi panic sell dan FOMO buy dari perilaku retail
+        """
+        # ===== PANIC SELL DETECTION =====
+        # Kondisi: harga jatuh >2%, volume melonjak >2x, retail jual >1.5x
+        if price_change < RST_PANIC_SELL_THRESHOLD:           # price drop >2%
+            if volume_ratio > RST_VOLUME_SURGE_THRESHOLD:      # volume surge
+                if retail_flow > RST_RETAIL_FLOW_PANIC:        # retail jual
+                    return {
+                        "signal": "LONG",
+                        "confidence": "SUPREME",
+                        "priority_level": -100,  # OVERRIDE SEMUA!
+                        "reason": f"RST_PANIC_SELL: Harga {price_change:.2f}% + Volume surge {volume_ratio:.1f}x + "
+                                 f"Retail jual {retail_flow:.2f}x = PANIC SELL! "
+                                 f"量化机构低位接盘！LONG!",
+                        "phase": "PANIC_BUY"
+                    }
+        
+        # ===== FOMO BUY DETECTION =====
+        # Kondisi: harga naik >2%, volume melonjak >2x, retail beli <0.5x (FOMO)
+        if price_change > RST_FOMO_BUY_THRESHOLD:              # price up >2%
+            if volume_ratio > RST_VOLUME_SURGE_THRESHOLD:      # volume surge
+                if retail_flow < RST_RETAIL_FLOW_FOMO:         # retail beli (flow rendah = buy)
+                    return {
+                        "signal": "SHORT",
+                        "confidence": "SUPREME",
+                        "priority_level": -100,
+                        "reason": f"RST_FOMO_BUY: Harga {price_change:.2f}% + Volume surge {volume_ratio:.1f}x + "
+                                 f"Retail beli = FOMO! 量化机构高位派发！SHORT!",
+                        "phase": "FOMO_SELL"
+                    }
+        
+        return {"signal": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V141-QCD: QUANT CROWDEDNESS DETECTOR =================
+class QuantCrowdednessDetectorV141:
+    """
+    🔥 V141-QCD: QUANT CROWDEDNESS DETECTOR - ANTI-STAMPEDE
+    
+    中国量化机构特别在意：当太多量化资金涌入同一品种时，容易踩踏。
+    拥挤度过高 → 动态降低仓位，保护本金。
+    """
+    
+    @staticmethod
+    def detect(volume_ratio: float, volatility: float, 
+               oi_growth: float, symbol: str = None) -> Dict:
+        """
+        Hitung skor keramaian (0-5), semakin tinggi semakin ramai
+        """
+        crowded_score = 0
+        reasons = []
+        
+        # 1. Volume anomaly
+        if volume_ratio > QCD_VOLUME_RATIO_HIGH:
+            crowded_score += 2
+            reasons.append(f"Volume {volume_ratio:.1f}x > {QCD_VOLUME_RATIO_HIGH}")
+        
+        # 2. Volatility spike
+        if volatility > QCD_VOLATILITY_HIGH:
+            crowded_score += 1
+            reasons.append(f"Volatility {volatility:.3f} > {QCD_VOLATILITY_HIGH}")
+        
+        # 3. OI rapid growth
+        if oi_growth > QCD_OI_GROWTH_HIGH:
+            crowded_score += 2
+            reasons.append(f"OI growth {oi_growth:.1f}% > {QCD_OI_GROWTH_HIGH}%")
+        
+        # Kapasitas maksimal 5
+        crowded_score = min(crowded_score, QCD_CROWDED_SCORE_MAX)
+        
+        # Skor tinggi -> kurangi posisi
+        if crowded_score >= 4:
+            return {
+                "crowded": True,
+                "score": crowded_score,
+                "position_multiplier": 0.3,   # hanya pakai 30% dari posisi normal
+                "action": "REDUCE_POSITION",
+                "reason": f"QUANT_CROWDED: Score {crowded_score}/5 - {' | '.join(reasons)}. "
+                         f"Terlalu ramai, kurangi posisi 70% untuk hindari stampede."
+            }
+        elif crowded_score >= 2:
+            return {
+                "crowded": True,
+                "score": crowded_score,
+                "position_multiplier": 0.7,
+                "action": "REDUCE_POSITION_LIGHT",
+                "reason": f"QUANT_CROWDED_WARNING: Score {crowded_score}/5 - {' | '.join(reasons)}. "
+                         f"Mulai ramai, kurangi posisi 30%."
+            }
+        
+        return {
+            "crowded": False,
+            "score": crowded_score,
+            "position_multiplier": 1.0,
+            "action": "NORMAL"
+        }
+
+
+# ================= V142-MSV: MULTI-STRATEGY VOTING SYSTEM =================
+class MultiStrategyVotingV142:
+    """
+    🔥 V142-MSV: MULTI-STRATEGY VOTING SYSTEM
+    
+    中国量化机构的"多元互补"策略体系：多个低相关性策略独立投票，加权决策。
+    将您现有的 100+ module dikelompokkan menjadi 5 strategi utama.
+    """
+    
+    def __init__(self):
+        # Bobot masing-masing strategi (bisa di-tuning)
+        self.weights = MSV_STRATEGY_GROUPS
+        
+    def get_strategy_vote(self, strategy_name: str, results: Dict) -> str:
+        """
+        Mengumpulkan sinyal dari modul-modul dalam satu strategi
+        """
+        if strategy_name == "liquidity":
+            # Kelompok likuidasi: LHG, LSP, LGD, LPC, LCP, OVI, VEL, LIP
+            modules = ['lhg', 'lsp', 'lgd', 'lpc', 'lcp_v106', 'ovi_v106', 'vel_v103', 'lip_v106']
+            for m in modules:
+                bias = results.get(m, {}).get('bias', 'NEUTRAL')
+                if bias != 'NEUTRAL':
+                    return bias  # cukup satu yang aktif
+        
+        elif strategy_name == "momentum":
+            # Kelompok momentum: ZGH, ODF, RST, WMI, CASCADE, ENERGY
+            modules = ['zgh', 'odf', 'rst_v100', 'wmi_ratio', 'cascade', 'energy_bias']
+            for m in modules:
+                if m == 'wmi_ratio':
+                    if results.get('wmi_ratio', 0) > 80:
+                        return 'LONG'
+                    elif results.get('wmi_ratio', 0) < -80:
+                        return 'SHORT'
+                elif m == 'energy_bias':
+                    bias = results.get('energy_bias', 'NEUTRAL')
+                    if bias != 'NEUTRAL':
+                        return bias
+                else:
+                    bias = results.get(m, {}).get('bias', 'NEUTRAL')
+                    if bias != 'NEUTRAL':
+                        return bias
+        
+        elif strategy_name == "reversal":
+            # Kelompok reversal: OTF, LID, RSC, ATD, ROC
+            modules = ['otf', 'lid', 'rsc', 'atd_v106', 'roc_v118']
+            for m in modules:
+                bias = results.get(m, {}).get('bias', 'NEUTRAL')
+                if bias != 'NEUTRAL':
+                    return bias
+        
+        elif strategy_name == "flow":
+            # Kelompok flow: IER, RMG, FMV, AFD, AGD
+            modules = ['ier', 'rmg', 'fmv', 'afd_v101', 'agd_v117']
+            for m in modules:
+                bias = results.get(m, {}).get('bias', 'NEUTRAL')
+                if bias != 'NEUTRAL':
+                    return bias
+        
+        elif strategy_name == "orderbook":
+            # Kelompok orderbook: OVS, VAC, LVD, OVD, VP
+            modules = ['ovs', 'vac', 'lvd', 'ovd', 'vp_v126']
+            for m in modules:
+                bias = results.get(m, {}).get('bias', 'NEUTRAL')
+                if bias != 'NEUTRAL':
+                    return bias
+        
+        return 'NEUTRAL'
+    
+    def vote(self, results: Dict) -> Dict:
+        """
+        Kumpulkan suara dari setiap strategi, hitung weighted score
+        """
+        long_score = 0
+        short_score = 0
+        votes = {}
+        
+        for strategy, weight in self.weights.items():
+            vote = self.get_strategy_vote(strategy, results)
+            votes[strategy] = vote
+            if vote == 'LONG':
+                long_score += weight
+            elif vote == 'SHORT':
+                short_score += weight
+        
+        total = long_score + short_score
+        if total == 0:
+            return {
+                "bias": "NEUTRAL",
+                "confidence": 0,
+                "votes": votes,
+                "long_prob": 0,
+                "short_prob": 0
+            }
+        
+        long_prob = long_score / total
+        short_prob = short_score / total
+        
+        # Threshold 60% untuk eksekusi
+        if long_prob > MSV_VOTE_THRESHOLD:
+            return {
+                "bias": "LONG",
+                "confidence": long_prob,
+                "votes": votes,
+                "long_prob": long_prob,
+                "short_prob": short_prob,
+                "reason": f"VOTING: LONG {long_prob:.1%} (Score {long_score:.2f}) > SHORT {short_prob:.1%}"
+            }
+        elif short_prob > MSV_VOTE_THRESHOLD:
+            return {
+                "bias": "SHORT",
+                "confidence": short_prob,
+                "votes": votes,
+                "long_prob": long_prob,
+                "short_prob": short_prob,
+                "reason": f"VOTING: SHORT {short_prob:.1%} (Score {short_score:.2f}) > LONG {long_prob:.1%}"
+            }
+        else:
+            return {
+                "bias": "NEUTRAL",
+                "confidence": max(long_prob, short_prob),
+                "votes": votes,
+                "long_prob": long_prob,
+                "short_prob": short_prob,
+                "reason": f"VOTING: No clear winner (L {long_prob:.1%} vs S {short_prob:.1%})"
+            }
+
+
 # ================= V121-TTK: TIME TO KILL CONFIRMATION =================
 class TimeToKillConfirmationV121:
     """
@@ -5037,7 +5301,22 @@ class ConflictResolverV115_FINAL:
 # ================= V120-FINAL-UPDATED: CONFLICT RESOLVER DENGAN V107 MODULES =================
 class ConflictResolverV120_FINAL_ENHANCED:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN ANTI-GOCOK LOGIC (V130-V135)
+    🔥 URUTAN PRIORITAS MUTLAK V140 - DENGAN CHINESE QUANT STYLE (V140-V142)
+    
+    PRIORITY -100: V140-RST (Retail Sentiment Tracker) ← TERTINGGI! CHINESE QUANT CORE
+    ┌─────────────────────────────────────────────────────────┐
+    │ -100. V140-RST: Retail Sentiment Tracker                │ ← BARU! ANTI-PANIC/FOMO
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -99: V142-MSV (Multi-Strategy Voting) ← GANTI HIERARKI LINEAR!
+    ┌─────────────────────────────────────────────────────────┐
+    │ -99. V142-MSV: Multi-Strategy Voting                    │ ← BARU! WEIGHTED DECISION
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -50: V141-QCD (Quant Crowdedness Detector) untuk position sizing
+    ┌─────────────────────────────────────────────────────────┐
+    │ -50. V141-QCD: Quant Crowdedness Detector               │ ← BARU! DYNAMIC POSITION
+    └─────────────────────────────────────────────────────────┘
     
     PRIORITY -25: V126-VGA (Vacuum-Gravity Anchor)      ← BARU TERTINGGI! ANTI-LYNUSDT
     ┌─────────────────────────────────────────────────────────┐
@@ -5077,6 +5356,32 @@ class ConflictResolverV120_FINAL_ENHANCED:
     
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== PRIORITY -100: RETAIL SENTIMENT OVERRIDE =====
+        rst_res = results.get('rst_v140', {})
+        if rst_res.get('signal') != 'NEUTRAL':
+            return {
+                "final_bias": rst_res['signal'],
+                "confidence": rst_res.get('confidence', 'ABSOLUTE'),
+                "reason": rst_res.get('reason', ''),
+                "phase": rst_res.get('phase', 'RETAIL_SENTIMENT'),
+                "priority_level": -100
+            }
+        
+        # ===== PRIORITY -99: MULTI-STRATEGY VOTING =====
+        msv_res = results.get('msv_v142', {})
+        if msv_res.get('bias') != 'NEUTRAL':
+            # Tambahkan detail voting ke output
+            return {
+                "final_bias": msv_res['bias'],
+                "confidence": f"{msv_res.get('confidence', 0):.0%}" if isinstance(msv_res.get('confidence', 0), float) else msv_res.get('confidence', 'LOW'),
+                "reason": msv_res.get('reason', ''),
+                "phase": "MULTI_STRATEGY_VOTE",
+                "priority_level": -99,
+                "votes": msv_res.get('votes', {}),
+                "long_prob": msv_res.get('long_prob', 0),
+                "short_prob": msv_res.get('short_prob', 0)
+            }
         
         # ===== PRIORITY -25: V126-VGA (Vacuum-Gravity Anchor) =====
         vga_res = results.get('vga_v126', {})
@@ -28148,7 +28453,12 @@ class BinanceAnalyzerV87:
         self.tpg_v134 = TPSLProximityGuardV134()               # V134-TPG
         self.opd_v135 = OIPriceDirectionFilterV135()           # V135-OPD
         
-        # Gunakan resolver V120 enhanced yang baru (dengan ANTI-GOCOK LOGIC V130-V135)
+        # ===== CHINESE QUANT STYLE MODULES (V140-V142) =====
+        self.rst_v140 = RetailSentimentTrackerV140()            # V140-RST
+        self.qcd_v141 = QuantCrowdednessDetectorV141()          # V141-QCD
+        self.msv_v142 = MultiStrategyVotingV142()               # V142-MSV
+        
+        # Gunakan resolver V120 enhanced yang baru (dengan ANTI-GOCOK LOGIC V130-V135 + CHINESE QUANT V140-V142)
         self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
         
         # Track last signal bias for TTK
@@ -30849,6 +31159,64 @@ class BinanceAnalyzerV87:
             scoring_data['vc_v107'] = vc_result
             scoring_data['wfc_v107'] = wfc_result
             scoring_data['fbr_v107'] = fbr_result
+            
+            # ===== CHINESE QUANT STYLE MODULES (V140-V142) =====
+            
+            # V140-RST: Retail Sentiment Tracker
+            rst_result = self.rst_v140.detect(
+                price_change=change_5m,
+                volume_ratio=volume_ratio,
+                retail_flow=trades.get('ratio', 1.0),   # flow >1 = sell pressure, <1 = buy pressure
+                rsi=rsi6
+            )
+            
+            # V141-QCD: Quant Crowdedness Detector
+            qcd_result = self.qcd_v141.detect(
+                volume_ratio=volume_ratio,
+                volatility=std_dev / price if price > 0 else 0,
+                oi_growth=oi_delta_5m,
+                symbol=self.symbol
+            )
+            
+            # Kumpulkan hasil untuk V142-MSV
+            msv_results = {
+                'lhg': lhg_result if 'lhg_result' in locals() else {},
+                'lsp': lsp_result if 'lsp_result' in locals() else {},
+                'lgd': lgd_result if 'lgd_result' in locals() else {},
+                'lpc': lpc_result if 'lpc_result' in locals() else {},
+                'lcp_v106': lcp_result if 'lcp_result' in locals() else {},
+                'ovi_v106': ovi_result if 'ovi_result' in locals() else {},
+                'vel_v103': vel_result if 'vel_result' in locals() else {},
+                'lip_v106': lip_result if 'lip_result' in locals() else {},
+                'zgh': zgh_result if 'zgh_result' in locals() else {},
+                'odf': odf_result if 'odf_result' in locals() else {},
+                'rst_v100': rst_v100_result if 'rst_v100_result' in locals() else {},
+                'wmi_ratio': wmi_ratio,
+                'cascade': cascade_result if 'cascade_result' in locals() else {},
+                'energy_bias': lep_result.get('bias', 'NEUTRAL') if isinstance(lep_result, dict) else 'NEUTRAL',
+                'otf': otf_result if 'otf_result' in locals() else {},
+                'lid': lid_result if 'lid_result' in locals() else {},
+                'rsc': rsc_result if 'rsc_result' in locals() else {},
+                'atd_v106': atd_result if 'atd_result' in locals() else {},
+                'roc_v118': roc_result if 'roc_result' in locals() else {},
+                'ier': ier_result if 'ier_result' in locals() else {},
+                'rmg': rmg_result if 'rmg_result' in locals() else {},
+                'fmv': fmv_result if 'fmv_result' in locals() else {},
+                'afd_v101': afd_result if 'afd_result' in locals() else {},
+                'agd_v117': agd_result if 'agd_result' in locals() else {},
+                'ovs': ovs_result if 'ovs_result' in locals() else {},
+                'vac': vac_result if 'vac_result' in locals() else {},
+                'lvd': lvd_result if 'lvd_result' in locals() else {},
+                'ovd': ovd_result if 'ovd_result' in locals() else {},
+                'vp_v126': vp_result if 'vp_result' in locals() else {},
+            }
+            # V142-MSV: Multi-Strategy Voting
+            msv_result = self.msv_v142.vote(msv_results)
+            
+            # Simpan hasil ke dictionary untuk resolver
+            scoring_data['rst_v140'] = rst_result
+            scoring_data['qcd_v141'] = qcd_result
+            scoring_data['msv_v142'] = msv_result
             
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
