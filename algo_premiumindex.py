@@ -739,6 +739,29 @@ VP_BID_VACUUM_THRESHOLD = 0.1                # Bid volume < 0.1 = vacuum
 VP_ASK_VACUUM_THRESHOLD = 0.1                # Ask volume < 0.1 = vacuum
 VP_PRIORITY_LEVEL = -19                       # Higher than WMI
 
+# ================= V126-AVT: ASK-VACUUM BULL-TRAP DETECTOR CONFIG =================
+AVT_ASK_VACUUM_THRESHOLD = 0.1              # Ask volume < 0.1 = vacuum
+AVT_RSI_CEILING = 60.0                      # RSI > 60 = overbought zone
+AVT_PRICE_RUNUP_MIN = 1.0                   # Price runup > 1% = suspicious
+AVT_AGG_HIGH_MIN = 1.0                      # Agg > 1.0 = aggressive buy
+AVT_FLOW_LOW_MAX = 1.0                      # Flow < 1.0 = no real volume
+
+# ================= V127-IGO: IMBALANCE GRAVITY OVERRIDE CONFIG =================
+IGO_IMBALANCE_THRESHOLD = 50.0              # Imbalance > 50x = overcrowded
+IGO_WMI_IGNORE = True                        # Ignore WMI when imbalance extreme
+IGO_PRIORITY_LEVEL = -20                     # Higher than WMI lock
+
+# ================= V128-CFA: CRITICAL FLUSH ALERT CONFIG =================
+CFA_FLUSH_PROB_THRESHOLD = 0.4              # Flush probability > 40%
+CFA_FLUSH_CONFIDENCE = "HIGH"               # Confidence must be HIGH
+CFA_FORCE_BIAS = "SHORT"                    # Force bias to SHORT
+CFA_PRIORITY_LEVEL = -21                     # Higher than everything
+
+# ================= V129-IFL: INSTITUTIONAL FUEL CONFIG =================
+IFL_MIN_OI_FOR_LONG = 1.5                   # OI > 1.5% for LONG entry
+IFL_MIN_OI_FOR_SHORT = 1.0                  # OI > 1.0% for SHORT entry
+IFL_LOW_FUEL_ACTION = "NO_TRADE"            # Action when fuel too low
+
 # ================= V126-VGA: VACUUM-GRAVITY ANCHOR CONFIG =================
 VGA_BID_ZERO_THRESHOLD = 0.1                 # Bid volume < 0.1 = kosong
 VGA_ASK_ZERO_THRESHOLD = 0.1                 # Ask volume < 0.1 = kosong
@@ -2537,6 +2560,179 @@ class FakeSqueezeFuelV128:
                     "phase": "FAKE_SQUEEZE_FUEL"
                 }
         return {"fake_fuel": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V126-AVT: ASK-VACUUM BULL-TRAP DETECTOR =================
+class AskVacuumBullTrapDetectorV126:
+    """
+    🔥 V126-AVT: ASK-VACUUM BULL-TRAP DETECTOR - ANTI-GOLDEN BAIT
+    
+    Kasus PIPPINUSDT:
+    - Ask Volume: 0.0 (VACUUM!)
+    - RSI: 62.1 (>60)
+    - Price Change: +1.25% (>1%)
+    - Agg: 1.0x (aggressive)
+    - Flow: 0.67x (lemah)
+    - Bot baca: Ask vacuum = jalan kosong = LONG ❌
+    - Realita: GOLDEN BAIT! MM cabut ask untuk pancing LONG, lalu dump!
+    
+    Prinsip:
+    HFT mencabut semua Sell Order (Ask 0.0) untuk menciptakan ilusi 
+    "harga akan terbang tanpa hambatan". Ini memicu bot untuk Market Buy.
+    Saat bot masuk, MM langsung menghantam dengan Hidden Sell Order (Iceberg).
+    """
+    
+    @staticmethod
+    def detect(ask_volume: float, rsi: float, price_change: float,
+               agg_ratio: float, flow: float) -> Dict:
+        """
+        Deteksi bull trap di ask vacuum
+        """
+        # Kondisi: Ask vacuum + RSI tinggi + price runup + agresi tapi flow lemah
+        if ask_volume < AVT_ASK_VACUUM_THRESHOLD:              # Ask vacuum
+            if rsi > AVT_RSI_CEILING:                          # RSI > 60 (overbought)
+                if price_change > AVT_PRICE_RUNUP_MIN:         # Price runup > 1%
+                    if agg_ratio > AVT_AGG_HIGH_MIN:           # Agg > 1.0 (aggressive)
+                        if flow < AVT_FLOW_LOW_MAX:            # Flow < 1.0 (lemah)
+                            return {
+                                "bull_trap": True,
+                                "bias": "SHORT",
+                                "confidence": "ABSOLUTE",
+                                "priority_level": -22,  # TERTINGGI!
+                                "reason": f"AVT_GOLDEN_BAIT: Ask volume {ask_volume:.0f} (VACUUM!) + "
+                                         f"RSI {rsi:.1f} (>60) + Price runup {price_change:.2f}% + "
+                                         f"Agg {agg_ratio:.2f}x (agresif) + Flow {flow:.2f}x (lemah) = "
+                                         f"GOLDEN BAIT! MM cabut ask untuk pancing LONG, lalu DUMP! "
+                                         f"DILARANG LONG! SHORT!",
+                                "phase": "ASK_VACUUM_BULL_TRAP"
+                            }
+        
+        return {"bull_trap": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V127-IGO: IMBALANCE GRAVITY OVERRIDE =================
+class ImbalanceGravityOverrideV127:
+    """
+    🔥 V127-IGO: IMBALANCE GRAVITY OVERRIDE - ANTI-WMI OVERCONFIDENCE
+    
+    Kasus PIPPINUSDT:
+    - Imbalance: 60.3x (>50x) = LONGS OVERCROWDED!
+    - WMI: 99.6x (EXTREME!)
+    - eio_v102 sudah teriak: "Override WMI 99.6x! Prioritaskan cascade!"
+    - Tapi WMI_ABSOLUTE_LOCK (V103) override eio karena priority -10
+    
+    Solusi: Jika Imbalance > 50x, Veto WMI. Jangan percaya WMI jika kapal sudah terlalu miring.
+    """
+    
+    @staticmethod
+    def detect(imbalance_ratio: float, wmi_ratio: float, 
+               cascade_bias: str, energy_bias: str) -> Dict:
+        """
+        Override WMI ketika imbalance ekstrem
+        """
+        if imbalance_ratio > IGO_IMBALANCE_THRESHOLD:          # Imbalance > 50x
+            # Override WMI! Jangan percaya WMI!
+            return {
+                "override_wmi": True,
+                "bias": "SHORT" if cascade_bias == "SHORT" else energy_bias,
+                "confidence": "ABSOLUTE",
+                "priority_level": -20,  # Lebih tinggi dari WMI lock!
+                "reason": f"IGO_IMBALANCE_OVERRIDE: Imbalance {imbalance_ratio:.1f}x (>50x) = "
+                         f"LONGS OVERCROWDED! WMI {wmi_ratio:.1f}x IGNORED! "
+                         f"Follow GRAVITY: {cascade_bias if cascade_bias != 'NEUTRAL' else energy_bias}!",
+                "phase": "IMBALANCE_GRAVITY_OVERRIDE"
+            }
+        
+        return {"override_wmi": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V128-CFA: CRITICAL FLUSH ALERT =================
+class CriticalFlushAlertV128:
+    """
+    🔥 V128-CFA: CRITICAL FLUSH ALERT - EMERGENCY PROTOCOL
+    
+    Kasus PIPPINUSDT:
+    - lpf_enhanced_v100: "LPF_CRITICAL_FLUSH_ALERT: Flush -3.0% to -7.0% detected with HIGH confidence!"
+    - Tapi Stability Engine masih memenangkan WMI_EXTREME sebagai Critical Path.
+    
+    Solusi: Jika Flush_Probability > 0.4, FORCE WAIT atau FORCE SHORT!
+    """
+    
+    @staticmethod
+    def detect(flush_probability: float, flush_confidence: str,
+               flush_range: str, current_bias: str) -> Dict:
+        """
+        Emergency flush protocol
+        """
+        if flush_probability > CFA_FLUSH_PROB_THRESHOLD:       # Flush prob > 40%
+            if flush_confidence == CFA_FLUSH_CONFIDENCE:       # Confidence HIGH
+                return {
+                    "flush_alert": True,
+                    "bias": "SHORT",  # Force SHORT!
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -21,  # TERTINGGI!
+                    "reason": f"CFA_EMERGENCY_FLUSH: Flush probability {flush_probability:.1%} "
+                             f"(>40%) with {flush_confidence} confidence! "
+                             f"Expected flush: {flush_range}. "
+                             f"Override signal {current_bias}! FORCE SHORT!",
+                    "phase": "CRITICAL_FLUSH_ALERT",
+                    "action": "FORCE_SHORT"
+                }
+        
+        return {"flush_alert": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V129-IFL: INSTITUTIONAL FUEL VALIDATOR =================
+class InstitutionalFuelValidatorV129:
+    """
+    🔥 V129-IFL: INSTITUTIONAL FUEL VALIDATOR - ANTI-LOW-FUEL PUMP
+    
+    Kasus PIPPINUSDT:
+    - OI Δ5m: 0.93% (LEMAH!)
+    - Price: +1.25% (PUMP!)
+    - Bot baca: Pump = bullish
+    - Realita: LOW-FUEL PUMP! Tidak ada posisi baru masuk, pump palsu!
+    
+    Prinsip:
+    Untuk menggerakkan harga naik menembus resistance, butuh "Bensin" (Open Interest) yang besar.
+    Jika OI < 1.5%, anggap pump tersebut palsu.
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, bias: str, price_change: float) -> Dict:
+        """
+        Validasi apakah ada fuel untuk pergerakan
+        """
+        # Untuk LONG: butuh OI > 1.5%
+        if bias == "LONG":
+            if oi_delta < IFL_MIN_OI_FOR_LONG:                # OI < 1.5%
+                return {
+                    "low_fuel": True,
+                    "bias": "NEUTRAL",  # NO TRADE!
+                    "action": "NO_TRADE",
+                    "confidence": "HIGH",
+                    "priority_level": -19,
+                    "reason": f"IFL_LOW_FUEL_LONG: OI {oi_delta:.2f}% < {IFL_MIN_OI_FOR_LONG}%! "
+                             f"Tidak ada bensin untuk LONG! Price pump {price_change:.2f}% adalah "
+                             f"LOW-FUEL PUMP! DILARANG LONG! NO TRADE!",
+                    "phase": "LOW_FUEL_PUMP"
+                }
+        
+        # Untuk SHORT: butuh OI > 1.0%
+        if bias == "SHORT":
+            if abs(oi_delta) < IFL_MIN_OI_FOR_SHORT:           # OI < 1.0%
+                return {
+                    "low_fuel": True,
+                    "bias": "NEUTRAL",  # NO TRADE!
+                    "action": "NO_TRADE",
+                    "confidence": "MEDIUM",
+                    "priority_level": -18,
+                    "reason": f"IFL_LOW_FUEL_SHORT: OI {oi_delta:.2f}% < {IFL_MIN_OI_FOR_SHORT}%! "
+                             f"Tidak ada bensin untuk SHORT! NO TRADE!",
+                    "phase": "LOW_FUEL_SHORT"
+                }
+        
+        return {"low_fuel": False, "bias": "NEUTRAL", "priority_level": 99}
 
 
 # ================= V121-TTK: TIME TO KILL CONFIRMATION =================
@@ -4614,6 +4810,40 @@ class ConflictResolverV120_FINAL_ENHANCED:
                 "priority_level": -23
             }
         
+        # ===== PRIORITY -22: V126-AVT (Ask-Vacuum Bull-Trap) =====
+        avt_res = results.get('avt_v126', {})
+        if avt_res.get('bull_trap'):
+            return {
+                "final_bias": avt_res['bias'],
+                "confidence": avt_res.get('confidence', 'ABSOLUTE'),
+                "reason": avt_res.get('reason', ''),
+                "phase": avt_res.get('phase', 'ASK_VACUUM_BULL_TRAP'),
+                "priority_level": -22
+            }
+        
+        # ===== PRIORITY -21: V128-CFA (Critical Flush Alert) =====
+        cfa_res = results.get('cfa_v128', {})
+        if cfa_res.get('flush_alert'):
+            return {
+                "final_bias": cfa_res['bias'],
+                "confidence": cfa_res.get('confidence', 'ABSOLUTE'),
+                "reason": cfa_res.get('reason', ''),
+                "phase": cfa_res.get('phase', 'CRITICAL_FLUSH_ALERT'),
+                "priority_level": -21,
+                "action": cfa_res.get('action', 'FORCE_SHORT')
+            }
+        
+        # ===== PRIORITY -20: V127-IGO (Imbalance Gravity Override) =====
+        igo_res = results.get('igo_v127', {})
+        if igo_res.get('override_wmi'):
+            return {
+                "final_bias": igo_res['bias'],
+                "confidence": igo_res.get('confidence', 'ABSOLUTE'),
+                "reason": igo_res.get('reason', ''),
+                "phase": igo_res.get('phase', 'IMBALANCE_GRAVITY_OVERRIDE'),
+                "priority_level": -20
+            }
+        
         # ===== PRIORITY -20: V200-DMV (EXISTING) =====
         dmv_res = results.get('dmv_v200', {})
         if dmv_res.get('veto_active'):
@@ -4645,6 +4875,18 @@ class ConflictResolverV120_FINAL_ENHANCED:
                 "reason": vp_res.get('reason', ''),
                 "phase": vp_res.get('phase', 'VACUUM_PRIORITY'),
                 "priority_level": -19
+            }
+        
+        # ===== PRIORITY -19: V129-IFL (Institutional Fuel Validator) =====
+        ifl_res = results.get('ifl_v129', {})
+        if ifl_res.get('low_fuel'):
+            return {
+                "final_bias": ifl_res.get('bias', 'NEUTRAL'),
+                "confidence": ifl_res.get('confidence', 'HIGH'),
+                "reason": ifl_res.get('reason', ''),
+                "phase": ifl_res.get('phase', 'LOW_FUEL_PUMP'),
+                "priority_level": -19,
+                "action": ifl_res.get('action', 'NO_TRADE')
             }
         
         # ===== PRIORITY -18: V123-OEF (OI Exhaustion) =====
@@ -27635,6 +27877,12 @@ class BinanceAnalyzerV87:
         self.mdi_v127 = MACDDeadZoneIntegrityV127()            # V127-MDI
         self.fsf_v128 = FakeSqueezeFuelV128()                  # V128-FSF
         
+        # ===== ANTI-PIPPIN MODULES (V126-V129) =====
+        self.avt_v126 = AskVacuumBullTrapDetectorV126()        # V126-AVT
+        self.igo_v127 = ImbalanceGravityOverrideV127()         # V127-IGO
+        self.cfa_v128 = CriticalFlushAlertV128()               # V128-CFA
+        self.ifl_v129 = InstitutionalFuelValidatorV129()       # V129-IFL
+        
         # Gunakan resolver V120 enhanced yang baru (dengan ANTI-HFT SHIELD & ANTI-KRIMINAL)
         self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
         
@@ -29441,6 +29689,43 @@ class BinanceAnalyzerV87:
                 agg_ratio=trades.get('aggressive_ratio', 1.0) if 'trades' in locals() else 1.0
             )
             scoring_data['fsf_v128'] = fsf_v128_result
+            
+            # ===== ANTI-PIPPIN MODULES (V126-V129) =====
+            # V126-AVT: Ask-Vacuum Bull-Trap Detector
+            avt_result = self.avt_v126.detect(
+                ask_volume=odd_result.get('ask_volume_near', 0) if 'odd_result' in locals() else 0,
+                rsi=rsi6 if 'rsi6' in locals() else 50,
+                price_change=change_5m,
+                agg_ratio=trades.get('aggressive_ratio', 1.0) if 'trades' in locals() else 1.0,
+                flow=trades.get('ratio', 1.0) if 'trades' in locals() else 1.0
+            )
+            scoring_data['avt_v126'] = avt_result
+            
+            # V127-IGO: Imbalance Gravity Override
+            igo_result = self.igo_v127.detect(
+                imbalance_ratio=lim_result.get('imbalance_ratio', 1.0) if 'lim_result' in locals() else 1.0,
+                wmi_ratio=wmi_ratio,
+                cascade_bias=cascade_result.get('bias', 'NEUTRAL') if 'cascade_result' in locals() else 'NEUTRAL',
+                energy_bias=scoring_data.get('energy_bias', 'NEUTRAL')
+            )
+            scoring_data['igo_v127'] = igo_result
+            
+            # V128-CFA: Critical Flush Alert
+            cfa_result = self.cfa_v128.detect(
+                flush_probability=flush_probability if 'flush_probability' in locals() else 0,
+                flush_confidence=lpf_enhanced_v2_result.get('confidence', 'LOW') if 'lpf_enhanced_v2_result' in locals() else 'LOW',
+                flush_range=lpf_enhanced_v2_result.get('expected_range', '') if 'lpf_enhanced_v2_result' in locals() else '',
+                current_bias='NEUTRAL'  # Will be determined later
+            )
+            scoring_data['cfa_v128'] = cfa_result
+            
+            # V129-IFL: Institutional Fuel Validator
+            ifl_result = self.ifl_v129.detect(
+                oi_delta=oi_delta_5m,
+                bias='NEUTRAL',  # Will be validated after final decision
+                price_change=change_5m
+            )
+            scoring_data['ifl_v129'] = ifl_result
             
             # ===== V101: CALL NEW MODULES =====
             lmp_result = self.lmp_v101.check(
