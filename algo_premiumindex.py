@@ -667,6 +667,37 @@ DMV_FLOW_DEAD_THRESHOLD = 0.5                 # Flow < 0.5 = dead market
 DMV_MIN_REAL_FLOW = 0.3                        # Minimal flow untuk arah real
 DMV_ORDERBOOK_THRESHOLD = 1000                 # Threshold volume orderbook
 
+# ================= V116-BSW: BAIT & SWITCH DETECTOR CONFIG =================
+BSW_BID_DROP_THRESHOLD = -0.5               # Bid drop > 50%
+BSW_TIME_WINDOW_MS = 500                    # 500ms time window
+BSW_OI_STABLE_THRESHOLD = 0.5                # OI change < 0.5% = stable
+
+# ================= V100-LTF: LIQUIDITY TRAP FILTER CONFIG =================
+LTF_PAYOUT_RATIO_THRESHOLD = 10.0            # Payout ratio > 10x
+LTF_DISTANCE_THRESHOLD = 0.02                 # Distance < 2% = trap zone
+LTF_WAIT_FOR_FLUSH = True                     # Wait for flush first
+
+# ================= V117-AGD: AGGRESSION DIVERGENCE CONFIG =================
+AGD_AGGRESSION_DEAD_MAX = 0.2                 # Agg < 0.2 = dead market
+AGD_PRICE_MOVE_MIN = 0.5                      # Price move > 0.5% = synthetic
+AGD_OI_ACCUMULATION_MIN = 1.0                 # OI > 1% = accumulation
+AGD_SAD_ACTIVE_CHECK = True                    # Check SAD for accumulation
+
+# ================= V118-DSL: DYNAMIC STOP LOSS CONFIG =================
+DSL_SL_BUFFER = 0.005                         # 0.5% buffer below liquidation
+DSL_LIQ_MAP_LOOKBACK = 20                     # Lookback for liquidation map
+DSL_TIME_BASED_EXIT_MINUTES = 30               # 30 minutes time-based exit
+DSL_TIME_BASED_TP_MIN = 3.0                    # TP 3% for time-based exit
+
+# ================= V119-LPF: LIQUIDITY PROXIMITY FILTER CONFIG =================
+LPF_DISTANCE_THRESHOLD = 0.02                  # 2% distance
+LPF_WAIT_FOR_TOUCH = True                      # Wait for touch first
+
+# ================= V120-ASR: ABSORPTION & STABILITY RULE CONFIG =================
+ASR_PRICE_STABLE_THRESHOLD = 0.5               # Price change < 0.5% = stable
+ASR_OI_DROP_THRESHOLD = -1.0                   # OI drop > 1%
+ASR_ABSORPTION_WAIT_MINUTES = 5                # Wait 5 minutes after absorption
+
 # ================= V104-SE: SEQUENCE ENGINE CONFIG =================
 SE_BUILD_OI_MIN = 2.0                     # OI > 2% = BUILD phase
 SE_BUILD_FLOW_MIN = 1.5                    # Flow > 1.5 = BUILD phase
@@ -1632,6 +1663,291 @@ class DeadMarketVetoV200:
             "action": "NO_TRADE",
             "reason": reason + "Tidak ada arah order flow. NO TRADE."
         }
+
+
+# ================= V116-BSW: BAIT & SWITCH DETECTOR =================
+class BaitAndSwitchDetectorV116:
+    """
+    🔥 V116-BSW: BAIT & SWITCH DETECTOR - ANTI-SPOOFING
+    
+    Jika Bid menghilang dalam waktu < 500ms sementara OI naik,
+    itu bukan "Vacuum Down", melainkan Whale mencabut support
+    untuk memancing retail melakukan Panic Sell (Short),
+    sebelum mereka melakukan Market Buy besar-besaran.
+    
+    Kasus LYNUSDT:
+    - Bid menghilang tiba-tiba
+    - Bot pikir: VACUUM → SHORT ❌
+    - Realita: BAIT & SWITCH → Whale akan pump!
+    """
+    
+    @staticmethod
+    def detect(current_bid_vol: float, prev_bid_vol: float,
+               oi_delta: float, time_delta_ms: float) -> Dict:
+        """
+        Deteksi bait & switch manipulation
+        """
+        # Hitung perubahan bid volume dalam %
+        if prev_bid_vol > 0:
+            bid_change_pct = (current_bid_vol - prev_bid_vol) / prev_bid_vol
+        else:
+            bid_change_pct = 0
+        
+        # Cek kondisi: Bid drop > 50% dalam < 500ms
+        if bid_change_pct < BSW_BID_DROP_THRESHOLD:  # Drop > 50%
+            if time_delta_ms < BSW_TIME_WINDOW_MS:    # < 500ms
+                if abs(oi_delta) < BSW_OI_STABLE_THRESHOLD:  # OI stable
+                    return {
+                        "bait_detected": True,
+                        "bias": "REVERSAL",  # Lawan arah!
+                        "direction": "LONG",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -16,
+                        "reason": f"BSW_BAIT_SWITCH: Bid drop {bid_change_pct:.1%} dalam {time_delta_ms}ms + "
+                                 f"OI {oi_delta:+.2f}% (stable) = BAIT & SWITCH! "
+                                 f"Whale cabut support untuk pancing SHORT, lalu akan PUMP!",
+                        "action": "REVERSE_VACUUM"
+                    }
+        
+        return {"bait_detected": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V100-LTF: LIQUIDITY TRAP FILTER =================
+class LiquidityTrapFilterV100:
+    """
+    🔥 V100-LTF: LIQUIDITY TRAP FILTER - ANTI-MICRO-FLUSH
+    
+    HFT tahu bot mencari "Payout" terbesar.
+    Jika Long Payout >> Short Payout, HFT akan melakukan Micro-Flush
+    (turun 2-3% dengan cepat) untuk menghantam SL bot yang ketat
+    sebelum akhirnya naik 8%.
+    
+    Kasus APRUSDT:
+    - Payout ratio: 50.6x (EXTREME!)
+    - Bot: LONG ✅
+    - Tapi HFT akan flush dulu sebelum pump!
+    """
+    
+    @staticmethod
+    def detect(payout_ratio: float, distance_to_pool: float,
+               current_price: float, liq_price: float) -> Dict:
+        """
+        Deteksi liquidity trap
+        """
+        if payout_ratio > LTF_PAYOUT_RATIO_THRESHOLD:  # > 10x
+            if distance_to_pool < LTF_DISTANCE_THRESHOLD:  # < 2%
+                return {
+                    "trap_detected": True,
+                    "bias": "WAIT",  # Jangan entry dulu!
+                    "action": "WAIT_FOR_FLUSH",
+                    "confidence": "ABSOLUTE",
+                    "priority_level": -15,
+                    "reason": f"LTF_LIQUIDITY_TRAP: Payout ratio {payout_ratio:.1f}x > 10x + "
+                             f"Distance to pool {distance_to_pool:.2%} < 2% = "
+                             f"Micro-Flush imminent! TUNGGU FLUSH DULU!",
+                    "wait_seconds": 120,  # 2 menit
+                    "expected_flush": f"-{distance_to_pool:.1%} to -{distance_to_pool*1.5:.1%}"
+                }
+        
+        return {"trap_detected": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V117-AGD: AGGRESSION DIVERGENCE =================
+class AggressionDivergenceV117:
+    """
+    🔥 V117-AGD: AGGRESSION DIVERGENCE - ANTI-SYNTHETIC MOVEMENT
+    
+    Di market mati, "Price follows the Void".
+    Jika Aggression < 0.2 tapi harga bergerak naik/turun > 0.5%,
+    itu adalah Synthetic Movement (bukan organik).
+    
+    Jangan entry jika Aggression di bawah ambang batas,
+    kecuali OI Delta menunjukkan akumulasi masif (SAD aktif).
+    """
+    
+    @staticmethod
+    def detect(agg_ratio: float, price_change: float,
+               oi_delta: float, sad_active: bool) -> Dict:
+        """
+        Deteksi synthetic movement
+        """
+        # Kondisi: Agg dead, tapi harga bergerak signifikan
+        if agg_ratio < AGD_AGGRESSION_DEAD_MAX:  # Agg < 0.2
+            if abs(price_change) > AGD_PRICE_MOVE_MIN:  # Price move > 0.5%
+                # Cek apakah ada akumulasi masif
+                if oi_delta > AGD_OI_ACCUMULATION_MIN:  # OI > 1%
+                    if sad_active:
+                        # SAD aktif = akumulasi real
+                        return {
+                            "synthetic": False,
+                            "bias": "LONG",
+                            "confidence": "HIGH",
+                            "priority_level": 0,
+                            "reason": f"AGD_SYNTHETIC_WITH_ACCUM: Agg {agg_ratio:.2f}x (dead) + "
+                                     f"Price {price_change:+.2f}% + OI {oi_delta:+.2f}% + SAD ACTIVE = "
+                                     f"AKUMULASI REAL! Boleh entry."
+                        }
+                    else:
+                        # Synthetic movement tanpa akumulasi = TRAP!
+                        return {
+                            "synthetic": True,
+                            "bias": "NEUTRAL",
+                            "action": "NO_TRADE",
+                            "confidence": "ABSOLUTE",
+                            "priority_level": -14,
+                            "reason": f"AGD_SYNTHETIC_MOVE: Agg {agg_ratio:.2f}x (dead) + "
+                                     f"Price {price_change:+.2f}% (move) + OI {oi_delta:+.2f}% (no accum) = "
+                                     f"SYNTHETIC MOVEMENT! Bukan organik! NO TRADE!",
+                        }
+        
+        return {"synthetic": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V118-DSL: DYNAMIC STOP LOSS =================
+class DynamicStopLossV118:
+    """
+    🔥 V118-DSL: DYNAMIC STOP LOSS - ANTI-STOP HUNTING
+    
+    Jangan pakai angka statis 8%.
+    Gunakan SL = Liquidation_Map_Low + 0.5%.
+    Letakkan SL Anda di bawah tumpukan likuidasi orang lain.
+    
+    Plus Time-Based Exit: Jika dalam 30 menit harga tidak mencapai TP 3%,
+    tutup posisi. HFT menang jika mereka bisa "menahan" posisi Anda.
+    """
+    
+    @staticmethod
+    def calculate_stop_loss(entry_price: float, liquidation_map: List[float],
+                            is_long: bool) -> Dict:
+        """
+        Hitung dynamic stop loss berdasarkan liquidation map
+        """
+        if not liquidation_map:
+            # Fallback ke default jika tidak ada data
+            sl_pct = 0.08  # 8%
+            sl_price = entry_price * (1 - sl_pct) if is_long else entry_price * (1 + sl_pct)
+            return {
+                "sl_price": round(sl_price, 8),
+                "sl_pct": sl_pct,
+                "reason": "No liquidation map data, using default 8%"
+            }
+        
+        # Cari liquidation cluster terdekat
+        if is_long:
+            # Untuk LONG, SL di bawah liquidation cluster
+            liq_lows = [l for l in liquidation_map if l < entry_price]
+            if liq_lows:
+                nearest_liq = max(liq_lows)  # cluster tertinggi di bawah harga
+                sl_price = nearest_liq * (1 - DSL_SL_BUFFER)  # 0.5% di bawah cluster
+                sl_pct = (entry_price - sl_price) / entry_price
+            else:
+                sl_pct = 0.08
+                sl_price = entry_price * (1 - sl_pct)
+        else:
+            # Untuk SHORT, SL di atas liquidation cluster
+            liq_highs = [l for l in liquidation_map if l > entry_price]
+            if liq_highs:
+                nearest_liq = min(liq_highs)  # cluster terendah di atas harga
+                sl_price = nearest_liq * (1 + DSL_SL_BUFFER)  # 0.5% di atas cluster
+                sl_pct = (sl_price - entry_price) / entry_price
+            else:
+                sl_pct = 0.08
+                sl_price = entry_price * (1 + sl_pct)
+        
+        return {
+            "sl_price": round(sl_price, 8),
+            "sl_pct": round(sl_pct * 100, 2),
+            "reason": f"SL placed {DSL_SL_BUFFER:.1%} below nearest liquidation cluster"
+        }
+    
+    @staticmethod
+    def time_based_exit(entry_time: float, current_time: float,
+                        current_price: float, entry_price: float) -> Dict:
+        """
+        Time-based exit jika tidak mencapai TP dalam waktu tertentu
+        """
+        minutes_passed = (current_time - entry_time) / 60
+        
+        if minutes_passed > DSL_TIME_BASED_EXIT_MINUTES:
+            price_change_pct = (current_price - entry_price) / entry_price * 100
+            
+            if price_change_pct < DSL_TIME_BASED_TP_MIN:
+                return {
+                    "exit_signal": True,
+                    "reason": f"Time-based exit: {minutes_passed:.1f} menit, "
+                             f"price change {price_change_pct:.1f}% < {DSL_TIME_BASED_TP_MIN}% TP target"
+                }
+        
+        return {"exit_signal": False}
+
+
+# ================= V119-LPF: LIQUIDITY PROXIMITY FILTER =================
+class LiquidityProximityFilterV119:
+    """
+    🔥 V119-LPF: LIQUIDITY PROXIMITY FILTER
+    
+    Jika jarak ke heavy liquidity pool < 2%, jangan entry searah likuidasi.
+    Harga akan di-drag ke sana dulu sebelum reversal.
+    """
+    
+    @staticmethod
+    def detect(distance_to_liq: float, bias: str, liq_side: str) -> Dict:
+        """
+        Filter berdasarkan jarak ke liquidity pool
+        """
+        if distance_to_liq < LPF_DISTANCE_THRESHOLD:  # < 2%
+            # Jika bias searah dengan likuidasi, harus WAIT!
+            if (bias == "LONG" and liq_side == "LONG") or \
+               (bias == "SHORT" and liq_side == "SHORT"):
+                return {
+                    "filter_active": True,
+                    "bias": "WAIT",
+                    "action": "WAIT_FOR_TOUCH",
+                    "confidence": "HIGH",
+                    "priority_level": -13,
+                    "reason": f"LPF_LIQ_PROXIMITY: Jarak ke {liq_side} liq {distance_to_liq:.2%} < 2%! "
+                             f"Harga akan di-drag ke sana dulu. "
+                             f"Tunggu {liq_side} liq tersentuh dulu baru entry {bias}."
+                }
+        
+        return {"filter_active": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V120-ASR: ABSORPTION & STABILITY RULE =================
+class AbsorptionStabilityRuleV120:
+    """
+    🔥 V120-ASR: ABSORPTION & STABILITY RULE
+    
+    Jika OI Down (liquid) tapi Price tertahan di Support (tidak terjun bebas),
+    itu artinya Aggressive Absorption. Whale menyerap semua panic sell.
+    
+    Signal: LONG setelah absorption selesai.
+    """
+    
+    @staticmethod
+    def detect(oi_delta: float, price_change: float,
+               price_stable: bool, support_level: float) -> Dict:
+        """
+        Deteksi aggressive absorption
+        """
+        # OI turun signifikan
+        if oi_delta < ASR_OI_DROP_THRESHOLD:  # OI drop > 1%
+            # Price stabil (tidak free fall)
+            if abs(price_change) < ASR_PRICE_STABLE_THRESHOLD:  # < 0.5%
+                if price_stable:
+                    return {
+                        "absorption_detected": True,
+                        "bias": "LONG",
+                        "action": "WAIT_AND_ENTRY",
+                        "confidence": "SUPREME",
+                        "priority_level": -12,
+                        "reason": f"ASR_AGGRESSIVE_ABSORPTION: OI {oi_delta:.2f}% (DROP!) + "
+                                 f"Price {price_change:+.2f}% (STABLE!) = "
+                                 f"Whale menyerap semua panic sell! "
+                                 f"Support di {support_level:.6f}. SIAP LONG!"
+                    }
+        
+        return {"absorption_detected": False, "bias": "NEUTRAL", "priority_level": 99}
 
 
 # ================= V114-WVF: WMI VALIDATION FIX =================
@@ -3484,9 +3800,39 @@ class ConflictResolverV115_FINAL:
 
 
 # ================= V120-FINAL-UPDATED: CONFLICT RESOLVER DENGAN V107 MODULES =================
-class ConflictResolverV120_FINAL_UPDATED:
+class ConflictResolverV120_FINAL_ENHANCED:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN VACUUM CLASSIFIER & FLOW-BASED RESOLVER
+    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN ANTI-HFT SHIELD
+    
+    PRIORITY -20: V200-DMV (Dead Market Veto)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -20. V200-DMV: Dead Market Veto                        │ ← EXISTING
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -16: V116-BSW (Bait & Switch Detector)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -16. V116-BSW: Bait & Switch Detector                   │ ← BARU!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -15: V100-LTF (Liquidity Trap Filter)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -15. V100-LTF: Liquidity Trap Filter                    │ ← BARU!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -14: V117-AGD (Aggression Divergence)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -14. V117-AGD: Aggression Divergence                    │ ← BARU!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -13: V119-LPF (Liquidity Proximity Filter)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -13. V119-LPF: Liquidity Proximity Filter               │ ← BARU!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -12: V120-ASR (Absorption & Stability Rule)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -12. V120-ASR: Absorption & Stability Rule              │ ← BARU!
+    └─────────────────────────────────────────────────────────┘
     
     PRIORITY -7: WMI-FLOW CORRELATION
     ┌─────────────────────────────────────────────────────────┐
@@ -3535,6 +3881,75 @@ class ConflictResolverV120_FINAL_UPDATED:
     
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== PRIORITY -20: V200-DMV (EXISTING) =====
+        dmv_res = results.get('dmv_v200', {})
+        if dmv_res.get('veto_active'):
+            return {
+                "final_bias": dmv_res.get('bias', 'NEUTRAL'),
+                "confidence": "ABSOLUTE",
+                "reason": dmv_res.get('reason', 'Dead Market Veto'),
+                "phase": dmv_res.get('market_state', 'DEAD_MARKET'),
+                "priority_level": -20
+            }
+        
+        # ===== PRIORITY -16: V116-BSW =====
+        bsw_res = results.get('bsw_v116', {})
+        if bsw_res.get('bait_detected'):
+            return {
+                "final_bias": bsw_res.get('direction', 'NEUTRAL'),
+                "confidence": bsw_res.get('confidence', 'ABSOLUTE'),
+                "reason": bsw_res.get('reason', ''),
+                "phase": "BAIT_SWITCH",
+                "priority_level": -16
+            }
+        
+        # ===== PRIORITY -15: V100-LTF =====
+        ltf_res = results.get('ltf_v100', {})
+        if ltf_res.get('trap_detected'):
+            return {
+                "final_bias": ltf_res.get('bias', 'NEUTRAL'),
+                "confidence": ltf_res.get('confidence', 'ABSOLUTE'),
+                "reason": ltf_res.get('reason', ''),
+                "phase": "LIQUIDITY_TRAP",
+                "priority_level": -15,
+                "wait_seconds": ltf_res.get('wait_seconds', 0)
+            }
+        
+        # ===== PRIORITY -14: V117-AGD =====
+        agd_res = results.get('agd_v117', {})
+        if agd_res.get('synthetic'):
+            return {
+                "final_bias": "NEUTRAL",
+                "confidence": "ABSOLUTE",
+                "reason": agd_res.get('reason', ''),
+                "phase": "SYNTHETIC_MOVE",
+                "priority_level": -14,
+                "action": "NO_TRADE"
+            }
+        
+        # ===== PRIORITY -13: V119-LPF =====
+        lpf_res = results.get('lpf_v119', {})
+        if lpf_res.get('filter_active'):
+            return {
+                "final_bias": lpf_res.get('bias', 'NEUTRAL'),
+                "confidence": lpf_res.get('confidence', 'HIGH'),
+                "reason": lpf_res.get('reason', ''),
+                "phase": "LIQUIDITY_PROXIMITY",
+                "priority_level": -13,
+                "action": lpf_res.get('action', 'WAIT_FOR_TOUCH')
+            }
+        
+        # ===== PRIORITY -12: V120-ASR =====
+        asr_res = results.get('asr_v120', {})
+        if asr_res.get('absorption_detected'):
+            return {
+                "final_bias": asr_res['bias'],
+                "confidence": asr_res.get('confidence', 'SUPREME'),
+                "reason": asr_res.get('reason', ''),
+                "phase": "AGGRESSIVE_ABSORPTION",
+                "priority_level": -12
+            }
         
         # ===== PRIORITY -7: WMI-FLOW CORRELATION =====
         wfc_res = results.get('wfc_v107', {})
@@ -26372,6 +26787,17 @@ class BinanceAnalyzerV87:
         self.vc_v107 = VacuumClassifierV107()                    # V107-VC
         self.fbr_v107 = FlowBasedResolverV107()                  # V107-FBR
         self.wfc_v107 = WMIFlowCorrelationV107()                 # V107-WFC
+        
+        # ===== ANTI-HFT SHIELD MODULES (V116-V120) =====
+        self.bsw_v116 = BaitAndSwitchDetectorV116()           # V116-BSW
+        self.ltf_v100 = LiquidityTrapFilterV100()              # V100-LTF
+        self.agd_v117 = AggressionDivergenceV117()             # V117-AGD
+        self.dsl_v118 = DynamicStopLossV118()                  # V118-DSL
+        self.lpf_v119 = LiquidityProximityFilterV119()         # V119-LPF
+        self.asr_v120 = AbsorptionStabilityRuleV120()          # V120-ASR
+        
+        # Gunakan resolver V120 enhanced yang baru (dengan ANTI-HFT SHIELD)
+        self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
         
         # Gunakan resolver V120 yang baru (UPDATED dengan V107 modules)
         self.final_resolver_v120_updated = ConflictResolverV120_FINAL_UPDATED()
