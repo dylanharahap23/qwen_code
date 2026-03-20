@@ -26799,9 +26799,6 @@ class BinanceAnalyzerV87:
         # Gunakan resolver V120 enhanced yang baru (dengan ANTI-HFT SHIELD)
         self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
         
-        # Gunakan resolver V120 yang baru (UPDATED dengan V107 modules)
-        self.final_resolver_v120_updated = ConflictResolverV120_FINAL_UPDATED()
-        
         # ===== V106 SEQUENCE ENGINE =====
         self.seq_v106 = SequenceEngineV106()                 # V106-SEQ
         self.cpd_v106 = CrowdParadoxDetectorV106()           # V106-CPD
@@ -29352,8 +29349,8 @@ class BinanceAnalyzerV87:
             # ===== V115: FINAL RESOLVER (EXECUTION FEASIBILITY ENGINE - PALING TERTINGGI!) =====
             v115_final = self.final_resolver_v115.resolve_all_signals(scoring_data)
             
-            # ===== V120: FINAL RESOLVER UPDATED (META DECISION ENGINE + V107 MODULES - SUPREME COMMANDER!) =====
-            v120_final = self.final_resolver_v120_updated.resolve_all_signals(scoring_data)
+            # ===== V120: FINAL RESOLVER ENHANCED (ANTI-HFT SHIELD - SUPREME COMMANDER!) =====
+            v120_final = self.final_resolver_v120_enhanced.resolve_all_signals(scoring_data)
             
             # ===== V106: FINAL RESOLVER (SEQUENCE ENGINE - TERTINGGI!) =====
             v106_final = self.final_resolver_v106.resolve_all_signals(scoring_data)
