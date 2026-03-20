@@ -661,6 +661,12 @@ MDE_STATE_WEIGHTS = {
 MDE_TIME_DECAY_FACTOR = 0.7                    # Signal age decay per 30 seconds
 MDE_SIGNAL_AGE_WINDOW = 30                      # 30 seconds window
 
+# ================= V200-DMV: DEAD MARKET VETO CONFIG =================
+DMV_AGG_DEAD_THRESHOLD = 0.1                 # Agg < 0.1 = dead market
+DMV_FLOW_DEAD_THRESHOLD = 0.5                 # Flow < 0.5 = dead market
+DMV_MIN_REAL_FLOW = 0.3                        # Minimal flow untuk arah real
+DMV_ORDERBOOK_THRESHOLD = 1000                 # Threshold volume orderbook
+
 # ================= V104-SE: SEQUENCE ENGINE CONFIG =================
 SE_BUILD_OI_MIN = 2.0                     # OI > 2% = BUILD phase
 SE_BUILD_FLOW_MIN = 1.5                    # Flow > 1.5 = BUILD phase
@@ -1511,6 +1517,121 @@ class DeadMarketTrapV112:
                 }
         
         return {"is_dead_market": False, "priority": 99}
+
+
+# ================= V200-DMV: DEAD MARKET VETO =================
+class DeadMarketVetoV200:
+    """
+    🔥 V200-DMV: DEAD MARKET VETO - PRIORITAS TERTINGGI
+    Jika pasar dalam kondisi mati (Agg ~ 0, Flow < 0.5), maka:
+    1. Semua sinyal kompleks (WMI, ENERGY, IMBALANCE) dianggap NOISE.
+    2. Satu-satunya sinyal valid adalah arah FLOW dari order REAL.
+    3. Jika tidak ada FLOW yang jelas, posisi adalah NO TRADE.
+    
+    Kasus LYNUSDT Paradox:
+    - Agg: 0.0x (DEAD!)
+    - Flow: 0.23x (LEMAH!)
+    - TAPI bot tetap pake WMI 100x, ENERGY, dll = SALAH!
+    - Harusnya: DEAD MARKET VETO aktif!
+    """
+    
+    # Thresholds dari config
+    AGG_DEAD_THRESHOLD = DMV_AGG_DEAD_THRESHOLD
+    FLOW_DEAD_THRESHOLD = DMV_FLOW_DEAD_THRESHOLD
+    MIN_REAL_FLOW = DMV_MIN_REAL_FLOW
+
+    @staticmethod
+    def evaluate(agg_ratio: float, flow: float, 
+                 bid_vol: float, ask_vol: float,
+                 rsi: float = None) -> Dict:
+        """
+        Mengevaluasi apakah pasar dalam kondisi mati dan apa implikasinya.
+        
+        Args:
+            agg_ratio: Aggressive Ratio (0.0x = dead)
+            flow: Trade Flow (rendah = sepi)
+            bid_vol: Volume bid (order beli)
+            ask_vol: Volume ask (order jual)
+            rsi: RSI (opsional, untuk konteks)
+        
+        Returns:
+            Dict dengan veto_active, bias, priority_level, reason
+        """
+        is_dead_market = (agg_ratio <= DeadMarketVetoV200.AGG_DEAD_THRESHOLD and 
+                          flow <= DeadMarketVetoV200.FLOW_DEAD_THRESHOLD)
+
+        if not is_dead_market:
+            return {
+                "veto_active": False,
+                "market_state": "ALIVE",
+                "bias": "NEUTRAL",
+                "priority_level": 0,  # Tidak ada veto, lanjut ke modul lain
+                "reason": f"Market alive: Agg {agg_ratio:.2f}x, Flow {flow:.2f}x"
+            }
+
+        # ===== PASAR MATI TERDETEKSI! =====
+        # Satu-satunya sinyal adalah arah dari order flow real-time.
+        rsi_context = f" RSI {rsi:.1f}" if rsi else ""
+        reason = f"PASAR MATI: Agg {agg_ratio:.2f}x, Flow {flow:.2f}x{rsi_context}. "
+
+        # Deteksi arah dari orderbook
+        # Jika ask_volume besar dan bid_volume kecil = ada order jual (SHORT)
+        # Jika bid_volume besar dan ask_volume kecil = ada order beli (LONG)
+        
+        # Ini adalah simulasi sederhana. Idealnya, Anda perlu track perubahan orderbook.
+        if ask_vol > DMV_ORDERBOOK_THRESHOLD and bid_vol < DMV_ORDERBOOK_THRESHOLD / 2:
+            # Ada order jual besar di ask side
+            if flow > DeadMarketVetoV200.MIN_REAL_FLOW:
+                return {
+                    "veto_active": True,
+                    "market_state": "DEAD_WITH_SELL_PRESSURE",
+                    "bias": "SHORT",
+                    "priority_level": -999,  # Prioritas tertinggi! Veto semua!
+                    "action": "FOLLOW_SELL_PRESSURE",
+                    "reason": reason + f"Terdeteksi order SELL besar ({ask_vol:.0f}) di ask side. Ikuti SHORT."
+                }
+        
+        elif bid_vol > DMV_ORDERBOOK_THRESHOLD and ask_vol < DMV_ORDERBOOK_THRESHOLD / 2:
+            # Ada order beli besar di bid side
+            if flow > DeadMarketVetoV200.MIN_REAL_FLOW:
+                return {
+                    "veto_active": True,
+                    "market_state": "DEAD_WITH_BUY_PRESSURE",
+                    "bias": "LONG",
+                    "priority_level": -999,
+                    "action": "FOLLOW_BUY_PRESSURE",
+                    "reason": reason + f"Terdeteksi order BUY besar ({bid_vol:.0f}) di bid side. Ikuti LONG."
+                }
+        
+        # Cek flow arah (jika flow > 1 = buying pressure, flow < 1 = selling pressure)
+        if flow > 1.0:
+            return {
+                "veto_active": True,
+                "market_state": "DEAD_WITH_BUY_FLOW",
+                "bias": "LONG",
+                "priority_level": -999,
+                "action": "FOLLOW_BUY_FLOW",
+                "reason": reason + f"Flow {flow:.2f}x > 1 = BUY pressure. Ikuti LONG meski pasar mati."
+            }
+        elif flow < 1.0 and flow > DeadMarketVetoV200.MIN_REAL_FLOW:
+            return {
+                "veto_active": True,
+                "market_state": "DEAD_WITH_SELL_FLOW",
+                "bias": "SHORT",
+                "priority_level": -999,
+                "action": "FOLLOW_SELL_FLOW",
+                "reason": reason + f"Flow {flow:.2f}x < 1 = SELL pressure. Ikuti SHORT meski pasar mati."
+            }
+        
+        # Pasar mati total tanpa arah, NO TRADE!
+        return {
+            "veto_active": True,
+            "market_state": "DEAD_NEUTRAL",
+            "bias": "NEUTRAL",
+            "priority_level": -999,
+            "action": "NO_TRADE",
+            "reason": reason + "Tidak ada arah order flow. NO TRADE."
+        }
 
 
 # ================= V114-WVF: WMI VALIDATION FIX =================
@@ -26229,6 +26350,7 @@ class BinanceAnalyzerV87:
         # ===== V111-V115 EXECUTION FEASIBILITY ENGINE =====
         self.efe_v111 = ExecutionFeasibilityEngineV111()      # V111-EFE
         self.dmt_v112 = DeadMarketTrapV112()                  # V112-DMT
+        self.dmv_v200 = DeadMarketVetoV200()                  # V200-DMV
         self.fsk_v113 = FalseSqueezeKillerV113()              # V113-FSK
         self.wvf_v114 = WMIValidationFixV114()                 # V114-WVF
         self.tc_v115 = TrapClassifierV115()                    # V115-TC
@@ -28791,6 +28913,15 @@ class BinanceAnalyzerV87:
             
             # ===== V105: FINAL RESOLVER (RESISTANCE MAP ENGINE - LEBIH TINGGI DARI V104!) =====
             v105_final = self.final_resolver_v105.resolve_all_signals(scoring_data)
+            
+            # ===== V200-DMV: DEAD MARKET VETO (PRIORITAS TERTINGGI - MUTLAK!) =====
+            dmv_result = self.dmv_v200.evaluate(
+                agg_ratio=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                bid_vol=bid_vol,
+                ask_vol=ask_vol,
+                rsi=rsi6
+            )
             
             # ===== V115: FINAL RESOLVER (EXECUTION FEASIBILITY ENGINE - PALING TERTINGGI!) =====
             v115_final = self.final_resolver_v115.resolve_all_signals(scoring_data)
