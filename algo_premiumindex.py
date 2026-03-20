@@ -698,6 +698,26 @@ ASR_PRICE_STABLE_THRESHOLD = 0.5               # Price change < 0.5% = stable
 ASR_OI_DROP_THRESHOLD = -1.0                   # OI drop > 1%
 ASR_ABSORPTION_WAIT_MINUTES = 5                # Wait 5 minutes after absorption
 
+# ================= V118-ROC: RSI-OI CEILING CONFIG =================
+ROC_PRICE_RUNUP_THRESHOLD = 5.0            # Price runup > 5%
+ROC_OI_DROP_THRESHOLD = -3.0                # OI drop > 3%
+ROC_RSI_CEILING = 65.0                      # RSI > 65 = overbought zone
+
+# ================= V119-LGV: LIQUIDITY GRAVITY VS PAYOUT CONFIG =================
+LGV_SHORT_DIST_FAR = 5.0                    # Short liq > 5% = too far
+LGV_LONG_DIST_CLOSE = 3.0                   # Long liq < 3% = close
+LGV_PAYOUT_RATIO_IGNORE = 10.0               # Ignore payout if > 10x
+
+# ================= V120-AFD: AGGRESSION-FLOW DIVERGENCE CONFIG =================
+AFD_FLOW_ACTIVE_MIN = 1.0                   # Flow > 1.0 = active
+AFD_AGG_DEAD_MAX = 0.1                      # Agg < 0.1 = dead
+AFD_PASSIVE_DISTRIBUTION = True              # Detect passive distribution
+
+# ================= V121-TTK: TIME TO KILL CONFIG =================
+TTK_WAIT_MINUTES = 5                         # Wait 5 minutes after signal
+TTK_PRICE_MOVE_REQUIRED = 1.0                # Need 1% move to confirm
+TTK_OI_DROP_CANCEL = -2.0                    # OI drop > 2% = cancel
+
 # ================= V104-SE: SEQUENCE ENGINE CONFIG =================
 SE_BUILD_OI_MIN = 2.0                     # OI > 2% = BUILD phase
 SE_BUILD_FLOW_MIN = 1.5                    # Flow > 1.5 = BUILD phase
@@ -1948,6 +1968,212 @@ class AbsorptionStabilityRuleV120:
                     }
         
         return {"absorption_detected": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V118-ROC: RSI-OI CEILING =================
+class RSIOICeilingV118:
+    """
+    🔥 V118-ROC: RSI-OI CEILING - ANTI-EXIT LIQUIDITY TRAP
+    
+    Kasus PLAYUSDT:
+    - Price Change: +10.23% (> 5%)
+    - OI Delta: -3.0% (DROP!)
+    - RSI: 68.7 (> 65)
+    - Bot baca: Short Covering → LONG ❌
+    - Realita: EXIT ZONE! MM pump untuk exit liquidity, bukan squeeze!
+    
+    Prinsip:
+    Jika harga sudah naik tinggi (>5%) tapi OI turun masif (>3%),
+    artinya bahan bakar (Short Sellers) sudah habis terbakar.
+    Tidak ada lagi yang bisa di-squeeze.
+    """
+    
+    @staticmethod
+    def detect(price_change_5m: float, oi_delta: float, rsi: float) -> Dict:
+        """
+        Deteksi exit zone di puncak
+        """
+        # Cek kondisi: price runup tinggi + OI turun + RSI overbought
+        if price_change_5m > ROC_PRICE_RUNUP_THRESHOLD:      # Price > 5%
+            if oi_delta < ROC_OI_DROP_THRESHOLD:              # OI drop > 3%
+                if rsi > ROC_RSI_CEILING:                     # RSI > 65
+                    return {
+                        "is_exit_zone": True,
+                        "bias": "NEUTRAL",  # JANGAN LONG!
+                        "action": "NO_LONG_AT_TOP",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -17,
+                        "reason": f"ROC_EXIT_ZONE: Price runup {price_change_5m:.2f}% (>5%) + "
+                                 f"OI {oi_delta:.2f}% (DROP!) + RSI {rsi:.1f} (>65) = "
+                                 f"EXIT LIQUIDITY! MM pump untuk tutup posisi. "
+                                 f"DILARANG LONG DI PUCUK! Short sellers sudah habis terbakar.",
+                        "phase": "EXIT_ZONE_DETECTED"
+                    }
+        
+        return {"is_exit_zone": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V119-LGV: LIQUIDITY GRAVITY VS PAYOUT =================
+class LiquidityGravityVsPayoutV119:
+    """
+    🔥 V119-LGV: LIQUIDITY GRAVITY VS PAYOUT - ANTI-FAKE MAGNET
+    
+    Kasus PLAYUSDT:
+    - Target Short: +10.19% (JAUH!)
+    - Target Long: -32.35% (SANGAT DALAM!)
+    - Payout Ratio: 10.1x (Bot fokus ini)
+    - Realita: MM pilih target LONG (Gravity) karena lebih dekat & padat!
+    
+    Prinsip:
+    MM Binance lebih suka menghantam target yang "Lebih Dekat & Lebih Padat"
+    daripada yang "Rasionya Besar tapi Jauh".
+    """
+    
+    @staticmethod
+    def detect(short_dist: float, long_dist: float, 
+               payout_ratio: float, wmi: float) -> Dict:
+        """
+        Deteksi gravity vs payout
+        """
+        # Cek jika short liq terlalu jauh (>5%) dan long liq dekat (<3%)
+        if short_dist > LGV_SHORT_DIST_FAR:                    # Short > 5%
+            if abs(long_dist) < LGV_LONG_DIST_CLOSE:            # Long < 3%
+                if payout_ratio > LGV_PAYOUT_RATIO_IGNORE:      # Payout > 10x
+                    return {
+                        "gravity_over_payout": True,
+                        "bias": "SHORT",  # Follow gravity ke long liq
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -16,
+                        "reason": f"LGV_GRAVITY_WINS: Short liq {short_dist:.2f}% (JAUH!) + "
+                                 f"Long liq {abs(long_dist):.2f}% (DEKAT!) + "
+                                 f"Payout {payout_ratio:.1f}x (besar tapi JAUH) = "
+                                 f"MM pilih GRAVITY! Target LONG liq! SHORT bias!",
+                        "phase": "GRAVITY_OVERRIDE_PAYOUT"
+                    }
+        
+        return {"gravity_over_payout": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V120-AFD: AGGRESSION-FLOW DIVERGENCE =================
+class AggressionFlowDivergenceV120:
+    """
+    🔥 V120-AFD: AGGRESSION-FLOW DIVERGENCE - ANTI-PASSIVE DISTRIBUTION
+    
+    Kasus PLAYUSDT:
+    - Flow: 1.38x (Lumayan)
+    - Agg: 0.05x (MATI TOTAL!)
+    - Bot baca: Flow normal = sehat
+    - Realita: PASSIVE DISTRIBUTION! Whale jual via LIMIT ORDERS!
+    
+    Prinsip:
+    Flow tinggi tapi Aggression rendah = volume besar tapi dilakukan secara PASSIVE.
+    MM sedang memasang jaring jual (Sell Wall) diam-diam.
+    """
+    
+    @staticmethod
+    def detect(flow: float, agg_ratio: float, oi_delta: float, price_change: float) -> Dict:
+        """
+        Deteksi passive distribution
+        """
+        # Cek: Flow aktif (>1.0) tapi Agg mati (<0.1)
+        if flow > AFD_FLOW_ACTIVE_MIN:                         # Flow > 1.0
+            if agg_ratio < AFD_AGG_DEAD_MAX:                    # Agg < 0.1
+                # Ini PASSIVE DISTRIBUTION!
+                if oi_delta < 0:                                 # OI turun = exit
+                    return {
+                        "passive_distribution": True,
+                        "bias": "SHORT",
+                        "confidence": "ABSOLUTE",
+                        "priority_level": -15,
+                        "reason": f"AFD_PASSIVE_DIST: Flow {flow:.2f}x (aktif) + "
+                                 f"Agg {agg_ratio:.2f}x (mati) + OI {oi_delta:.2f}% (DROP!) = "
+                                 f"WHALE JUAL VIA LIMIT ORDERS! Passive distribution! "
+                                 f"DILARANG LONG! SIAP DUMP!",
+                        "phase": "PASSIVE_DISTRIBUTION"
+                    }
+                else:
+                    # OI stabil atau naik = accumulation via limit orders
+                    return {
+                        "passive_accumulation": True,
+                        "bias": "LONG",
+                        "confidence": "HIGH",
+                        "priority_level": -14,
+                        "reason": f"AFD_PASSIVE_ACCUM: Flow {flow:.2f}x + Agg {agg_ratio:.2f}x + "
+                                 f"OI {oi_delta:.2f}% = WHALE AKUMULASI VIA LIMIT ORDERS!",
+                        "phase": "PASSIVE_ACCUMULATION"
+                    }
+        
+        return {"passive_distribution": False, "bias": "NEUTRAL", "priority_level": 99}
+
+
+# ================= V121-TTK: TIME TO KILL CONFIRMATION =================
+class TimeToKillConfirmationV121:
+    """
+    🔥 V121-TTK: TIME TO KILL CONFIRMATION - ANTI-FAKE SIGNAL
+    
+    Jika dalam 5 menit setelah signal muncul harga tidak bergerak naik > 1%,
+    sementara OI terus turun, segera CANCEL SIGNAL.
+    
+    Itu tandanya MM sudah selesai "makan" dan sedang bersiap untuk arah sebaliknya.
+    
+    Kasus PLAYUSDT:
+    - TTK awal: 45m
+    - Setelah 5 menit: harga tidak naik, OI turun
+    - Harusnya: CANCEL SIGNAL!
+    """
+    
+    def __init__(self):
+        self.signal_time = {}
+        self.signal_price = {}
+        self.signal_oi = {}
+        self.signal_bias = None
+    
+    def register_signal(self, symbol: str, bias: str, price: float, oi: float, timestamp: float):
+        """Register new signal for TTK tracking"""
+        self.signal_time[symbol] = timestamp
+        self.signal_price[symbol] = price
+        self.signal_oi[symbol] = oi
+        self.signal_bias = bias
+    
+    def check_confirmation(self, symbol: str, current_price: float, 
+                           current_oi: float, current_time: float) -> Dict:
+        """
+        Check if signal is confirmed or should be cancelled
+        """
+        if symbol not in self.signal_time:
+            return {"confirmed": True, "should_cancel": False}
+        
+        # Hitung waktu sejak signal
+        minutes_passed = (current_time - self.signal_time[symbol]) / 60
+        
+        if minutes_passed < TTK_WAIT_MINUTES:
+            # Masih dalam window tunggu
+            return {"confirmed": False, "should_cancel": False, "wait_remaining": TTK_WAIT_MINUTES - minutes_passed}
+        
+        # Sudah melewati window tunggu, cek konfirmasi
+        price_change_pct = (current_price - self.signal_price[symbol]) / self.signal_price[symbol] * 100
+        oi_change_pct = (current_oi - self.signal_oi[symbol]) / self.signal_oi[symbol] * 100 if self.signal_oi[symbol] > 0 else 0
+        
+        # Jika price tidak bergerak signifikan dan OI turun, cancel signal!
+        if abs(price_change_pct) < TTK_PRICE_MOVE_REQUIRED:
+            if oi_change_pct < TTK_OI_DROP_CANCEL:  # OI drop > 2%
+                return {
+                    "confirmed": False,
+                    "should_cancel": True,
+                    "reason": f"TTK_CANCEL: {minutes_passed:.1f} menit, "
+                             f"price {price_change_pct:+.2f}% (<{TTK_PRICE_MOVE_REQUIRED}%), "
+                             f"OI {oi_change_pct:.2f}% (DROP >2%) = SIGNAL FAILED!",
+                    "phase": "SIGNAL_CANCELLED"
+                }
+        
+        # Signal confirmed
+        return {
+            "confirmed": True,
+            "should_cancel": False,
+            "reason": f"TTK_CONFIRMED: {minutes_passed:.1f} menit, "
+                     f"price {price_change_pct:+.2f}%, OI {oi_change_pct:.2f}%",
+            "phase": "SIGNAL_CONFIRMED"
+        }
 
 
 # ================= V114-WVF: WMI VALIDATION FIX =================
@@ -3802,31 +4028,36 @@ class ConflictResolverV115_FINAL:
 # ================= V120-FINAL-UPDATED: CONFLICT RESOLVER DENGAN V107 MODULES =================
 class ConflictResolverV120_FINAL_ENHANCED:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN ANTI-HFT SHIELD
+    🔥 URUTAN PRIORITAS MUTLAK V120 - DENGAN ANTI-HFT SHIELD & ANTI-KRIMINAL LOGIC
     
     PRIORITY -20: V200-DMV (Dead Market Veto)
     ┌─────────────────────────────────────────────────────────┐
     │ -20. V200-DMV: Dead Market Veto                        │ ← EXISTING
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -16: V116-BSW (Bait & Switch Detector)
+    PRIORITY -17: V118-ROC (RSI-OI Ceiling)
     ┌─────────────────────────────────────────────────────────┐
-    │ -16. V116-BSW: Bait & Switch Detector                   │ ← BARU!
+    │ -17. V118-ROC: RSI-OI Ceiling                          │ ← BARU! ANTI-KRIMINAL
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -15: V100-LTF (Liquidity Trap Filter)
+    PRIORITY -16: V119-LGV (Liquidity Gravity vs Payout)
     ┌─────────────────────────────────────────────────────────┐
-    │ -15. V100-LTF: Liquidity Trap Filter                    │ ← BARU!
+    │ -16. V119-LGV: Liquidity Gravity vs Payout              │ ← BARU! ANTI-KRIMINAL
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -14: V117-AGD (Aggression Divergence)
+    PRIORITY -15: V120-AFD (Aggression-Flow Divergence)
     ┌─────────────────────────────────────────────────────────┐
-    │ -14. V117-AGD: Aggression Divergence                    │ ← BARU!
+    │ -15. V120-AFD: Aggression-Flow Divergence               │ ← BARU! ANTI-KRIMINAL
     └─────────────────────────────────────────────────────────┘
     
-    PRIORITY -13: V119-LPF (Liquidity Proximity Filter)
+    PRIORITY -14: V116-BSW (Bait & Switch Detector)
     ┌─────────────────────────────────────────────────────────┐
-    │ -13. V119-LPF: Liquidity Proximity Filter               │ ← BARU!
+    │ -14. V116-BSW: Bait & Switch Detector                   │ ← BARU!
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -13: V100-LTF (Liquidity Trap Filter)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -13. V100-LTF: Liquidity Trap Filter                    │ ← BARU!
     └─────────────────────────────────────────────────────────┘
     
     PRIORITY -12: V120-ASR (Absorption & Stability Rule)
@@ -3893,7 +4124,41 @@ class ConflictResolverV120_FINAL_ENHANCED:
                 "priority_level": -20
             }
         
-        # ===== PRIORITY -16: V116-BSW =====
+        # ===== PRIORITY -17: V118-ROC (RSI-OI Ceiling) =====
+        roc_res = results.get('roc_v118', {})
+        if roc_res.get('is_exit_zone'):
+            return {
+                "final_bias": "NEUTRAL",
+                "confidence": "ABSOLUTE",
+                "reason": roc_res.get('reason', 'Exit zone detected'),
+                "phase": "EXIT_ZONE",
+                "priority_level": -17,
+                "action": "NO_LONG_AT_TOP"
+            }
+        
+        # ===== PRIORITY -16: V119-LGV (Liquidity Gravity vs Payout) =====
+        lgv_res = results.get('lgv_v119', {})
+        if lgv_res.get('gravity_over_payout'):
+            return {
+                "final_bias": lgv_res['bias'],
+                "confidence": lgv_res.get('confidence', 'ABSOLUTE'),
+                "reason": lgv_res.get('reason', ''),
+                "phase": "GRAVITY_OVERRIDE",
+                "priority_level": -16
+            }
+        
+        # ===== PRIORITY -15: V120-AFD (Aggression-Flow Divergence) =====
+        afd_res = results.get('afd_v120', {})
+        if afd_res.get('passive_distribution') or afd_res.get('passive_accumulation'):
+            return {
+                "final_bias": afd_res['bias'],
+                "confidence": afd_res.get('confidence', 'ABSOLUTE'),
+                "reason": afd_res.get('reason', ''),
+                "phase": afd_res.get('phase', 'PASSIVE_DISTRIBUTION'),
+                "priority_level": -15
+            }
+        
+        # ===== PRIORITY -14: V116-BSW =====
         bsw_res = results.get('bsw_v116', {})
         if bsw_res.get('bait_detected'):
             return {
@@ -3901,10 +4166,10 @@ class ConflictResolverV120_FINAL_ENHANCED:
                 "confidence": bsw_res.get('confidence', 'ABSOLUTE'),
                 "reason": bsw_res.get('reason', ''),
                 "phase": "BAIT_SWITCH",
-                "priority_level": -16
+                "priority_level": -14
             }
         
-        # ===== PRIORITY -15: V100-LTF =====
+        # ===== PRIORITY -13: V100-LTF =====
         ltf_res = results.get('ltf_v100', {})
         if ltf_res.get('trap_detected'):
             return {
@@ -3912,32 +4177,8 @@ class ConflictResolverV120_FINAL_ENHANCED:
                 "confidence": ltf_res.get('confidence', 'ABSOLUTE'),
                 "reason": ltf_res.get('reason', ''),
                 "phase": "LIQUIDITY_TRAP",
-                "priority_level": -15,
-                "wait_seconds": ltf_res.get('wait_seconds', 0)
-            }
-        
-        # ===== PRIORITY -14: V117-AGD =====
-        agd_res = results.get('agd_v117', {})
-        if agd_res.get('synthetic'):
-            return {
-                "final_bias": "NEUTRAL",
-                "confidence": "ABSOLUTE",
-                "reason": agd_res.get('reason', ''),
-                "phase": "SYNTHETIC_MOVE",
-                "priority_level": -14,
-                "action": "NO_TRADE"
-            }
-        
-        # ===== PRIORITY -13: V119-LPF =====
-        lpf_res = results.get('lpf_v119', {})
-        if lpf_res.get('filter_active'):
-            return {
-                "final_bias": lpf_res.get('bias', 'NEUTRAL'),
-                "confidence": lpf_res.get('confidence', 'HIGH'),
-                "reason": lpf_res.get('reason', ''),
-                "phase": "LIQUIDITY_PROXIMITY",
                 "priority_level": -13,
-                "action": lpf_res.get('action', 'WAIT_FOR_TOUCH')
+                "wait_seconds": ltf_res.get('wait_seconds', 0)
             }
         
         # ===== PRIORITY -12: V120-ASR =====
@@ -26796,8 +27037,17 @@ class BinanceAnalyzerV87:
         self.lpf_v119 = LiquidityProximityFilterV119()         # V119-LPF
         self.asr_v120 = AbsorptionStabilityRuleV120()          # V120-ASR
         
-        # Gunakan resolver V120 enhanced yang baru (dengan ANTI-HFT SHIELD)
+        # ===== ANTI-KRIMINAL MODULES (V118-V121) =====
+        self.roc_v118 = RSIOICeilingV118()                      # V118-ROC
+        self.lgv_v119 = LiquidityGravityVsPayoutV119()          # V119-LGV
+        self.afd_v120 = AggressionFlowDivergenceV120()          # V120-AFD
+        self.ttk_v121 = TimeToKillConfirmationV121()             # V121-TTK
+        
+        # Gunakan resolver V120 enhanced yang baru (dengan ANTI-HFT SHIELD & ANTI-KRIMINAL)
         self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
+        
+        # Track last signal bias for TTK
+        self.last_signal_bias = None
         
         # ===== V106 SEQUENCE ENGINE =====
         self.seq_v106 = SequenceEngineV106()                 # V106-SEQ
@@ -28494,8 +28744,41 @@ class BinanceAnalyzerV87:
                 'bpf': bpf_result if 'bpf_result' in locals() else {},
                 
                 # ===== V103: WMI VETO VALIDATOR =====
-                'wmi_veto_validator_v103': wmi_veto_validator if 'wmi_veto_validator' in locals() else {}
+                'wmi_veto_validator_v103': wmi_veto_validator if 'wmi_veto_validator' in locals() else {},
+                
+                # ===== ANTI-KRIMINAL MODULES (V118-V121) =====
+                'roc_v118': {},  # Will be populated below
+                'lgv_v119': {},  # Will be populated below
+                'afd_v120': {},  # Will be populated below
+                'ttk_v121': {}   # Will be populated below
             }
+            
+            # ===== ANTI-KRIMINAL MODULES CALLS (V118-V121) =====
+            # V118-ROC: RSI-OI Ceiling
+            roc_result = self.roc_v118.detect(
+                price_change_5m=change_5m,
+                oi_delta=oi_delta_5m,
+                rsi=rsi6
+            )
+            scoring_data['roc_v118'] = roc_result
+            
+            # V119-LGV: Liquidity Gravity vs Payout
+            lgv_result = self.lgv_v119.detect(
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999),
+                payout_ratio=lpc_result.get('payout_ratio', 1.0) if 'lpc_result' in locals() else 1.0,
+                wmi=wmi_ratio
+            )
+            scoring_data['lgv_v119'] = lgv_result
+            
+            # V120-AFD: Aggression-Flow Divergence
+            afd_result = self.afd_v120.detect(
+                flow=trades.get('ratio', 1.0) if 'trades' in locals() else 1.0,
+                agg_ratio=trades.get('aggressive_ratio', 1.0) if 'trades' in locals() else 1.0,
+                oi_delta=oi_delta_5m,
+                price_change=change_5m
+            )
+            scoring_data['afd_v120'] = afd_result
             
             # ===== V101: CALL NEW MODULES =====
             lmp_result = self.lmp_v101.check(
