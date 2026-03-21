@@ -817,57 +817,51 @@ RVP_OBV_NEGATIVE_EXTREME = -10.0            # OBV turun >10% dalam 10 periode
 RVP_STOCH_CROSS_THRESHOLD = 0               # K > D
 RVP_PRIORITY_LEVEL = -200                   # Prioritas tertinggi
 
-# ================= V250-ESO: ENERGY SUPREMACY OVERRIDE =================
-ESO_ENERGY_RATIO_EXTREME = 10.0           # >10x atau <0.1x
-ESO_PRIORITY = -250                        # Prioritas tertinggi
-
-# ================= V251-VDR: VACUUM DIRECTION RULE =================
-VDR_BID_VACUUM = 0.1                       # Bid < 0.1
-VDR_ASK_VACUUM = 0.1                       # Ask < 0.1
-VDR_ENERGY_RATIO_THRESHOLD = 3.0            # up_energy < down_energy * 3
-VDR_PRIORITY = -245
-
-# ================= V252-DMP: DEAD MARKET PROXIMITY RULE =================
-DMP_AGG_DEAD = 0.1                         # Agg < 0.1
-DMP_FLOW_DEAD = 0.5                        # Flow < 0.5
-DMP_DIST_CLOSE = 0.5                       # Jarak liq < 0.5%
-DMP_ENERGY_RATIO_THRESHOLD = 3.0
-DMP_PRIORITY = -235
-
-# ================= V253-ODF2: OVERBOUGHT DISTRIBUTION FILTER =================
-ODF2_RSI_OVERBOUGHT = 80.0
-ODF2_OI_BUILD = 0.5
-ODF2_ENERGY_RATIO = 5.0                    # up_energy < down_energy * 5
-ODF2_PRIORITY = -190
-
-# ================= V254-LFC: LIQUIDITY FLUSH CONFIRMATION =================
-LFC_SHORT_DIST = 0.5                       # short_dist < 0.5%
-LFC_LONG_DIST = 4.0                        # long_dist < 4% (double sweep)
-LFC_FLUSH_PROB = 50.0                      # flush_probability > 50%
-LFC_AGG_DEAD = 0.2
-LFC_PRIORITY = -255
-
-# ================= V255-WV: WEIGHTED VOTING DYNAMIC WEIGHTS =================
-WV_WEIGHT_BASE = 1.0
-WV_WEIGHT_ENERGY = 5.0                     # Bobot energy di market mati
-WV_WEIGHT_VACUUM = 5.0                     # Bobot vacuum di market mati
-WV_WEIGHT_DISTRIBUTION = 0.2               # Bobot distribution di market mati
-WV_THRESHOLD = 0.65                        # 65% untuk eksekusi
-
-# ================= V200-RVP: RSI-VOLUME PARADOX DETECTOR CONFIG =================
-RVP_OVERSOLD_THRESHOLD = 30.0               # RSI < 30 = oversold
-RVP_OVERBOUGHT_THRESHOLD = 70.0              # RSI > 70 = overbought
-RVP_VOLUME_SURGE = 1.5                      # volume_ratio > 1.5 = tinggi
-RVP_VOLUME_LOW = 0.8                        # volume_ratio < 0.8 = rendah
-RVP_OBV_NEGATIVE_EXTREME = -10.0            # OBV turun >10% dalam 10 periode
-RVP_STOCH_CROSS_THRESHOLD = 0               # K > D
-RVP_PRIORITY_LEVEL = -200                   # Prioritas tertinggi
-
 # ================= V126-VGA: VACUUM-GRAVITY ANCHOR CONFIG =================
-VGA_BID_ZERO_THRESHOLD = 0.1          # Bid volume < 0.1 = zero (vacuum)
-VGA_ASK_ZERO_THRESHOLD = 0.1          # Ask volume < 0.1 = zero (vacuum)
-VGA_ENERGY_RATIO_THRESHOLD = 5.0      # Energy ratio threshold for VGA
-VGA_PRIORITY_LEVEL = -300             # Priority level for VGA veto (highest priority)
+VGA_BID_ZERO_THRESHOLD = 0.1                 # Bid volume < 0.1 = kosong
+VGA_ASK_ZERO_THRESHOLD = 0.1                 # Ask volume < 0.1 = kosong
+VGA_PRIORITY_LEVEL = -25                      # Lebih tinggi dari modul lain
+
+# ================= V127-MDI: MACD DEAD ZONE INTEGRITY CONFIG =================
+MDI_MACD_DEAD_ZONE_THRESHOLD = 0              # DIF < 0 dan DEA < 0
+MDI_PRICE_BOUNCE_MIN = 0.5                    # Price bounce > 0.5%
+MDI_PRIORITY_LEVEL = -24
+
+# ================= V128-FSF: FAKE SQUEEZE FUEL CONFIG =================
+FSF_OI_RISE_MIN = 1.0                         # OI naik > 1%
+FSF_AGG_LOW_MAX = 0.3                         # Agg < 0.3 = rendah
+FSF_PRIORITY_LEVEL = -23
+
+# ================= V121-TTK: TIME TO KILL CONFIG =================
+TTK_WAIT_MINUTES = 5                         # Wait 5 minutes after signal
+TTK_PRICE_MOVE_REQUIRED = 1.0                # Need 1% move to confirm
+TTK_OI_DROP_CANCEL = -2.0                    # OI drop > 2% = cancel
+
+# ================= V104-SE: SEQUENCE ENGINE CONFIG =================
+SE_BUILD_OI_MIN = 2.0                     # OI > 2% = BUILD phase
+SE_BUILD_FLOW_MIN = 1.5                    # Flow > 1.5 = BUILD phase
+SE_BUILD_AGG_MAX = 2.0                     # Agg < 2 = BUILD phase (belum agresif)
+
+SE_SQUEEZE_WMI_MIN = 90.0                   # WMI > 90 = squeeze possible
+SE_SQUEEZE_ENERGY_RATIO = 1.2               # Energy up < down * ratio
+
+SE_DISTRIBUTION_RSI_MIN = 80.0              # RSI > 80
+SE_DISTRIBUTION_OI_MIN = 2.0                # OI > 2%
+SE_DISTRIBUTION_FLOW_MIN = 2.0              # Flow > 2x untuk distribution
+
+# ================= V104-FRD: FRONT-RUN DETECTOR CONFIG =================
+FRD_WMI_THRESHOLD = 90.0                    # WMI > 90
+FRD_FLOW_MIN = 1.5                          # Flow > 1.5
+FRD_ENERGY_RATIO = 1.2                      # Energy up < down * ratio
+
+# ================= V104-CRE: CONFLICT RESOLUTION ENGINE CONFIG =================
+CRE_EXECUTION_FEASIBILITY_CHECK = True      # Cek eksekusi feasible
+CRE_CASCADE_EXTREME_RATIO = 5.0             # Cascade > 5x = extreme
+
+# ================= V104-PMD: PRE-MOVE DETECTOR CONFIG =================
+PMD_OI_BUILD_MIN = 2.0                       # OI > 2% = build
+PMD_FLOW_ACTIVE_MIN = 2.0                    # Flow > 2x = active
+PMD_AGG_MAX = 2.0                            # Agg < 2 = belum agresif
 
 # ================= V104-ADF: ACTIVE DISTRIBUTION FILTER CONFIG =================
 ADF_RSI_HIGH_MIN = 80.0                      # RSI > 80
@@ -3495,177 +3489,6 @@ class RSIVolumeParadoxDetectorV200:
         return {"is_trap": False, "correct_bias": "NEUTRAL"}
 
 
-# ================= V250-ESO: ENERGY SUPREMACY OVERRIDE =================
-class EnergySupremacyOverrideV250:
-    """
-    🔥 V250-ESO: ENERGY SUPREMACY OVERRIDE
-    Jika energi untuk naik >10x lebih mahal dari turun (atau sebaliknya),
-    maka MM WAJIB memilih jalur termurah. Override semua sinyal.
-    """
-    @staticmethod
-    def detect(up_energy: float, down_energy: float) -> Dict:
-        if up_energy <= 0 or down_energy <= 0:
-            return {"override": False, "bias": "NEUTRAL"}
-        ratio = down_energy / up_energy
-        if ratio > ESO_ENERGY_RATIO_EXTREME:
-            return {
-                "override": True,
-                "bias": "LONG",
-                "reason": f"ESO_ENERGY_SUPREMACY: Downside {down_energy:.2f} > Upside {up_energy:.2f} ({ratio:.1f}x lebih mahal) → FORCE LONG",
-                "priority_level": ESO_PRIORITY
-            }
-        elif ratio < 1.0 / ESO_ENERGY_RATIO_EXTREME:
-            return {
-                "override": True,
-                "bias": "SHORT",
-                "reason": f"ESO_ENERGY_SUPREMACY: Upside {up_energy:.2f} > Downside {down_energy:.2f} ({1/ratio:.1f}x lebih mahal) → FORCE SHORT",
-                "priority_level": ESO_PRIORITY
-            }
-        return {"override": False, "bias": "NEUTRAL"}
-
-
-# ================= V251-VDR: VACUUM DIRECTION RULE =================
-class VacuumDirectionRuleV251:
-    """
-    🔥 V251-VDR: VACUUM DIRECTION RULE
-    Koreksi logika VEL: Bid kosong tidak selalu bearish.
-    Jika kedua sisi kosong atau ask kosong + energi up murah → LONG.
-    """
-    @staticmethod
-    def detect(bid_vol: float, ask_vol: float,
-               up_energy: float, down_energy: float) -> Dict:
-        # Kasus 1: kedua sisi kosong → ikut energy
-        if bid_vol < VDR_BID_VACUUM and ask_vol < VDR_ASK_VACUUM:
-            if up_energy < down_energy:
-                return {
-                    "override": True,
-                    "bias": "LONG",
-                    "reason": f"VDR_DOUBLE_VACUUM: Bid & Ask kosong, up_energy lebih murah → LONG",
-                    "priority_level": VDR_PRIORITY
-                }
-            else:
-                return {
-                    "override": True,
-                    "bias": "SHORT",
-                    "reason": f"VDR_DOUBLE_VACUUM: Bid & Ask kosong, down_energy lebih murah → SHORT",
-                    "priority_level": VDR_PRIORITY
-                }
-        # Kasus 2: bid kosong, ask ada, energi up murah → LONG (bukan SHORT!)
-        if bid_vol < VDR_BID_VACUUM and ask_vol > 0:
-            if up_energy < down_energy * VDR_ENERGY_RATIO_THRESHOLD:
-                return {
-                    "override": True,
-                    "bias": "LONG",
-                    "reason": f"VDR_BID_VACUUM: Bid kosong, up_energy murah → LONG (seller habis)",
-                    "priority_level": VDR_PRIORITY
-                }
-        # Kasus 3: ask kosong, bid ada, energi down murah → SHORT
-        if ask_vol < VDR_ASK_VACUUM and bid_vol > 0:
-            if down_energy < up_energy * VDR_ENERGY_RATIO_THRESHOLD:
-                return {
-                    "override": True,
-                    "bias": "SHORT",
-                    "reason": f"VDR_ASK_VACUUM: Ask kosong, down_energy murah → SHORT (buyer habis)",
-                    "priority_level": VDR_PRIORITY
-                }
-        return {"override": False, "bias": "NEUTRAL"}
-
-
-# ================= V252-DMP: DEAD MARKET PROXIMITY RULE =================
-class DeadMarketProximityRuleV252:
-    """
-    🔥 V252-DMP: DEAD MARKET PROXIMITY RULE
-    Jika market mati (agg=0, flow rendah), satu-satunya arah adalah menuju likuidasi terdekat
-    yang lebih menguntungkan secara energi.
-    """
-    @staticmethod
-    def detect(agg: float, flow: float,
-               short_dist: float, long_dist: float,
-               up_energy: float, down_energy: float) -> Dict:
-        if agg > DMP_AGG_DEAD or flow > DMP_FLOW_DEAD:
-            return {"override": False, "bias": "NEUTRAL"}
-        # Jika salah satu liq < 0.5%, itu target utama
-        if short_dist < DMP_DIST_CLOSE:
-            return {
-                "override": True,
-                "bias": "LONG",
-                "reason": f"DMP_DEAD_MARKET: Short liq {short_dist:.2f}% < 0.5% → target utama LONG",
-                "priority_level": DMP_PRIORITY
-            }
-        if abs(long_dist) < DMP_DIST_CLOSE:
-            return {
-                "override": True,
-                "bias": "SHORT",
-                "reason": f"DMP_DEAD_MARKET: Long liq {abs(long_dist):.2f}% < 0.5% → target utama SHORT",
-                "priority_level": DMP_PRIORITY
-            }
-        # Jika tidak ada target sangat dekat, ikut energi
-        if up_energy < down_energy * DMP_ENERGY_RATIO_THRESHOLD:
-            return {
-                "override": True,
-                "bias": "LONG",
-                "reason": f"DMP_DEAD_MARKET: Energi up murah → LONG",
-                "priority_level": DMP_PRIORITY
-            }
-        if down_energy < up_energy * DMP_ENERGY_RATIO_THRESHOLD:
-            return {
-                "override": True,
-                "bias": "SHORT",
-                "reason": f"DMP_DEAD_MARKET: Energi down murah → SHORT",
-                "priority_level": DMP_PRIORITY
-            }
-        return {"override": False, "bias": "NEUTRAL"}
-
-
-# ================= V253-ODF2: OVERBOUGHT DISTRIBUTION TRAP FILTER =================
-class OverboughtDistributionTrapFilterV253:
-    """
-    🔥 V253-ODF2: OVERBOUGHT DISTRIBUTION TRAP FILTER
-    Jika RSI > 80 dan OI naik tapi energi up masih jauh lebih murah,
-    maka itu bukan distribution, melainkan pump berlanjut.
-    """
-    @staticmethod
-    def detect(rsi: float, oi_delta: float,
-               up_energy: float, down_energy: float) -> Dict:
-        if rsi > ODF2_RSI_OVERBOUGHT and oi_delta > ODF2_OI_BUILD:
-            if up_energy < down_energy * ODF2_ENERGY_RATIO:
-                return {
-                    "cancel_distribution": True,
-                    "bias": "LONG",
-                    "reason": f"ODF2_NO_DIST: RSI {rsi:.1f} overbought, OI +{oi_delta:.2f}%, tapi energi up murah → pump lanjut, BUKAN distribution!",
-                    "priority_level": ODF2_PRIORITY
-                }
-        return {"cancel_distribution": False, "bias": "NEUTRAL"}
-
-
-# ================= V254-LFC: LIQUIDITY FLUSH CONFIRMATION =================
-class LiquidityFlushConfirmationV254:
-    """
-    🔥 V254-LFC: LIQUIDITY FLUSH CONFIRMATION
-    Deteksi double sweep zone dan flush probability > 50% → WAIT.
-    """
-    @staticmethod
-    def detect(short_dist: float, long_dist: float,
-               flush_prob: float, agg: float) -> Dict:
-        # Double sweep zone
-        if short_dist < LFC_SHORT_DIST and abs(long_dist) < LFC_LONG_DIST:
-            return {
-                "block": True,
-                "action": "WAIT",
-                "reason": f"LFC_DOUBLE_SWEEP: Short {short_dist:.2f}%, Long {abs(long_dist):.2f}% → kedua target dekat, tunggu sapuan",
-                "priority_level": LFC_PRIORITY
-            }
-        # Flush probability tinggi + market mati
-        if flush_prob > LFC_FLUSH_PROB and agg < LFC_AGG_DEAD:
-            return {
-                "block": True,
-                "action": "WAIT",
-                "reason": f"LFC_FLUSH_RISK: Flush prob {flush_prob:.1f}%, Agg {agg:.2f} → risiko tinggi, WAIT",
-                "priority_level": LFC_PRIORITY
-            }
-        return {"block": False}
-
-
 # ================= V121-TTK: TIME TO KILL CONFIRMATION =================
 class TimeToKillConfirmationV121:
     """
@@ -5586,70 +5409,70 @@ class ConflictResolverV115_FINAL:
 
 
 # ================= V120-FINAL-UPDATED: CONFLICT RESOLVER DENGAN V107 MODULES =================
-class ConflictResolverV260_FINAL:
+class ConflictResolverV120_FINAL_ENHANCED:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V260 - ENERGY SUPREMACY & LIQUIDITY FLUSH
+    🔥 URUTAN PRIORITAS MUTLAK V200 - DENGAN RSI-VOLUME PARADOX (V200-RVP)
     
-    PRIORITY -255: LFC (Liquidity Flush Confirmation) → block
-    PRIORITY -250: ESO (Energy Supremacy Override) → force direction
-    PRIORITY -245: VDR (Vacuum Direction Rule) → koreksi VEL
-    PRIORITY -240: EHS (Event Horizon Singularity) sudah ada
-    PRIORITY -235: DMP (Dead Market Proximity Rule)
-    PRIORITY -200: V200-RVP (RSI-Volume Paradox) ← ANTI-HFT TRAP
-    PRIORITY -190: ODF2 (Overbought Distribution Trap Filter)
+    PRIORITY -200: V200-RVP (RSI-Volume Paradox) ← TERTINGGI! ANTI-HFT TRAP
+    ┌─────────────────────────────────────────────────────────┐
+    │ -200. V200-RVP: RSI-Volume Paradox Detector             │ ← BARU! ANTI-FALLING KNIFE
+    └─────────────────────────────────────────────────────────┘
+    
     PRIORITY -100: V140-RST (Retail Sentiment Tracker) ← CHINESE QUANT CORE
+    ┌─────────────────────────────────────────────────────────┐
+    │ -100. V140-RST: Retail Sentiment Tracker                │ ← BARU! ANTI-PANIC/FOMO
+    └─────────────────────────────────────────────────────────┘
+    
     PRIORITY -99: V142-MSV (Multi-Strategy Voting) ← GANTI HIERARKI LINEAR!
+    ┌─────────────────────────────────────────────────────────┐
+    │ -99. V142-MSV: Multi-Strategy Voting                    │ ← BARU! WEIGHTED DECISION
+    └─────────────────────────────────────────────────────────┘
+    
     PRIORITY -50: V141-QCD (Quant Crowdedness Detector) untuk position sizing
+    ┌─────────────────────────────────────────────────────────┐
+    │ -50. V141-QCD: Quant Crowdedness Detector               │ ← BARU! DYNAMIC POSITION
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -25: V126-VGA (Vacuum-Gravity Anchor)      ← BARU TERTINGGI! ANTI-LYNUSDT
+    ┌─────────────────────────────────────────────────────────┐
+    │ -25. V126-VGA: Vacuum-Gravity Anchor                    │ ← BARU! VETO MUTLAK BID KOSONG
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -24: V135-OPD (OI-Price Direction) ← BARU! ANTI-SHORT COVERING TRAP
+    ┌─────────────────────────────────────────────────────────┐
+    │ -24. V135-OPD: OI-Price Direction Filter                │ ← BARU! ANTI-PIPPINUSDT
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -23: V131-APF (Absorption Paradox) ← BARU! ANTI-FAKE ABSORPTION
+    ┌─────────────────────────────────────────────────────────┐
+    │ -23. V131-APF: Absorption Paradox Filter                │ ← BARU! ANTI-PIPPINUSDT
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -22: V126-AVT (Ask-Vacuum Bull-Trap)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -22. V126-AVT: Ask-Vacuum Bull-Trap                     │ ← EXISTING
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -21: V133-AVD (Aggression Velocity Decay) ← BARU! ANTI-EXHAUSTION MOVE
+    ┌─────────────────────────────────────────────────────────┐
+    │ -21. V133-AVD: Aggression Velocity Decay                │ ← BARU! ANTI-PIPPINUSDT
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -20: V132-TMP (Target Magnitude Priority) ← BARU! ANTI-STOP HUNT
+    ┌─────────────────────────────────────────────────────────┐
+    │ -20. V132-TMP: Target Magnitude Priority                │ ← BARU! ANTI-PIPPINUSDT
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -19: V129-IFL (Institutional Fuel Validator)
+    ┌─────────────────────────────────────────────────────────┐
+    │ -19. V129-IFL: Institutional Fuel Validator             │ ← EXISTING
+    └─────────────────────────────────────────────────────────┘
     """
     
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
         
-        # ===== PRIORITY -255: Liquidity Flush Confirmation =====
-        lfc = results.get('lfc_v254', {})
-        if lfc.get('block'):
-            return {
-                "final_bias": "NEUTRAL",
-                "confidence": "ABSOLUTE",
-                "reason": lfc['reason'],
-                "phase": "FLUSH_WAIT",
-                "priority_level": -255
-            }
-        
-        # ===== PRIORITY -250: Energy Supremacy Override =====
-        eso = results.get('eso_v250', {})
-        if eso.get('override'):
-            return {
-                "final_bias": eso['bias'],
-                "confidence": "ABSOLUTE",
-                "reason": eso['reason'],
-                "phase": "ENERGY_SUPREMACY",
-                "priority_level": -250
-            }
-        
-        # ===== PRIORITY -245: Vacuum Direction Rule =====
-        vdr = results.get('vdr_v251', {})
-        if vdr.get('override'):
-            return {
-                "final_bias": vdr['bias'],
-                "confidence": "ABSOLUTE",
-                "reason": vdr['reason'],
-                "phase": "VACUUM_DIRECTION",
-                "priority_level": -245
-            }
-        
-        # ===== PRIORITY -235: Dead Market Proximity Rule =====
-        dmp = results.get('dmp_v252', {})
-        if dmp.get('override'):
-            return {
-                "final_bias": dmp['bias'],
-                "confidence": "ABSOLUTE",
-                "reason": dmp['reason'],
-                "phase": "DEAD_MARKET_PROXIMITY",
-                "priority_level": -235
-            }
-        
-        # ===== PRIORITY -200: RSI-VOLUME PARADOX =====
+        # ===== PRIORITY -200: RSI-VOLUME PARADOX (TERTINGGI!) =====
         rvp_res = results.get('rvp_v200', {})
         if rvp_res.get('is_trap'):
             return {
@@ -5659,12 +5482,6 @@ class ConflictResolverV260_FINAL:
                 "phase": 'RSI_VOLUME_PARADOX_TRAP',
                 "priority_level": -200
             }
-        
-        # ===== PRIORITY -190: Overbought Distribution Trap Filter =====
-        odf2 = results.get('odf2_v253', {})
-        if odf2.get('cancel_distribution'):
-            # Hanya membatalkan sinyal distribution, belum final
-            pass  # kita simpan info untuk digunakan di voting
         
         # ===== PRIORITY -100: RETAIL SENTIMENT OVERRIDE =====
         rst_res = results.get('rst_v140', {})
@@ -5680,6 +5497,7 @@ class ConflictResolverV260_FINAL:
         # ===== PRIORITY -99: MULTI-STRATEGY VOTING =====
         msv_res = results.get('msv_v142', {})
         if msv_res.get('bias') != 'NEUTRAL':
+            # Tambahkan detail voting ke output
             return {
                 "final_bias": msv_res['bias'],
                 "confidence": f"{msv_res.get('confidence', 0):.0%}" if isinstance(msv_res.get('confidence', 0), float) else msv_res.get('confidence', 'LOW'),
@@ -5691,17 +5509,118 @@ class ConflictResolverV260_FINAL:
                 "short_prob": msv_res.get('short_prob', 0)
             }
         
-        # Default
-        return {
-            "final_bias": "NEUTRAL",
-            "confidence": "LOW",
-            "reason": "No strong signal",
-            "phase": "NEUTRAL",
-            "priority_level": 99
-        }
-
-
-# ================= V123-OEF: OI EXHAUSTION FILTER =================
+        # ===== PRIORITY -25: V126-VGA (Vacuum-Gravity Anchor) =====
+        vga_res = results.get('vga_v126', {})
+        if vga_res.get('vacuum_anchor'):
+            return {
+                "final_bias": vga_res['bias'],
+                "confidence": vga_res.get('confidence', 'ABSOLUTE'),
+                "reason": vga_res.get('reason', ''),
+                "phase": vga_res.get('phase', 'VACUUM_GRAVITY_ANCHOR'),
+                "priority_level": -25
+            }
+        
+        # ===== PRIORITY -24: V135-OPD (OI-Price Direction) =====
+        opd_res = results.get('opd_v135', {})
+        if opd_res.get('short_covering'):
+            return {
+                "final_bias": opd_res['bias'],
+                "confidence": opd_res.get('confidence', 'ABSOLUTE'),
+                "reason": opd_res.get('reason', ''),
+                "phase": opd_res.get('phase', 'SHORT_COVERING_RALLY'),
+                "priority_level": -24,
+                "action": opd_res.get('action', 'NO_NEW_LONG')
+            }
+        
+        # ===== PRIORITY -23: V131-APF (Absorption Paradox) =====
+        apf_res = results.get('apf_v131', {})
+        if apf_res.get('fake_absorption'):
+            return {
+                "final_bias": apf_res['bias'],
+                "confidence": apf_res.get('confidence', 'ABSOLUTE'),
+                "reason": apf_res.get('reason', ''),
+                "phase": apf_res.get('phase', 'FAKE_ABSORPTION'),
+                "priority_level": -23
+            }
+        
+        # ===== PRIORITY -22: V126-AVT (Ask-Vacuum Bull-Trap) =====
+        avt_res = results.get('avt_v126', {})
+        if avt_res.get('bull_trap'):
+            return {
+                "final_bias": avt_res['bias'],
+                "confidence": avt_res.get('confidence', 'ABSOLUTE'),
+                "reason": avt_res.get('reason', ''),
+                "phase": avt_res.get('phase', 'ASK_VACUUM_BULL_TRAP'),
+                "priority_level": -22
+            }
+        
+        # ===== PRIORITY -21: V133-AVD (Aggression Velocity Decay) =====
+        avd_res = results.get('avd_v133', {})
+        if avd_res.get('exhaustion'):
+            return {
+                "final_bias": avd_res['bias'],
+                "confidence": avd_res.get('confidence', 'ABSOLUTE'),
+                "reason": avd_res.get('reason', ''),
+                "phase": avd_res.get('phase', 'AGGRESSION_EXHAUSTION'),
+                "priority_level": -21
+            }
+        
+        # ===== PRIORITY -20: V132-TMP (Target Magnitude Priority) =====
+        tmp_res = results.get('tmp_v132', {})
+        if tmp_res.get('stop_hunt_warning'):
+            return {
+                "final_bias": tmp_res['bias'],
+                "confidence": tmp_res.get('confidence', 'HIGH'),
+                "reason": tmp_res.get('reason', ''),
+                "phase": tmp_res.get('phase', 'STOP_HUNT_WARNING'),
+                "priority_level": -20,
+                "action": tmp_res.get('action', 'WAIT_FOR_SWEEP')
+            }
+        
+        # ===== PRIORITY -18: V123-OEF (OI Exhaustion) =====
+        oef_res = results.get('oef_v123', {})
+        if oef_res.get('oi_exhaustion'):
+            return {
+                "final_bias": oef_res['bias'],
+                "confidence": oef_res.get('confidence', 'ABSOLUTE'),
+                "reason": oef_res.get('reason', ''),
+                "phase": "OI_EXHAUSTION",
+                "priority_level": -18
+            }
+        
+        # ===== PRIORITY -18: V125-FSF (False Squeeze Filter) =====
+        fsf_res = results.get('fsf_v125', {})
+        if fsf_res.get('false_squeeze'):
+            return {
+                "final_bias": fsf_res['bias'],
+                "confidence": fsf_res.get('confidence', 'ABSOLUTE'),
+                "reason": fsf_res.get('reason', ''),
+                "phase": fsf_res.get('phase', 'FALSE_SQUEEZE'),
+                "priority_level": -18
+            }
+        
+        # ===== PRIORITY -17: V124-PDW (Payout Distance Weight) =====
+        pdw_res = results.get('pdw_v124', {})
+        if pdw_res.get('gravity_wins'):
+            return {
+                "final_bias": pdw_res['bias'],
+                "confidence": pdw_res.get('confidence', 'ABSOLUTE'),
+                "reason": pdw_res.get('reason', ''),
+                "phase": "GRAVITY_WINS",
+                "priority_level": -17
+            }
+        
+        # ===== PRIORITY -17: V118-ROC (RSI-OI Ceiling) =====
+        roc_res = results.get('roc_v118', {})
+        if roc_res.get('is_exit_zone'):
+            return {
+                "final_bias": "NEUTRAL",
+                "confidence": "ABSOLUTE",
+                "reason": roc_res.get('reason', 'Exit zone detected'),
+                "phase": "EXIT_ZONE",
+                "priority_level": -17,
+                "action": "NO_LONG_AT_TOP"
+            }
         
         # ===== PRIORITY -16: V119-LGV (Liquidity Gravity vs Payout) =====
         lgv_res = results.get('lgv_v119', {})
@@ -28668,8 +28587,8 @@ class BinanceAnalyzerV87:
         # ===== V200-RVP: RSI-VOLUME PARADOX DETECTOR =====
         self.rvp_v200 = RSIVolumeParadoxDetectorV200()          # V200-RVP
         
-        # Gunakan resolver V260 FINAL yang baru (dengan prioritas V250-V260 + ANTI-GOCOK LOGIC V130-V135 + CHINESE QUANT V140-V142)
-        self.final_resolver_v260 = ConflictResolverV260_FINAL()
+        # Gunakan resolver V120 enhanced yang baru (dengan ANTI-GOCOK LOGIC V130-V135 + CHINESE QUANT V140-V142)
+        self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
         
         # Track last signal bias for TTK
         self.last_signal_bias = None
@@ -31480,7 +31399,7 @@ class BinanceAnalyzerV87:
             v115_final = self.final_resolver_v115.resolve_all_signals(scoring_data)
             
             # ===== V120: FINAL RESOLVER ENHANCED (ANTI-HFT SHIELD - SUPREME COMMANDER!) =====
-            v260_final = self.final_resolver_v260.resolve_all_signals(scoring_data)
+            v120_final = self.final_resolver_v120_enhanced.resolve_all_signals(scoring_data)
             
             # ===== V106: FINAL RESOLVER (SEQUENCE ENGINE - TERTINGGI!) =====
             v106_final = self.final_resolver_v106.resolve_all_signals(scoring_data)
@@ -31489,35 +31408,35 @@ class BinanceAnalyzerV87:
             v107_final = self.final_resolver_v107.resolve_all_signals(scoring_data)
             
             # Gunakan V120 resolver jika ada signal V107 (priority <= -7) atau LYNUSDT (priority <= -10)
-            if v260_final.get('priority_level', 99) <= -7:
+            if v120_final.get('priority_level', 99) <= -7:
                 # V120 override dengan V107 modules (WFC/FBR/VC - MUTLAK!)
                 final_decision = {
-                    'bias': v260_final['final_bias'],
-                    'final_bias': v260_final['final_bias'],
-                    'confidence': v260_final['confidence'],
-                    'reason': v260_final['reason'],
-                    'phase': v260_final['phase'],
-                    'priority_level': v260_final['priority_level'],
-                    'market_state': v260_final.get('state', 'UNKNOWN'),
-                    'prob_long': v260_final.get('prob_long', 50),
-                    'prob_short': v260_final.get('prob_short', 50),
+                    'bias': v120_final['final_bias'],
+                    'final_bias': v120_final['final_bias'],
+                    'confidence': v120_final['confidence'],
+                    'reason': v120_final['reason'],
+                    'phase': v120_final['phase'],
+                    'priority_level': v120_final['priority_level'],
+                    'market_state': v120_final.get('state', 'UNKNOWN'),
+                    'prob_long': v120_final.get('prob_long', 50),
+                    'prob_short': v120_final.get('prob_short', 50),
                     'intention': mie_result.get('intention', 'NEUTRAL'),
                     'vacuum_type': vc_result.get('vacuum_type', 'NONE'),
                     'flow_mode': fbr_result.get('mode', 'NORMAL'),
                     'override_modules': ['V120_MDE_V107_UPDATED']
                 }
-            elif v260_final.get('priority_level', 99) <= -10:
+            elif v120_final.get('priority_level', 99) <= -10:
                 # V120 override (META DECISION ENGINE / LYNUSDT PATCH - MUTLAK!)
                 final_decision = {
-                    'bias': v260_final['final_bias'],
-                    'final_bias': v260_final['final_bias'],
-                    'confidence': v260_final['confidence'],
-                    'reason': v260_final['reason'],
-                    'phase': v260_final['phase'],
-                    'priority_level': v260_final['priority_level'],
-                    'market_state': v260_final.get('state', 'UNKNOWN'),
-                    'prob_long': v260_final.get('prob_long', 50),
-                    'prob_short': v260_final.get('prob_short', 50),
+                    'bias': v120_final['final_bias'],
+                    'final_bias': v120_final['final_bias'],
+                    'confidence': v120_final['confidence'],
+                    'reason': v120_final['reason'],
+                    'phase': v120_final['phase'],
+                    'priority_level': v120_final['priority_level'],
+                    'market_state': v120_final.get('state', 'UNKNOWN'),
+                    'prob_long': v120_final.get('prob_long', 50),
+                    'prob_short': v120_final.get('prob_short', 50),
                     'intention': mie_result.get('intention', 'NEUTRAL'),
                     'override_modules': ['V120_MDE', 'V106_LYN_PATCH']
                 }
@@ -32827,9 +32746,9 @@ class BinanceAnalyzerV87:
             result["lms_v106"] = lms_result
             result["atd_v106"] = atd_result
             result["mde_v120"] = mde_result
-            result["market_state"] = v260_final.get('market_state', 'UNKNOWN')
-            result["prob_long"] = v260_final.get('prob_long', 50)
-            result["prob_short"] = v260_final.get('prob_short', 50)
+            result["market_state"] = v120_final.get('market_state', 'UNKNOWN')
+            result["prob_long"] = v120_final.get('prob_long', 50)
+            result["prob_short"] = v120_final.get('prob_short', 50)
             
             result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
             result["v102_enhanced_priority_level"] = v102_enhanced_final.get('priority_level', 99)
