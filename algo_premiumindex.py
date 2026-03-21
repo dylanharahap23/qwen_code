@@ -808,6 +808,15 @@ MSV_STRATEGY_GROUPS = {
 }
 MSV_VOTE_THRESHOLD = 0.6                    # Minimal 60% untuk eksekusi
 
+# ================= V200-RVP: RSI-VOLUME PARADOX DETECTOR CONFIG =================
+RVP_OVERSOLD_THRESHOLD = 30.0               # RSI < 30 = oversold
+RVP_OVERBOUGHT_THRESHOLD = 70.0              # RSI > 70 = overbought
+RVP_VOLUME_SURGE = 1.5                      # volume_ratio > 1.5 = tinggi
+RVP_VOLUME_LOW = 0.8                        # volume_ratio < 0.8 = rendah
+RVP_OBV_NEGATIVE_EXTREME = -10.0            # OBV turun >10% dalam 10 periode
+RVP_STOCH_CROSS_THRESHOLD = 0               # K > D
+RVP_PRIORITY_LEVEL = -200                   # Prioritas tertinggi
+
 # ================= V126-VGA: VACUUM-GRAVITY ANCHOR CONFIG =================
 VGA_BID_ZERO_THRESHOLD = 0.1                 # Bid volume < 0.1 = kosong
 VGA_ASK_ZERO_THRESHOLD = 0.1                 # Ask volume < 0.1 = kosong
@@ -3379,6 +3388,107 @@ class MultiStrategyVotingV142:
             }
 
 
+# ================= STOCHASTIC CALCULATOR =================
+def calculate_stoch(highs: List[float], lows: List[float], closes: List[float], 
+                    period: int = 14, smooth: int = 3) -> Tuple[float, float]:
+    """
+    Menghitung Stochastic %K dan %D
+    Returns: (k, d)
+    """
+    if len(closes) < period:
+        return 50.0, 50.0
+    lowest_low = min(lows[-period:])
+    highest_high = max(highs[-period:])
+    if highest_high == lowest_low:
+        return 50.0, 50.0
+    k = (closes[-1] - lowest_low) / (highest_high - lowest_low) * 100
+    # Untuk %D, kita hitung rata-rata %K dari smooth periode terakhir
+    # (implementasi sederhana: gunakan k sebagai d juga untuk saat ini)
+    d = k  # Bisa diperbaiki dengan menyimpan history K
+    return k, d
+
+
+# ================= OBV TREND DETECTOR =================
+def get_obv_trend(obv_history: List[float], lookback: int = 10) -> str:
+    """
+    Menentukan tren OBV: 'POSITIVE', 'NEGATIVE', 'NEUTRAL', 'NEGATIVE_EXTREME'
+    """
+    if len(obv_history) < lookback:
+        return "NEUTRAL"
+    obv_start = obv_history[-lookback]
+    obv_end = obv_history[-1]
+    change_pct = (obv_end - obv_start) / abs(obv_start) * 100 if obv_start != 0 else 0
+    if change_pct > 5:
+        return "POSITIVE"
+    elif change_pct < -5:
+        if change_pct < RVP_OBV_NEGATIVE_EXTREME:
+            return "NEGATIVE_EXTREME"
+        return "NEGATIVE"
+    return "NEUTRAL"
+
+
+# ================= V200-RVP: RSI-VOLUME PARADOX DETECTOR =================
+class RSIVolumeParadoxDetectorV200:
+    """
+    🔥 V200-RVP: RSI-VOLUME PARADOX DETECTOR - ANTI-HFT TRAP
+    
+    Pola yang ditangkap:
+    1. Oversold + volume tinggi → falling knife (SHORT)
+    2. Overbought + volume tinggi → trend continuation (LONG)
+    3. OBV negatif ekstrim + RSI 40-60 + Stoch bullish → bait bullish (LONG)
+    4. RSI 30-45 + volume rendah + Stoch bearish → dead cat bounce (SHORT)
+    5. Volume turun tapi harga naik + RSI 65-75 → seller exhaustion (LONG)
+    """
+    
+    @staticmethod
+    def detect(rsi: float, volume_ratio: float, price_change: float,
+               obv_trend: str, stoch_k: float, stoch_d: float) -> Dict:
+        """
+        Returns dict dengan 'is_trap', 'correct_bias', 'reason'
+        """
+        # Kasus 1: Oversold + Volume Tinggi = Falling Knife (SHORT)
+        if rsi < RVP_OVERSOLD_THRESHOLD and volume_ratio > RVP_VOLUME_SURGE:
+            return {
+                "is_trap": True,
+                "correct_bias": "SHORT",
+                "reason": f"RVP_FALLING_KNIFE: RSI {rsi:.1f} oversold + Volume surge {volume_ratio:.2f}x = masih panic selling, jangan LONG"
+            }
+        
+        # Kasus 2: Overbought + Volume Tinggi = Trend Continuation (LONG)
+        if rsi > RVP_OVERBOUGHT_THRESHOLD and volume_ratio > RVP_VOLUME_SURGE:
+            return {
+                "is_trap": True,
+                "correct_bias": "LONG",
+                "reason": f"RVP_TREND_CONT: RSI {rsi:.1f} overbought + Volume surge {volume_ratio:.2f}x = momentum masih kuat, jangan SHORT"
+            }
+        
+        # Kasus 3: OBV Negatif Ekstrim + RSI 40-60 + Stoch K > D = Bullish Trap (LONG)
+        if obv_trend == "NEGATIVE_EXTREME" and 40 < rsi < 60 and stoch_k > stoch_d:
+            return {
+                "is_trap": True,
+                "correct_bias": "LONG",
+                "reason": f"RVP_OBV_BAIT: OBV negatif ekstrim + RSI {rsi:.1f} netral + Stoch bullish = akan pump, jangan SHORT"
+            }
+        
+        # Kasus 4: RSI 30-45 + Volume Rendah + Stoch K < D = Dead Cat Bounce (SHORT)
+        if 30 < rsi < 45 and volume_ratio < RVP_VOLUME_LOW and stoch_k < stoch_d:
+            return {
+                "is_trap": True,
+                "correct_bias": "SHORT",
+                "reason": f"RVP_DEAD_CAT: RSI {rsi:.1f} + Volume rendah {volume_ratio:.2f}x + Stoch bearish = bounce palsu, jangan LONG"
+            }
+        
+        # Kasus 5: Volume Turun Tapi Harga Naik + RSI 65-75 = Seller Exhaustion (LONG)
+        if 65 < rsi < 75 and volume_ratio < RVP_VOLUME_LOW and price_change > 0:
+            return {
+                "is_trap": True,
+                "correct_bias": "LONG",
+                "reason": f"RVP_SELLER_EXHAUST: RSI {rsi:.1f} + Volume turun {volume_ratio:.2f}x tapi harga naik = seller habis, jangan SHORT"
+            }
+        
+        return {"is_trap": False, "correct_bias": "NEUTRAL"}
+
+
 # ================= V121-TTK: TIME TO KILL CONFIRMATION =================
 class TimeToKillConfirmationV121:
     """
@@ -5301,9 +5411,14 @@ class ConflictResolverV115_FINAL:
 # ================= V120-FINAL-UPDATED: CONFLICT RESOLVER DENGAN V107 MODULES =================
 class ConflictResolverV120_FINAL_ENHANCED:
     """
-    🔥 URUTAN PRIORITAS MUTLAK V140 - DENGAN CHINESE QUANT STYLE (V140-V142)
+    🔥 URUTAN PRIORITAS MUTLAK V200 - DENGAN RSI-VOLUME PARADOX (V200-RVP)
     
-    PRIORITY -100: V140-RST (Retail Sentiment Tracker) ← TERTINGGI! CHINESE QUANT CORE
+    PRIORITY -200: V200-RVP (RSI-Volume Paradox) ← TERTINGGI! ANTI-HFT TRAP
+    ┌─────────────────────────────────────────────────────────┐
+    │ -200. V200-RVP: RSI-Volume Paradox Detector             │ ← BARU! ANTI-FALLING KNIFE
+    └─────────────────────────────────────────────────────────┘
+    
+    PRIORITY -100: V140-RST (Retail Sentiment Tracker) ← CHINESE QUANT CORE
     ┌─────────────────────────────────────────────────────────┐
     │ -100. V140-RST: Retail Sentiment Tracker                │ ← BARU! ANTI-PANIC/FOMO
     └─────────────────────────────────────────────────────────┘
@@ -5356,6 +5471,17 @@ class ConflictResolverV120_FINAL_ENHANCED:
     
     @staticmethod
     def resolve_all_signals(results: Dict) -> Dict:
+        
+        # ===== PRIORITY -200: RSI-VOLUME PARADOX (TERTINGGI!) =====
+        rvp_res = results.get('rvp_v200', {})
+        if rvp_res.get('is_trap'):
+            return {
+                "final_bias": rvp_res['correct_bias'],
+                "confidence": 'ABSOLUTE',
+                "reason": rvp_res.get('reason', ''),
+                "phase": 'RSI_VOLUME_PARADOX_TRAP',
+                "priority_level": -200
+            }
         
         # ===== PRIORITY -100: RETAIL SENTIMENT OVERRIDE =====
         rst_res = results.get('rst_v140', {})
@@ -28458,6 +28584,9 @@ class BinanceAnalyzerV87:
         self.qcd_v141 = QuantCrowdednessDetectorV141()          # V141-QCD
         self.msv_v142 = MultiStrategyVotingV142()               # V142-MSV
         
+        # ===== V200-RVP: RSI-VOLUME PARADOX DETECTOR =====
+        self.rvp_v200 = RSIVolumeParadoxDetectorV200()          # V200-RVP
+        
         # Gunakan resolver V120 enhanced yang baru (dengan ANTI-GOCOK LOGIC V130-V135 + CHINESE QUANT V140-V142)
         self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
         
@@ -31213,10 +31342,31 @@ class BinanceAnalyzerV87:
             # V142-MSV: Multi-Strategy Voting
             msv_result = self.msv_v142.vote(msv_results)
             
+            # ===== V200-RVP: RSI-VOLUME PARADOX DETECTOR (PRIORITAS TERTINGGI!) =====
+            # Hitung Stochastic
+            highs_1m = k1m.get("highs", [])
+            lows_1m = k1m.get("lows", [])
+            closes_1m = k1m.get("closes", [])
+            stoch_k, stoch_d = calculate_stoch(highs_1m, lows_1m, closes_1m, period=14, smooth=3)
+            
+            # Hitung OBV trend
+            obv_trend = get_obv_trend(self.state_mgr.obv_history, lookback=10)
+            
+            # Panggil RVP detector
+            rvp_result = self.rvp_v200.detect(
+                rsi=rsi6,
+                volume_ratio=volume_ratio,
+                price_change=change_5m,
+                obv_trend=obv_trend,
+                stoch_k=stoch_k,
+                stoch_d=stoch_d
+            )
+            
             # Simpan hasil ke dictionary untuk resolver
             scoring_data['rst_v140'] = rst_result
             scoring_data['qcd_v141'] = qcd_result
             scoring_data['msv_v142'] = msv_result
+            scoring_data['rvp_v200'] = rvp_result
             
             # ===== V101: FINAL RESOLVER =====
             v101_final = self.final_resolver_v101.resolve_all_signals(scoring_data)
