@@ -864,6 +864,10 @@ RVP_STOCH_CROSS_THRESHOLD = 0               # K > D
 RVP_PRIORITY_LEVEL = -200                   # Prioritas tertinggi
 
 # ================= V126-VGA: VACUUM-GRAVITY ANCHOR CONFIG =================
+VGA_BID_ZERO_THRESHOLD = 0.1          # Bid volume < 0.1 = zero (vacuum)
+VGA_ASK_ZERO_THRESHOLD = 0.1          # Ask volume < 0.1 = zero (vacuum)
+VGA_ENERGY_RATIO_THRESHOLD = 5.0      # Energy ratio threshold for VGA
+VGA_PRIORITY_LEVEL = -300             # Priority level for VGA veto (highest priority)
 
 # ================= V104-ADF: ACTIVE DISTRIBUTION FILTER CONFIG =================
 ADF_RSI_HIGH_MIN = 80.0                      # RSI > 80
