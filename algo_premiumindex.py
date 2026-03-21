@@ -498,6 +498,43 @@ IER_PRIORITY_FLOW_OI_MISMATCH = True     # Check Flow/OI mismatch
 
 # ================= V100-DKT: DEADSTICK FALLING KNIGHT CONFIG =================
 DKT_RSI_FALLING_KNIFE_MAX = 20.0        # RSI < 20 = Danger Zone
+
+# ================= V250-ESO: ENERGY SUPREMACY OVERRIDE CONFIG =================
+ESO_ENERGY_RATIO_EXTREME = 10.0           # >10x atau <0.1x
+ESO_PRIORITY = -250                        # Prioritas tertinggi
+
+# ================= V251-VDR: VACUUM DIRECTION RULE CONFIG =================
+VDR_BID_VACUUM = 0.1                       # Bid < 0.1
+VDR_ASK_VACUUM = 0.1                       # Ask < 0.1
+VDR_ENERGY_RATIO_THRESHOLD = 3.0            # up_energy < down_energy * 3
+VDR_PRIORITY = -245
+
+# ================= V252-DMP: DEAD MARKET PROXIMITY RULE CONFIG =================
+DMP_AGG_DEAD = 0.1                         # Agg < 0.1
+DMP_FLOW_DEAD = 0.5                        # Flow < 0.5
+DMP_DIST_CLOSE = 0.5                       # Jarak liq < 0.5%
+DMP_ENERGY_RATIO_THRESHOLD = 3.0
+DMP_PRIORITY = -235
+
+# ================= V253-ODF2: OVERBOUGHT DISTRIBUTION TRAP FILTER CONFIG =================
+ODF2_RSI_OVERBOUGHT = 80.0
+ODF2_OI_BUILD = 0.5
+ODF2_ENERGY_RATIO = 5.0                    # up_energy < down_energy * 5
+ODF2_PRIORITY = -190
+
+# ================= V254-LFC: LIQUIDITY FLUSH CONFIRMATION CONFIG =================
+LFC_SHORT_DIST = 0.5                       # short_dist < 0.5%
+LFC_LONG_DIST = 4.0                        # long_dist < 4% (double sweep)
+LFC_FLUSH_PROB = 50.0                      # flush_probability > 50%
+LFC_AGG_DEAD = 0.2
+LFC_PRIORITY = -255
+
+# ================= V255-WV: WEIGHTED VOTING DYNAMIC WEIGHTS CONFIG =================
+WV_WEIGHT_BASE = 1.0
+WV_WEIGHT_ENERGY = 5.0                     # Bobot energy di market mati
+WV_WEIGHT_VACUUM = 5.0                     # Bobot vacuum di market mati
+WV_WEIGHT_DISTRIBUTION = 0.2               # Bobot distribution di market mati
+WV_THRESHOLD = 0.65                        # 65% untuk eksekusi
 DKT_FLOW_ABSORPTION_MIN = 2.0           # Flow > 2.0x needed for safe bottom
 DKT_AGG_BUYER_ACTIVE_MIN = 1.0          # Agg > 1.0 means real buyers exist
 DKT_OI_BUILD_DISTRIBUTION_THRESHOLD = 2.0   # OI ↑ + Price ↓ = Distribution!
@@ -29980,6 +30017,44 @@ class BinanceAnalyzerV87:
                 cascade_bias=cascade_result.get('bias', 'NEUTRAL')
             )
             
+            # ================= V250-V254: NEW MODULES (ESO, VDR, DMP, ODF2, LFC) =================
+            # V250-ESO: Energy Supremacy Override
+            eso_result = EnergySupremacyOverrideV250.detect(up_energy, down_energy)
+            
+            # V251-VDR: Vacuum Direction Rule
+            vdr_result = VacuumDirectionRuleV251.detect(
+                bid_vol=odd_result.get('bid_volume_near', 0) if 'odd_result' in locals() else 0,
+                ask_vol=odd_result.get('ask_volume_near', 0) if 'odd_result' in locals() else 0,
+                up_energy=up_energy,
+                down_energy=down_energy
+            )
+            
+            # V252-DMP: Dead Market Proximity Rule
+            dmp_result = DeadMarketProximityRuleV252.detect(
+                agg=trades.get('aggressive_ratio', 1.0),
+                flow=trades.get('ratio', 1.0),
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999),
+                up_energy=up_energy,
+                down_energy=down_energy
+            )
+            
+            # V253-ODF2: Overbought Distribution Trap Filter
+            odf2_result = OverboughtDistributionTrapFilterV253.detect(
+                rsi=rsi6,
+                oi_delta=oi_delta_5m,
+                up_energy=up_energy,
+                down_energy=down_energy
+            )
+            
+            # V254-LFC: Liquidity Flush Confirmation
+            lfc_result = LiquidityFlushConfirmationV254.detect(
+                short_dist=liq.get('short_dist', 999),
+                long_dist=liq.get('long_dist', 999),
+                flush_prob=flush_probability if 'flush_probability' in locals() else 0,
+                agg=trades.get('aggressive_ratio', 1.0)
+            )
+            
             # ================= V95: LIQUIDATION GAP DETECTOR (LGD) - DOSEN 2 =====
             lgd_gap_result = LiquidationGapDetectorV95.analyze(
                 short_dist=liq['short_dist'],
@@ -30770,6 +30845,13 @@ class BinanceAnalyzerV87:
                 'egr': egr_result if 'egr_result' in locals() else {},
                 'lfc_v100': lfc_result if 'lfc_result' in locals() else {},
                 'bpf': bpf_result if 'bpf_result' in locals() else {},
+                
+                # ===== V250-V254: NEW MODULES =====
+                'eso_v250': eso_result if 'eso_result' in locals() else {},
+                'vdr_v251': vdr_result if 'vdr_result' in locals() else {},
+                'dmp_v252': dmp_result if 'dmp_result' in locals() else {},
+                'odf2_v253': odf2_result if 'odf2_result' in locals() else {},
+                'lfc_v254': lfc_result if 'lfc_result' in locals() else {},
                 
                 # ===== V103: WMI VETO VALIDATOR =====
                 'wmi_veto_validator_v103': wmi_veto_validator if 'wmi_veto_validator' in locals() else {},
@@ -31882,17 +31964,27 @@ class BinanceAnalyzerV87:
             # ===== V115: FINAL RESOLVER (EXECUTION FEASIBILITY ENGINE - PALING TERTINGGI!) =====
             v115_final = self.final_resolver_v115.resolve_all_signals(scoring_data)
             
+            # ===== V260: FINAL RESOLVER (ENERGY SUPREMACY & VACUUM DIRECTION - MUTLAK!) =====
+            v260_final = ConflictResolverV260_FINAL.resolve_all_signals(scoring_data)
+            
             # ===== V120: FINAL RESOLVER ENHANCED (ANTI-HFT SHIELD - SUPREME COMMANDER!) =====
             v120_final = self.final_resolver_v120_enhanced.resolve_all_signals(scoring_data)
             
+            # Gunakan V260 resolver jika ada signal prioritas tinggi (priority <= -190)
+            if v260_final.get('priority_level', 99) <= -190:
+                # V260 override dengan modul baru (ESO/VDR/DMP/ODF2/LFC - MUTLAK!)
+                final_decision = {
+                    'bias': v260_final['final_bias'],
+                    'final_bias': v260_final['final_bias'],
+                    'confidence': v260_final['confidence'],
+                    'reason': v260_final['reason'],
+                    'phase': v260_final['phase'],
+                    'priority_level': v260_final['priority_level'],
+                    'market_state': 'V260_OVERRIDE',
+                    'override_modules': ['V260_ESO_VDR_DMP_ODF2_LFC']
+                }
             # ===== V106: FINAL RESOLVER (SEQUENCE ENGINE - TERTINGGI!) =====
-            v106_final = self.final_resolver_v106.resolve_all_signals(scoring_data)
-            
-            # ===== V107: FINAL RESOLVER (EXIT ENGINE - PALING TERTINGGI!) =====
-            v107_final = self.final_resolver_v107.resolve_all_signals(scoring_data)
-            
-            # Gunakan V120 resolver jika ada signal V107 (priority <= -7) atau LYNUSDT (priority <= -10)
-            if v120_final.get('priority_level', 99) <= -7:
+            elif v120_final.get('priority_level', 99) <= -7:
                 # V120 override dengan V107 modules (WFC/FBR/VC - MUTLAK!)
                 final_decision = {
                     'bias': v120_final['final_bias'],
