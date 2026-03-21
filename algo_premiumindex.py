@@ -28664,8 +28664,8 @@ class BinanceAnalyzerV87:
         # ===== V200-RVP: RSI-VOLUME PARADOX DETECTOR =====
         self.rvp_v200 = RSIVolumeParadoxDetectorV200()          # V200-RVP
         
-        # Gunakan resolver V120 enhanced yang baru (dengan ANTI-GOCOK LOGIC V130-V135 + CHINESE QUANT V140-V142)
-        self.final_resolver_v120_enhanced = ConflictResolverV120_FINAL_ENHANCED()
+        # Gunakan resolver V260 FINAL yang baru (dengan prioritas V250-V260 + ANTI-GOCOK LOGIC V130-V135 + CHINESE QUANT V140-V142)
+        self.final_resolver_v260 = ConflictResolverV260_FINAL()
         
         # Track last signal bias for TTK
         self.last_signal_bias = None
@@ -31476,7 +31476,7 @@ class BinanceAnalyzerV87:
             v115_final = self.final_resolver_v115.resolve_all_signals(scoring_data)
             
             # ===== V120: FINAL RESOLVER ENHANCED (ANTI-HFT SHIELD - SUPREME COMMANDER!) =====
-            v120_final = self.final_resolver_v120_enhanced.resolve_all_signals(scoring_data)
+            v260_final = self.final_resolver_v260.resolve_all_signals(scoring_data)
             
             # ===== V106: FINAL RESOLVER (SEQUENCE ENGINE - TERTINGGI!) =====
             v106_final = self.final_resolver_v106.resolve_all_signals(scoring_data)
@@ -31485,35 +31485,35 @@ class BinanceAnalyzerV87:
             v107_final = self.final_resolver_v107.resolve_all_signals(scoring_data)
             
             # Gunakan V120 resolver jika ada signal V107 (priority <= -7) atau LYNUSDT (priority <= -10)
-            if v120_final.get('priority_level', 99) <= -7:
+            if v260_final.get('priority_level', 99) <= -7:
                 # V120 override dengan V107 modules (WFC/FBR/VC - MUTLAK!)
                 final_decision = {
-                    'bias': v120_final['final_bias'],
-                    'final_bias': v120_final['final_bias'],
-                    'confidence': v120_final['confidence'],
-                    'reason': v120_final['reason'],
-                    'phase': v120_final['phase'],
-                    'priority_level': v120_final['priority_level'],
-                    'market_state': v120_final.get('state', 'UNKNOWN'),
-                    'prob_long': v120_final.get('prob_long', 50),
-                    'prob_short': v120_final.get('prob_short', 50),
+                    'bias': v260_final['final_bias'],
+                    'final_bias': v260_final['final_bias'],
+                    'confidence': v260_final['confidence'],
+                    'reason': v260_final['reason'],
+                    'phase': v260_final['phase'],
+                    'priority_level': v260_final['priority_level'],
+                    'market_state': v260_final.get('state', 'UNKNOWN'),
+                    'prob_long': v260_final.get('prob_long', 50),
+                    'prob_short': v260_final.get('prob_short', 50),
                     'intention': mie_result.get('intention', 'NEUTRAL'),
                     'vacuum_type': vc_result.get('vacuum_type', 'NONE'),
                     'flow_mode': fbr_result.get('mode', 'NORMAL'),
                     'override_modules': ['V120_MDE_V107_UPDATED']
                 }
-            elif v120_final.get('priority_level', 99) <= -10:
+            elif v260_final.get('priority_level', 99) <= -10:
                 # V120 override (META DECISION ENGINE / LYNUSDT PATCH - MUTLAK!)
                 final_decision = {
-                    'bias': v120_final['final_bias'],
-                    'final_bias': v120_final['final_bias'],
-                    'confidence': v120_final['confidence'],
-                    'reason': v120_final['reason'],
-                    'phase': v120_final['phase'],
-                    'priority_level': v120_final['priority_level'],
-                    'market_state': v120_final.get('state', 'UNKNOWN'),
-                    'prob_long': v120_final.get('prob_long', 50),
-                    'prob_short': v120_final.get('prob_short', 50),
+                    'bias': v260_final['final_bias'],
+                    'final_bias': v260_final['final_bias'],
+                    'confidence': v260_final['confidence'],
+                    'reason': v260_final['reason'],
+                    'phase': v260_final['phase'],
+                    'priority_level': v260_final['priority_level'],
+                    'market_state': v260_final.get('state', 'UNKNOWN'),
+                    'prob_long': v260_final.get('prob_long', 50),
+                    'prob_short': v260_final.get('prob_short', 50),
                     'intention': mie_result.get('intention', 'NEUTRAL'),
                     'override_modules': ['V120_MDE', 'V106_LYN_PATCH']
                 }
@@ -32823,9 +32823,9 @@ class BinanceAnalyzerV87:
             result["lms_v106"] = lms_result
             result["atd_v106"] = atd_result
             result["mde_v120"] = mde_result
-            result["market_state"] = v120_final.get('market_state', 'UNKNOWN')
-            result["prob_long"] = v120_final.get('prob_long', 50)
-            result["prob_short"] = v120_final.get('prob_short', 50)
+            result["market_state"] = v260_final.get('market_state', 'UNKNOWN')
+            result["prob_long"] = v260_final.get('prob_long', 50)
+            result["prob_short"] = v260_final.get('prob_short', 50)
             
             result["v102_enhanced_phase"] = v102_enhanced_final.get('phase', 'NORMAL')
             result["v102_enhanced_priority_level"] = v102_enhanced_final.get('priority_level', 99)
