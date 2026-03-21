@@ -698,6 +698,43 @@ ASR_PRICE_STABLE_THRESHOLD = 0.5               # Price change < 0.5% = stable
 ASR_OI_DROP_THRESHOLD = -1.0                   # OI drop > 1%
 ASR_ABSORPTION_WAIT_MINUTES = 5                # Wait 5 minutes after absorption
 
+# ================= V250-ESO: ENERGY SUPREMACY OVERRIDE =================
+ESO_ENERGY_RATIO_EXTREME = 10.0           # >10x atau <0.1x
+ESO_PRIORITY = -250                        # Prioritas tertinggi
+
+# ================= V251-VDR: VACUUM DIRECTION RULE =================
+VDR_BID_VACUUM = 0.1                       # Bid < 0.1
+VDR_ASK_VACUUM = 0.1                       # Ask < 0.1
+VDR_ENERGY_RATIO_THRESHOLD = 3.0            # up_energy < down_energy * 3
+VDR_PRIORITY = -245
+
+# ================= V252-DMP: DEAD MARKET PROXIMITY RULE =================
+DMP_AGG_DEAD = 0.1                         # Agg < 0.1
+DMP_FLOW_DEAD = 0.5                        # Flow < 0.5
+DMP_DIST_CLOSE = 0.5                       # Jarak liq < 0.5%
+DMP_ENERGY_RATIO_THRESHOLD = 3.0
+DMP_PRIORITY = -235
+
+# ================= V253-ODF2: OVERBOUGHT DISTRIBUTION FILTER =================
+ODF2_RSI_OVERBOUGHT = 80.0
+ODF2_OI_BUILD = 0.5
+ODF2_ENERGY_RATIO = 5.0                    # up_energy < down_energy * 5
+ODF2_PRIORITY = -190
+
+# ================= V254-LFC: LIQUIDITY FLUSH CONFIRMATION =================
+LFC_SHORT_DIST = 0.5                       # short_dist < 0.5%
+LFC_LONG_DIST = 4.0                        # long_dist < 4% (double sweep)
+LFC_FLUSH_PROB = 50.0                      # flush_probability > 50%
+LFC_AGG_DEAD = 0.2
+LFC_PRIORITY = -255
+
+# ================= V255-WV: WEIGHTED VOTING DYNAMIC WEIGHTS =================
+WV_WEIGHT_BASE = 1.0
+WV_WEIGHT_ENERGY = 5.0                     # Bobot energy di market mati
+WV_WEIGHT_VACUUM = 5.0                     # Bobot vacuum di market mati
+WV_WEIGHT_DISTRIBUTION = 0.2               # Bobot distribution di market mati
+WV_THRESHOLD = 0.65                        # 65% untuk eksekusi
+
 # ================= V118-ROC: RSI-OI CEILING CONFIG =================
 ROC_PRICE_RUNUP_THRESHOLD = 5.0            # Price runup > 5%
 ROC_OI_DROP_THRESHOLD = -3.0                # OI drop > 3%
